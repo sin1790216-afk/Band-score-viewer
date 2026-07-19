@@ -1,0 +1,449 @@
+.app {
+  display : flex;
+  flex-direction : column;
+
+
+
+}
+
+#root:has(.student-mode){
+    width:100%;
+    border-inline:0;
+}
+
+.student-mode{
+    min-height:100vh;
+    background:#111;
+}
+
+.vocal-mode{
+    min-height:100vh;
+    background:#050505;
+    color:#fff;
+}
+
+.role-select-mode{
+    align-items:center;
+    background:#f6f7f9;
+    min-height:100vh;
+}
+
+.role-select{
+    align-items:center;
+    box-sizing:border-box;
+    display:flex;
+    flex:1;
+    flex-direction:column;
+    justify-content:center;
+    min-height:100vh;
+    padding:24px;
+    text-align:center;
+}
+
+.role-select h1{
+    font-size:40px;
+    margin:0 0 12px;
+}
+
+.role-select p{
+    color:#555;
+    margin:0 0 24px;
+}
+
+.role-select-actions{
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    justify-content:center;
+}
+
+.role-select-actions button{
+    font-size:18px;
+    min-width:120px;
+    padding:12px 18px;
+}
+
+.student-mode .main{
+    height:100vh;
+}
+
+.student-mode .pdf-area{
+    height:100vh;
+}
+
+.student-mode .pdf-viewer{
+    background:#111;
+}
+
+.student-page-view .pdf-viewer{
+    align-items:center;
+    display:flex;
+    justify-content:center;
+    overflow:hidden;
+}
+
+.student-page-view .react-pdf__Document{
+    display:flex;
+    justify-content:center;
+    width:100%;
+}
+
+.student-page-view .pdf-page-frame{
+    margin:auto;
+}
+
+.student-page-view .fit-page-wrapper{
+    margin:auto;
+}
+
+.student-mode .footer{
+    display:none;
+}
+
+.student-teacher-button,
+.floating-view-controls{
+    position:fixed;
+    top:8px;
+    right:8px;
+    z-index:200;
+    opacity:0.3;
+}
+
+.student-teacher-button{
+    font-size:12px;
+    padding:4px 6px;
+}
+
+.student-teacher-button:hover,
+.student-teacher-button:focus,
+.floating-view-controls:hover,
+.floating-view-controls:focus-within{
+    opacity:1;
+}
+
+.floating-view-controls{
+    display:flex;
+    gap:6px;
+}
+
+.floating-view-controls button{
+    font-size:12px;
+    padding:4px 6px;
+}
+
+.student-pdf-controls{
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    left:8px;
+    opacity:0.45;
+    position:fixed;
+    top:8px;
+    z-index:200;
+}
+
+.student-pdf-controls:hover,
+.student-pdf-controls:focus-within{
+    opacity:1;
+}
+
+.student-pdf-controls button{
+    font-size:12px;
+    padding:4px 6px;
+}
+
+.student-pdf-controls .active{
+    border:2px solid #fff;
+}
+
+.header {
+  
+
+
+
+}
+
+.viewer-mode-controls{
+    display:flex;
+    justify-content:center;
+    gap:8px;
+    margin:8px 0;
+}
+
+.viewer-mode-controls .active{
+    border:2px solid #111;
+}
+
+.main{
+    display:flex;
+    height:calc(100vh - 120px);
+
+
+}
+
+.sidebar{
+    width:100px;
+    background:red;
+    display:flex;
+    flex-direction:column;
+}
+
+.lyric-editor-panel{
+    box-sizing:border-box;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    padding:8px;
+    width:260px;
+}
+
+.lyric-editor-header{
+    align-items:center;
+    display:flex;
+    justify-content:space-between;
+}
+
+.lyric-editor-header h2{
+    font-size:16px;
+    margin:0;
+}
+
+.lyric-measure-list{
+    display:flex;
+    flex:1;
+    flex-direction:column;
+    gap:8px;
+    min-height:240px;
+    overflow:auto;
+}
+
+.lyric-measure-row{
+    display:flex;
+    gap:8px;
+}
+
+.lyric-measure-row span{
+    color:#555;
+    flex:0 0 28px;
+    font-family:monospace;
+    padding-top:6px;
+    text-align:right;
+    user-select:none;
+}
+
+.lyric-measure-row textarea{
+    box-sizing:border-box;
+    flex:1;
+    font:13px monospace;
+    line-height:20px;
+    min-height:64px;
+    padding:4px 6px;
+    resize:vertical;
+}
+
+.vocal-view{
+    align-items:center;
+    box-sizing:border-box;
+    display:flex;
+    flex-direction:column;
+    height:100vh;
+    justify-content:center;
+    padding:8vh 8vw;
+    text-align:center;
+}
+
+.vocal-current{
+    font-size:clamp(48px, 9vw, 128px);
+    font-weight:700;
+    line-height:1.15;
+    max-width:1200px;
+    white-space:pre-wrap;
+}
+
+.vocal-next{
+    color:#bbb;
+    font-size:clamp(24px, 4vw, 56px);
+    line-height:1.25;
+    margin-top:48px;
+    max-width:1000px;
+    white-space:pre-wrap;
+}
+
+.autoplay-controls,
+.measure-timing-editor{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+}
+
+.repeat-toggle{
+    align-items:center;
+    display:flex;
+    font-size:12px;
+    gap:4px;
+}
+
+.measure-timing-editor{
+    padding:8px 4px;
+}
+
+.measure-timing-editor p{
+    margin:0;
+}
+
+.measure-timing-editor label{
+    display:flex;
+    flex-direction:column;
+    font-size:12px;
+    gap:2px;
+}
+
+.measure-timing-editor input{
+    box-sizing:border-box;
+    width:100%;
+}
+
+.file-input {
+   display : none;
+
+
+}
+
+.pdf-area{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+}
+
+
+
+.pdf-viewer{
+    flex:1;
+    position:relative;
+    overflow:auto;
+    text-align:center;
+}
+
+.pdf-page-frame{
+    display:inline-block;
+    line-height:0;
+    text-align:left;
+}
+
+.pdf-canvas-stack{
+    display:inline-block;
+    line-height:0;
+    position:relative;
+}
+
+.pdf-canvas-stack .react-pdf__Page{
+    display:block;
+}
+
+.pdf-canvas-stack canvas{
+    display:block;
+}
+
+.student-waiting-message{
+    align-items:center;
+    color:#fff;
+    display:flex;
+    height:100%;
+    justify-content:center;
+}
+
+
+.overlay{
+    position:absolute;
+    inset:0;
+    width:100%;
+    height:100%;
+    pointer-events:none;
+    z-index:100;
+}
+
+
+
+
+
+.highlight{
+    position:absolute;
+
+    border:3px solid yellow;
+
+    background:rgba(255,255,0,0.2);
+
+    box-sizing:border-box;
+    cursor:pointer;
+    padding:0;
+    pointer-events:auto;
+    touch-action:none;
+    user-select:none;
+}
+
+.highlight.selected{
+    border-color:red;
+}
+
+.highlight.dragging{
+    cursor:grabbing;
+}
+
+.highlight.resizing{
+    cursor:nwse-resize;
+}
+
+.resize-handle{
+    position:absolute;
+    border:2px solid #fff;
+    background:red;
+    box-sizing:border-box;
+    pointer-events:auto;
+    touch-action:none;
+}
+
+.resize-handle.horizontal{
+    right:-5px;
+    top:50%;
+    width:10px;
+    height:28px;
+    transform:translateY(-50%);
+    cursor:ew-resize;
+}
+
+.resize-handle.vertical{
+    left:50%;
+    bottom:-5px;
+    width:28px;
+    height:10px;
+    transform:translateX(-50%);
+    cursor:ns-resize;
+}
+
+.resize-handle.corner{
+    right:-5px;
+    bottom:-5px;
+    width:12px;
+    height:12px;
+    cursor:nwse-resize;
+}
+  
+
+
+.pdf-viewer iframe {
+   width : 100%;
+   height : 100%;
+   border : none;
+
+}
+
+
+
+
+
+.footer{
+
+
+
+}
