@@ -4,6 +4,13 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
+import {
+  getLegacyPageBounds,
+  getMeasureRenderBasis,
+  getPreferredPageCoordinateBasis,
+  hasCoordinateMigrationNeed,
+} from '../utils/measureCoordinates.js';
+
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 const REGISTER_MODE = 'register';
@@ -80,6 +87,7 @@ function ScoreViewer({
   draggedMeasureIndex,
   measures,
   mode,
+  onCoordinateMetricsReady,
   onDebugSnapshot,
   onEndMeasureDrag,
   onEndMeasureResize,
@@ -103,9 +111,11 @@ function ScoreViewer({
   const pdfViewerRef = useRef(null);
   const pdfPageFrameRef = useRef(null);
   const pdfCanvasStackRef = useRef(null);
+  const pdfDocumentRef = useRef(null);
   const pdfPageNumberRef = useRef(1);
   const scrolledPageNumberRef = useRef(1);
   const measuresRef = useRef(measures);
+  const coordinateMigrationRequestRef = useRef(0);
   const [pdfWidth, setPdfWidth] = useState(100);
   const [pdfViewerHeight, setPdfViewerHeight] = useState(100);
   const [pageRenderWidth, setPageRenderWidth] = useState(100 * PDF_WIDTH_SCALE);
@@ -137,6 +147,10 @@ function ScoreViewer({
     !isStudentPageView ||
     (renderedPageNumber === displayPageNumber && currentMeasure?.page === displayPageNumber);
   const shouldRenderHighlights = isPdfPageRenderReady && isFitViewHighlightVisible;
+  const needsCoordinateMigration = useMemo(
+    () => canEdit && hasCoordinateMigrationNeed(measures),
+    [canEdit, measures],
+  );
   const currentPageMeasures = useMemo(
     () =>
       measures
@@ -152,35 +166,23 @@ function ScoreViewer({
   const getPageCoordinateBasis = useCallback(
     (measurePage, pageRect) => {
       const pageMeasures = measures.filter((measure) => measure.page === measurePage);
-      const maxMeasureRight = pageMeasures.reduce(
-        (maxRight, measure) => Math.max(maxRight, measure.x + measure.width),
-        0,
-      );
-      const maxMeasureBottom = pageMeasures.reduce(
-        (maxBottom, measure) => Math.max(maxBottom, measure.y + measure.height),
-        0,
-      );
-      const explicitWidth = pageMeasures.reduce(
-        (maxWidth, measure) =>
-          Math.max(maxWidth, measure.coordinateWidth || measure.baseWidth || measure.pageWidth || 0),
-        0,
-      );
-      const explicitHeight = pageMeasures.reduce(
-        (maxHeight, measure) =>
-          Math.max(
-            maxHeight,
-            measure.coordinateHeight || measure.baseHeight || measure.pageHeight || 0,
-          ),
-        0,
-      );
+      const preferredBasis = getPreferredPageCoordinateBasis(pageMeasures);
+
+      if (preferredBasis) return preferredBasis;
+
+      const legacyBounds = getLegacyPageBounds(pageMeasures);
+
+      if (legacyBounds.width > 0 && legacyBounds.height > 0) {
+        return {
+          ...legacyBounds,
+          source: 'legacy-bounds',
+        };
+      }
 
       return {
-        height:
-          explicitHeight > 0
-            ? explicitHeight
-            : Math.max(maxMeasureBottom, pageRect?.height || 0),
-        width:
-          explicitWidth > 0 ? explicitWidth : Math.max(maxMeasureRight, pageRect?.width || 0),
+        height: pageRect?.height || 0,
+        source: 'new-page-render',
+        width: pageRect?.width || 0,
       };
     },
     [measures],
@@ -190,7 +192,8 @@ function ScoreViewer({
     (measure, pageRect = getCurrentPageRect()) => {
       if (!measure || !pageRect || pageRect.width <= 0 || pageRect.height <= 0) return null;
 
-      const coordinateBasis = getPageCoordinateBasis(measure.page, pageRect);
+      const pageMeasures = measures.filter((pageMeasure) => pageMeasure.page === measure.page);
+      const coordinateBasis = getMeasureRenderBasis(measure, pageMeasures);
 
       if (coordinateBasis.width <= 0 || coordinateBasis.height <= 0) return null;
 
@@ -200,7 +203,7 @@ function ScoreViewer({
         scaleY: pageRect.height / coordinateBasis.height,
       };
     },
-    [getCurrentPageRect, getPageCoordinateBasis],
+    [getCurrentPageRect, measures],
   );
 
   const calculateHighlightRect = useCallback(
@@ -302,6 +305,7 @@ function ScoreViewer({
     const nextPdfViewerHeight = pdfViewerRef.current?.clientHeight || 100;
 
     pdfViewerRef.current?.scrollTo({ left: 0, top: 0, behavior: 'auto' });
+    pdfDocumentRef.current = null;
     scrolledPageNumberRef.current = 0;
     setPdfWidth(nextPdfWidth);
     setPdfViewerHeight(nextPdfViewerHeight);
@@ -390,6 +394,27 @@ function ScoreViewer({
       scaleX: highlightRect.scaleX,
       scaleY: highlightRect.scaleY,
     });
+    console.log('[coordinate-metrics]', {
+      coordinateHeight: highlightRect.coordinateBasis.height,
+      coordinateSource: highlightRect.coordinateBasis.source,
+      coordinateWidth: highlightRect.coordinateBasis.width,
+      highlight: {
+        height: highlightStyle.height,
+        left: highlightStyle.left,
+        top: highlightStyle.top,
+        width: highlightStyle.width,
+      },
+      measure: getMeasureDebugData(measure),
+      measureIndex: index,
+      page: measure.page,
+      pageFrame: {
+        height: originDebugData.canvasStackRect?.height,
+        width: originDebugData.canvasStackRect?.width,
+      },
+      role: canEdit ? 'teacher' : viewerMode,
+      scaleX: highlightRect.scaleX,
+      scaleY: highlightRect.scaleY,
+    });
   }
 
   const latestDebugSnapshot = getDebugSnapshot('latest render');
@@ -461,6 +486,68 @@ function ScoreViewer({
   useEffect(() => {
     measuresRef.current = measures;
   }, [measures]);
+
+  useEffect(() => {
+    if (
+      !canEdit ||
+      !needsCoordinateMigration ||
+      !pdfDocumentRef.current ||
+      renderedPageNumber !== pdfPageNumber
+    ) {
+      return;
+    }
+
+    const pageRect = getCurrentPageRect();
+
+    if (!pageRect || pageRect.width <= 0 || pageRect.height <= 0) return;
+
+    const pdfDocument = pdfDocumentRef.current;
+    const migrationRequestId = coordinateMigrationRequestRef.current + 1;
+    const measurePages = [
+      ...new Set(
+        measures
+          .map((measure) => Number(measure.page))
+          .filter(
+            (page) => Number.isInteger(page) && page >= 1 && page <= pdfDocument.numPages,
+          ),
+      ),
+    ];
+
+    coordinateMigrationRequestRef.current = migrationRequestId;
+
+    Promise.all(
+      measurePages.map(async (page) => {
+        const pdfPage = await pdfDocument.getPage(page);
+        const viewport = pdfPage.getViewport({ scale: 1 });
+
+        return {
+          height:
+            page === pdfPageNumber
+              ? pageRect.height
+              : pageRect.width * (viewport.height / viewport.width),
+          page,
+          width: pageRect.width,
+        };
+      }),
+    )
+      .then((pageMetrics) => {
+        if (coordinateMigrationRequestRef.current !== migrationRequestId) return;
+
+        console.log('[coordinate-migration] Teacher legacy basis ready', pageMetrics);
+        onCoordinateMetricsReady(pageMetrics);
+      })
+      .catch((error) => {
+        console.error('[coordinate-migration] failed to read PDF page metrics', error);
+      });
+  }, [
+    canEdit,
+    getCurrentPageRect,
+    measures,
+    needsCoordinateMigration,
+    onCoordinateMetricsReady,
+    pdfPageNumber,
+    renderedPageNumber,
+  ]);
 
   useEffect(() => {
     if (!shouldRenderHighlights) return;
@@ -580,6 +667,7 @@ function ScoreViewer({
           file={pdfUrl}
           key={pdfLayoutKey}
           onLoadSuccess={(pdf) => {
+            pdfDocumentRef.current = pdf;
             onTotalPagesChange(pdf.numPages);
             updatePdfWidth();
             setRenderSyncVersion((previousVersion) => previousVersion + 1);
