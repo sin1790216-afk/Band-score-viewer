@@ -29,7 +29,8 @@ Student는 `sync:state`의 페이지와 마디를 표시 기준으로 사용한�
 
 `renderedPageNumber`는 요청 페이지가 실제로 렌더 완료됐는지 확인하는 상태다. 렌더 완료 전에는 하이라이트를 표시하지 않으며, `ResizeObserver`와 화면 크기 변경으로 좌표 재계산을 유도한다.
 
-## 현재 책임 집중
+## 프론트엔드 책임 경계
 
-`src/App.jsx` 한 파일에 역할 전환, PDF 수명주기, 좌표 변환, 편집, 자동재생, 가사, Socket 이벤트와 진단 로그가 집중되어 있다. 다음 리팩터링에서는 동작을 유지하면서 PDF 렌더 파이프라인과 overlay 좌표 책임을 우선 분리할 예정이다.
+`src/App.jsx`는 역할 전환, 논리 페이지 결정, PDF/JSON 파일 상태, measure 편집, 자동재생, 가사와 Socket 이벤트를 담당한다. `src/components/ScoreViewer.jsx`는 `displayPageNumber` 하나를 입력받아 `react-pdf` 렌더, canvas/overlay DOM, 좌표 변환, 렌더 완료 상태, 크기 관찰과 자동 스크롤을 담당한다.
 
+현재 `renderSyncVersion` 기반 재계산 흐름은 동작 보존을 위해 `ScoreViewer` 내부에 그대로 남아 있다. 다음 리팩터링 단계에서 PDF 렌더 순서와 재계산 트리거를 안정화한다.
