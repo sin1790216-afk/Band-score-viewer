@@ -5,16 +5,20 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
 import {
-  getLegacyPageBounds,
-  getMeasureRenderBasis,
-  getPreferredPageCoordinateBasis,
-  hasCoordinateMigrationNeed,
+  canonicalToRenderRect,
+  NORMALIZED_COORDINATE_BASIS,
+  renderPointToCanonical,
 } from '../utils/measureCoordinates.js';
+import {
+  getPageLoadIdentity,
+  getSurfaceIdentity,
+  getTargetPageNumber,
+  isReadySurface as isReadyPdfSurface,
+} from '../utils/pdfRenderLifecycle.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 const REGISTER_MODE = 'register';
-const STUDENT_MODE = 'student';
 const PDF_WIDTH_SCALE = 1.5;
 const PAGE_FIT_PADDING = 24;
 const DEFAULT_PAGE_ASPECT_RATIO = 0.707;
@@ -58,6 +62,8 @@ function getMeasureDebugData(measure) {
   if (!measure) return null;
 
   return {
+    coordinateSpace: measure.coordinateSpace,
+    coordinateStatus: measure.coordinateStatus,
     height: measure.height,
     width: measure.width,
     x: measure.x,
@@ -80,14 +86,18 @@ function getElementDebugName(element) {
   };
 }
 
+function areSizesEqual(left, right) {
+  return left?.width === right?.width && left?.height === right?.height;
+}
+
 function ScoreViewer({
   canEdit,
   displayMeasureIndex,
   displayPageNumber,
   draggedMeasureIndex,
+  isStudentPageView,
   measures,
   mode,
-  onCoordinateMetricsReady,
   onDebugSnapshot,
   onEndMeasureDrag,
   onEndMeasureResize,
@@ -104,130 +114,115 @@ function ScoreViewer({
   selectedMeasureIndex,
   studentPdfSource,
   studentViewMode,
-  totalPages,
   viewerMode,
-  isStudentPageView,
 }) {
   const pdfViewerRef = useRef(null);
   const pdfPageFrameRef = useRef(null);
   const pdfCanvasStackRef = useRef(null);
-  const pdfDocumentRef = useRef(null);
-  const pdfPageNumberRef = useRef(1);
-  const scrolledPageNumberRef = useRef(1);
+  const documentIdentityRef = useRef(pdfUrl);
+  const pageLoadIdentityRef = useRef('');
+  const surfaceIdentityRef = useRef('');
+  const scrolledPageNumberRef = useRef(0);
   const measuresRef = useRef(measures);
-  const coordinateMigrationRequestRef = useRef(0);
-  const [pdfWidth, setPdfWidth] = useState(100);
-  const [pdfViewerHeight, setPdfViewerHeight] = useState(100);
-  const [pageRenderWidth, setPageRenderWidth] = useState(100 * PDF_WIDTH_SCALE);
-  const [renderedPageNumber, setRenderedPageNumber] = useState(0);
-  const [pageAspectRatio, setPageAspectRatio] = useState(DEFAULT_PAGE_ASPECT_RATIO);
-  const [pdfLayoutVersion, setPdfLayoutVersion] = useState(0);
-  const [renderSyncVersion, setRenderSyncVersion] = useState(0);
+  const [viewerSize, setViewerSize] = useState({ height: 100, width: 100 });
+  const [documentState, setDocumentState] = useState({
+    identity: '',
+    totalPages: 0,
+  });
+  const [pageGeometry, setPageGeometry] = useState({
+    aspectRatio: DEFAULT_PAGE_ASPECT_RATIO,
+    identity: '',
+  });
+  const [readySurface, setReadySurface] = useState(null);
 
-  const zoomPdfPageWidth = pdfWidth * PDF_WIDTH_SCALE;
+  documentIdentityRef.current = pdfUrl;
+
+  const documentReady = Boolean(
+    pdfUrl && documentState.identity === pdfUrl && documentState.totalPages > 0,
+  );
+  const pdfPageNumber = getTargetPageNumber(
+    displayPageNumber,
+    documentReady ? documentState.totalPages : 0,
+  );
+  const pageLoadIdentity = getPageLoadIdentity(pdfUrl, pdfPageNumber);
+  const pageAspectRatio =
+    pageGeometry.identity === pageLoadIdentity
+      ? pageGeometry.aspectRatio
+      : DEFAULT_PAGE_ASPECT_RATIO;
+  const zoomPdfPageWidth = viewerSize.width * PDF_WIDTH_SCALE;
   const fittedPdfPageWidth = Math.max(
     100,
     Math.min(
-      Math.max(100, pdfWidth - PAGE_FIT_PADDING),
-      Math.max(100, pdfViewerHeight - PAGE_FIT_PADDING) * pageAspectRatio,
+      Math.max(100, viewerSize.width - PAGE_FIT_PADDING),
+      Math.max(100, viewerSize.height - PAGE_FIT_PADDING) * pageAspectRatio,
     ),
   );
   const renderedPdfPageWidth = isStudentPageView ? fittedPdfPageWidth : zoomPdfPageWidth;
-  const pdfLayoutKey = `${pdfUrl}-${viewerMode}-${studentPdfSource}-${studentViewMode}-${pdfLayoutVersion}`;
-  const pdfPageNumber =
-    totalPages > 0
-      ? Math.min(Math.max(displayPageNumber, 1), totalPages)
-      : displayPageNumber;
-  const actualPagePropPassedToReactPdf = pdfPageNumber;
-  pdfPageNumberRef.current = pdfPageNumber;
+  const surfaceIdentity = getSurfaceIdentity({
+    pageNumber: pdfPageNumber,
+    pdfIdentity: pdfUrl,
+    renderResetVersion,
+    renderWidth: renderedPdfPageWidth,
+    studentPdfSource,
+    studentViewMode,
+    viewerMode,
+  });
 
-  const currentMeasure = measures[displayMeasureIndex] || null;
-  const isPdfPageRenderReady = renderedPageNumber === pdfPageNumber;
-  const isFitViewHighlightVisible =
-    !isStudentPageView ||
-    (renderedPageNumber === displayPageNumber && currentMeasure?.page === displayPageNumber);
-  const shouldRenderHighlights = isPdfPageRenderReady && isFitViewHighlightVisible;
-  const needsCoordinateMigration = useMemo(
-    () => canEdit && hasCoordinateMigrationNeed(measures),
-    [canEdit, measures],
+  pageLoadIdentityRef.current = pageLoadIdentity;
+  surfaceIdentityRef.current = surfaceIdentity;
+
+  const isSurfaceReady = isReadyPdfSurface(
+    readySurface,
+    surfaceIdentity,
+    pdfPageNumber,
   );
+  const renderedPageNumber = isSurfaceReady ? readySurface.pageNumber : 0;
+  const currentMeasure = measures[displayMeasureIndex] || null;
+  const currentMeasureMatchesPage =
+    currentMeasure && Number(currentMeasure.page) === pdfPageNumber;
+  const shouldRenderHighlights =
+    isSurfaceReady && (mode === REGISTER_MODE || currentMeasureMatchesPage);
   const currentPageMeasures = useMemo(
     () =>
       measures
         .map((measure, index) => ({ measure, index }))
-        .filter(({ measure }) => measure.page === pdfPageNumber),
+        .filter(({ measure }) => Number(measure.page) === pdfPageNumber),
     [measures, pdfPageNumber],
   );
 
-  const getCurrentPageRect = useCallback(() => {
-    return getPlainRect(pdfCanvasStackRef.current);
+  const measureViewer = useCallback(() => {
+    const viewer = pdfViewerRef.current;
+
+    if (!viewer) return;
+
+    const nextSize = {
+      height: viewer.clientHeight || 100,
+      width: viewer.clientWidth || 100,
+    };
+
+    setViewerSize((previousSize) =>
+      areSizesEqual(previousSize, nextSize) ? previousSize : nextSize,
+    );
   }, []);
 
-  const getPageCoordinateBasis = useCallback(
-    (measurePage, pageRect) => {
-      const pageMeasures = measures.filter((measure) => measure.page === measurePage);
-      const preferredBasis = getPreferredPageCoordinateBasis(pageMeasures);
+  const getCurrentSurfaceRect = useCallback(() => {
+    if (
+      readySurface?.identity !== surfaceIdentity ||
+      readySurface?.pageNumber !== pdfPageNumber
+    ) {
+      return null;
+    }
 
-      if (preferredBasis) return preferredBasis;
+    const pageRect = getPlainRect(pdfCanvasStackRef.current);
 
-      const legacyBounds = getLegacyPageBounds(pageMeasures);
+    if (!pageRect || pageRect.width <= 0 || pageRect.height <= 0) return null;
 
-      if (legacyBounds.width > 0 && legacyBounds.height > 0) {
-        return {
-          ...legacyBounds,
-          source: 'legacy-bounds',
-        };
-      }
-
-      return {
-        height: pageRect?.height || 0,
-        source: 'new-page-render',
-        width: pageRect?.width || 0,
-      };
-    },
-    [measures],
-  );
-
-  const getMeasureScale = useCallback(
-    (measure, pageRect = getCurrentPageRect()) => {
-      if (!measure || !pageRect || pageRect.width <= 0 || pageRect.height <= 0) return null;
-
-      const pageMeasures = measures.filter((pageMeasure) => pageMeasure.page === measure.page);
-      const coordinateBasis = getMeasureRenderBasis(measure, pageMeasures);
-
-      if (coordinateBasis.width <= 0 || coordinateBasis.height <= 0) return null;
-
-      return {
-        coordinateBasis,
-        scaleX: pageRect.width / coordinateBasis.width,
-        scaleY: pageRect.height / coordinateBasis.height,
-      };
-    },
-    [getCurrentPageRect, measures],
-  );
+    return pageRect;
+  }, [pdfPageNumber, readySurface, surfaceIdentity]);
 
   const calculateHighlightRect = useCallback(
-    (measure) => {
-      const pageRect = getCurrentPageRect();
-
-      if (!measure || !pageRect || pageRect.width <= 0) return null;
-
-      const measureScale = getMeasureScale(measure, pageRect);
-
-      if (!measureScale) return null;
-
-      return {
-        coordinateBasis: measureScale.coordinateBasis,
-        height: measure.height * measureScale.scaleY,
-        left: measure.x * measureScale.scaleX,
-        scaleFactor: measureScale.scaleX,
-        scaleX: measureScale.scaleX,
-        scaleY: measureScale.scaleY,
-        top: measure.y * measureScale.scaleY,
-        width: measure.width * measureScale.scaleX,
-      };
-    },
-    [getCurrentPageRect, getMeasureScale],
+    (measure) => canonicalToRenderRect(measure, getCurrentSurfaceRect()),
+    [getCurrentSurfaceRect],
   );
 
   function getPdfOriginDebugData() {
@@ -236,19 +231,13 @@ function ScoreViewer({
     const canvas = canvasStack?.querySelector('canvas') || null;
     const textLayer = canvasStack?.querySelector('.react-pdf__Page__textContent') || null;
     const overlay = canvasStack?.querySelector('.overlay') || null;
-    const highlightParent = overlay || null;
 
     return {
       canvasElement: getElementDebugName(canvas),
       canvasRect: getPlainRect(canvas),
       canvasStackElement: getElementDebugName(canvasStack),
       canvasStackRect: getPlainRect(canvasStack),
-      coordinateBasis: 'pdf-canvas-stack',
-      highlightParentElement: getElementDebugName(highlightParent),
-      highlightParentMatchesPageFrame: highlightParent === pageFrame,
-      highlightParentMatchesCanvasStack: highlightParent === canvasStack,
-      highlightParentMatchesOverlay: highlightParent === overlay,
-      highlightParentRect: getPlainRect(highlightParent),
+      highlightParentElement: getElementDebugName(overlay),
       overlayElement: getElementDebugName(overlay),
       overlayRect: getPlainRect(overlay),
       pageFrameElement: getElementDebugName(pageFrame),
@@ -258,296 +247,213 @@ function ScoreViewer({
     };
   }
 
-  function getDebugSnapshot(label) {
-    const currentMeasureScale = getMeasureScale(currentMeasure);
+  const getDebugSnapshot = useCallback(
+    (label) => {
+      const currentMeasureRect = calculateHighlightRect(currentMeasure);
 
-    return {
-      label,
+      return {
+        label,
+        currentMeasure: getMeasureDebugData(currentMeasure),
+        currentMeasureRect,
+        displayMeasureIndex,
+        displayPageNumber,
+        documentIdentity: documentState.identity,
+        documentReady,
+        highlightVisible: shouldRenderHighlights,
+        origin: getPdfOriginDebugData(),
+        pdfPageNumber,
+        readySurface,
+        renderedPageNumber,
+        requestedSurfaceIdentity: surfaceIdentity,
+        role: canEdit ? 'teacher' : viewerMode,
+        scrollLeft: pdfViewerRef.current?.scrollLeft ?? null,
+        scrollTop: pdfViewerRef.current?.scrollTop ?? null,
+        studentPdfSource,
+        studentViewMode,
+        totalPages: documentState.totalPages,
+        viewMode: viewerMode,
+      };
+    },
+    [
+      calculateHighlightRect,
+      canEdit,
+      currentMeasure,
       displayMeasureIndex,
       displayPageNumber,
-      measure: getMeasureDebugData(currentMeasure),
-      measureScaleFactor: currentMeasureScale?.scaleX || null,
-      measureScaleX: currentMeasureScale?.scaleX || null,
-      measureScaleY: currentMeasureScale?.scaleY || null,
-      measureCoordinateBasis: currentMeasureScale?.coordinateBasis || null,
-      origin: getPdfOriginDebugData(),
-      pageRenderWidth,
-      pdfPageDomRect: getCurrentPageRect(),
+      documentReady,
+      documentState.identity,
+      documentState.totalPages,
       pdfPageNumber,
-      actualPagePropPassedToReactPdf,
+      readySurface,
       renderedPageNumber,
-      role: canEdit ? 'teacher' : viewerMode,
-      scrollLeft: pdfViewerRef.current?.scrollLeft ?? null,
-      scrollTop: pdfViewerRef.current?.scrollTop ?? null,
+      shouldRenderHighlights,
       studentPdfSource,
       studentViewMode,
-      highlightVisible: shouldRenderHighlights,
-      totalPages,
-      viewMode: viewerMode,
-    };
+      surfaceIdentity,
+      viewerMode,
+    ],
+  );
+
+  function handleDocumentLoadSuccess(pdf, loadedDocumentIdentity) {
+    if (loadedDocumentIdentity !== documentIdentityRef.current) return;
+
+    setDocumentState({
+      identity: loadedDocumentIdentity,
+      totalPages: pdf.numPages,
+    });
+    onTotalPagesChange(pdf.numPages);
+    measureViewer();
   }
 
-  const updatePdfWidth = useCallback(() => {
-    if (!pdfViewerRef.current) return;
+  function handlePageLoadSuccess(pdfPage, loadedPageIdentity) {
+    if (loadedPageIdentity !== pageLoadIdentityRef.current) return;
 
-    setPdfWidth(pdfViewerRef.current.clientWidth);
-    setPdfViewerHeight(pdfViewerRef.current.clientHeight);
-  }, []);
-
-  const updatePageRenderWidth = useCallback(() => {
-    if (!pdfCanvasStackRef.current) return;
-
-    setPageRenderWidth(pdfCanvasStackRef.current.getBoundingClientRect().width);
-  }, []);
-
-  const resetPdfRenderState = useCallback(() => {
-    const nextPdfWidth = pdfViewerRef.current?.clientWidth || 100;
-    const nextPdfViewerHeight = pdfViewerRef.current?.clientHeight || 100;
-
-    pdfViewerRef.current?.scrollTo({ left: 0, top: 0, behavior: 'auto' });
-    pdfDocumentRef.current = null;
-    scrolledPageNumberRef.current = 0;
-    setPdfWidth(nextPdfWidth);
-    setPdfViewerHeight(nextPdfViewerHeight);
-    setPageRenderWidth(nextPdfWidth * PDF_WIDTH_SCALE);
-    setRenderedPageNumber(0);
-    setPageAspectRatio(DEFAULT_PAGE_ASPECT_RATIO);
-    onTotalPagesChange(0);
-    setPdfLayoutVersion((previousVersion) => previousVersion + 1);
-    setRenderSyncVersion((previousVersion) => previousVersion + 1);
-  }, [onTotalPagesChange]);
-
-  function handlePageRenderSuccess(nextRenderedPageNumber) {
-    if (nextRenderedPageNumber !== pdfPageNumberRef.current) return;
-
-    setRenderedPageNumber(nextRenderedPageNumber);
-    updatePageRenderWidth();
-    setRenderSyncVersion((previousVersion) => previousVersion + 1);
-    console.log('PDF rendered');
-    console.table(getDebugSnapshot('PDF rendered'));
-  }
-
-  function handlePageLoadSuccess(pdfPage) {
     const viewport = pdfPage.getViewport({ scale: 1 });
 
-    if (viewport.height > 0) {
-      setPageAspectRatio(viewport.width / viewport.height);
-    }
-  }
+    if (viewport.width <= 0 || viewport.height <= 0) return;
 
-  function handlePageClick(event) {
-    const pageRect = getCurrentPageRect();
-
-    if (!pageRect || pageRect.width <= 0 || pageRect.height <= 0) return;
-
-    const coordinateBasis = getPageCoordinateBasis(pdfPageNumber, pageRect);
-
-    onPageClick(event, {
-      coordinateBasis,
-      pageNumber: pdfPageNumber,
-      pageRect,
-      scaleX: pageRect.width / coordinateBasis.width,
-      scaleY: pageRect.height / coordinateBasis.height,
+    setPageGeometry({
+      aspectRatio: viewport.width / viewport.height,
+      identity: loadedPageIdentity,
     });
   }
 
-  function logHighlightCalculation(
-    index,
-    measure,
-    highlightRect,
-    highlightStyle,
-    highlightParentElement,
-  ) {
-    const originDebugData = getPdfOriginDebugData();
-
-    console.log('Highlight recalculated');
-    console.table({
-      ...getDebugSnapshot('Highlight recalculated'),
-      canvasRect: originDebugData.canvasRect,
-      canvasStackRect: originDebugData.canvasStackRect,
-      coordinateBasis: 'pdf-canvas-stack',
-      formulaLeft: `${measure.x} * ${highlightRect.scaleX} = ${highlightStyle.left}`,
-      formulaTop: `${measure.y} * ${highlightRect.scaleY} = ${highlightStyle.top}`,
-      highlightCalculationParent: 'overlay inside pdf-canvas-stack',
-      highlightParentElement: getElementDebugName(highlightParentElement),
-      highlightParentRect: getPlainRect(highlightParentElement),
-      highlightParentMatchesPageFrame: highlightParentElement === pdfPageFrameRef.current,
-      highlightParentMatchesCanvasStack: highlightParentElement === pdfCanvasStackRef.current,
-      highlightHeight: highlightStyle.height,
-      highlightRect,
-      isCurrentDisplayedMeasure: index === displayMeasureIndex,
-      renderedHighlightIndex: index,
-      highlightLeft: highlightStyle.left,
-      highlightTop: highlightStyle.top,
-      highlightWidth: highlightStyle.width,
-      highlightWidthFormula: `${measure.width} * ${highlightRect.scaleX} = ${highlightStyle.width}`,
-      highlightHeightFormula: `${measure.height} * ${highlightRect.scaleY} = ${highlightStyle.height}`,
-      measureCoordinateBasisHeight: highlightRect.coordinateBasis.height,
-      measureCoordinateBasisWidth: highlightRect.coordinateBasis.width,
-      measureHeight: measure.height,
-      measurePage: measure.page,
-      measureWidth: measure.width,
-      measureX: measure.x,
-      measureY: measure.y,
-      overlayRect: originDebugData.overlayRect,
-      scaleFactor: highlightRect.scaleX,
-      scaleX: highlightRect.scaleX,
-      scaleY: highlightRect.scaleY,
-    });
-    console.log('[coordinate-metrics]', {
-      coordinateHeight: highlightRect.coordinateBasis.height,
-      coordinateSource: highlightRect.coordinateBasis.source,
-      coordinateWidth: highlightRect.coordinateBasis.width,
-      highlight: {
-        height: highlightStyle.height,
-        left: highlightStyle.left,
-        top: highlightStyle.top,
-        width: highlightStyle.width,
-      },
-      measure: getMeasureDebugData(measure),
-      measureIndex: index,
-      page: measure.page,
-      pageFrame: {
-        height: originDebugData.canvasStackRect?.height,
-        width: originDebugData.canvasStackRect?.width,
-      },
-      role: canEdit ? 'teacher' : viewerMode,
-      scaleX: highlightRect.scaleX,
-      scaleY: highlightRect.scaleY,
-    });
-  }
-
-  const latestDebugSnapshot = getDebugSnapshot('latest render');
-  onDebugSnapshot(latestDebugSnapshot);
-  console.log('[debug] render check', getDebugSnapshot('ScoreViewer render'));
-
-  useEffect(() => {
-    window.addEventListener('resize', updatePdfWidth);
-    window.addEventListener('resize', updatePageRenderWidth);
-
-    return () => {
-      window.removeEventListener('resize', updatePdfWidth);
-      window.removeEventListener('resize', updatePageRenderWidth);
-    };
-  }, [updatePageRenderWidth, updatePdfWidth]);
-
-  useEffect(() => {
-    resetPdfRenderState();
-
-    if (!pdfUrl) return;
-
-    const animationFrameId = window.requestAnimationFrame(() => {
-      updatePdfWidth();
-      updatePageRenderWidth();
-      setRenderSyncVersion((previousVersion) => previousVersion + 1);
-    });
-
-    return () => {
-      window.cancelAnimationFrame(animationFrameId);
-    };
-  }, [
-    pdfUrl,
-    renderResetVersion,
-    resetPdfRenderState,
-    studentPdfSource,
-    studentViewMode,
-    updatePageRenderWidth,
-    updatePdfWidth,
-    viewerMode,
-  ]);
-
-  useEffect(() => {
-    updatePdfWidth();
-    updatePageRenderWidth();
-  }, [updatePageRenderWidth, updatePdfWidth, viewerMode]);
-
-  useEffect(() => {
-    if (!pdfCanvasStackRef.current) return;
-
-    const resizeObserver = new ResizeObserver(() => {
-      updatePageRenderWidth();
-      setRenderSyncVersion((previousVersion) => previousVersion + 1);
-    });
-
-    resizeObserver.observe(pdfCanvasStackRef.current);
-
-    return () => {
-      resizeObserver.disconnect();
-    };
-  }, [
-    pdfLayoutVersion,
-    pdfPageNumber,
-    renderedPdfPageWidth,
-    studentViewMode,
-    updatePageRenderWidth,
-    viewerMode,
-  ]);
-
-  useEffect(() => {
-    measuresRef.current = measures;
-  }, [measures]);
-
-  useEffect(() => {
+  function handlePageRenderSuccess(renderedSurfaceIdentity, nextRenderedPageNumber) {
     if (
-      !canEdit ||
-      !needsCoordinateMigration ||
-      !pdfDocumentRef.current ||
-      renderedPageNumber !== pdfPageNumber
+      renderedSurfaceIdentity !== surfaceIdentityRef.current ||
+      nextRenderedPageNumber !== pdfPageNumber
     ) {
       return;
     }
 
-    const pageRect = getCurrentPageRect();
+    const pageRect = getPlainRect(pdfCanvasStackRef.current);
+    const canvasRect = getPlainRect(
+      pdfCanvasStackRef.current?.querySelector('canvas') || null,
+    );
 
-    if (!pageRect || pageRect.width <= 0 || pageRect.height <= 0) return;
+    if (
+      !pageRect ||
+      !canvasRect ||
+      pageRect.width <= 0 ||
+      pageRect.height <= 0 ||
+      canvasRect.width <= 0 ||
+      canvasRect.height <= 0
+    ) {
+      return;
+    }
 
-    const pdfDocument = pdfDocumentRef.current;
-    const migrationRequestId = coordinateMigrationRequestRef.current + 1;
-    const measurePages = [
-      ...new Set(
-        measures
-          .map((measure) => Number(measure.page))
-          .filter(
-            (page) => Number.isInteger(page) && page >= 1 && page <= pdfDocument.numPages,
-          ),
-      ),
-    ];
+    setReadySurface({
+      height: pageRect.height,
+      identity: renderedSurfaceIdentity,
+      pageNumber: nextRenderedPageNumber,
+      width: pageRect.width,
+    });
+    console.log('[pdf-lifecycle] surface ready', {
+      canvas: { height: canvasRect.height, width: canvasRect.width },
+      pageNumber: nextRenderedPageNumber,
+      surface: { height: pageRect.height, width: pageRect.width },
+      surfaceIdentity: renderedSurfaceIdentity,
+    });
+  }
 
-    coordinateMigrationRequestRef.current = migrationRequestId;
+  function handlePageClick(event) {
+    const pageRect = getCurrentSurfaceRect();
 
-    Promise.all(
-      measurePages.map(async (page) => {
-        const pdfPage = await pdfDocument.getPage(page);
-        const viewport = pdfPage.getViewport({ scale: 1 });
+    if (!pageRect) return;
 
-        return {
-          height:
-            page === pdfPageNumber
-              ? pageRect.height
-              : pageRect.width * (viewport.height / viewport.width),
-          page,
+    const point = renderPointToCanonical(event.clientX, event.clientY, pageRect);
+
+    if (!point) return;
+
+    onPageClick({
+      coordinateBasis: NORMALIZED_COORDINATE_BASIS,
+      pageNumber: pdfPageNumber,
+      point,
+      scaleX: pageRect.width,
+      scaleY: pageRect.height,
+    });
+  }
+
+  useEffect(() => {
+    measureViewer();
+    window.addEventListener('resize', measureViewer);
+
+    const viewer = pdfViewerRef.current;
+    const resizeObserver =
+      viewer && typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(measureViewer)
+        : null;
+
+    resizeObserver?.observe(viewer);
+
+    return () => {
+      window.removeEventListener('resize', measureViewer);
+      resizeObserver?.disconnect();
+    };
+  }, [measureViewer]);
+
+  useEffect(() => {
+    setDocumentState({ identity: '', totalPages: 0 });
+    setPageGeometry({
+      aspectRatio: DEFAULT_PAGE_ASPECT_RATIO,
+      identity: '',
+    });
+    setReadySurface(null);
+    onTotalPagesChange(0);
+    scrolledPageNumberRef.current = 0;
+    pdfViewerRef.current?.scrollTo({ left: 0, top: 0, behavior: 'auto' });
+    measureViewer();
+  }, [measureViewer, onTotalPagesChange, pdfUrl]);
+
+  useEffect(() => {
+    setReadySurface(null);
+    scrolledPageNumberRef.current = 0;
+    measureViewer();
+  }, [
+    measureViewer,
+    renderResetVersion,
+    studentPdfSource,
+    studentViewMode,
+    viewerMode,
+  ]);
+
+  useEffect(() => {
+    const canvasStack = pdfCanvasStackRef.current;
+
+    if (!canvasStack || typeof ResizeObserver === 'undefined') return;
+
+    const resizeObserver = new ResizeObserver(() => {
+      const pageRect = getPlainRect(canvasStack);
+
+      if (!pageRect || pageRect.width <= 0 || pageRect.height <= 0) return;
+
+      setReadySurface((previousSurface) => {
+        if (previousSurface?.identity !== surfaceIdentityRef.current) {
+          return previousSurface;
+        }
+
+        const nextSurface = {
+          ...previousSurface,
+          height: pageRect.height,
           width: pageRect.width,
         };
-      }),
-    )
-      .then((pageMetrics) => {
-        if (coordinateMigrationRequestRef.current !== migrationRequestId) return;
 
-        console.log('[coordinate-migration] Teacher legacy basis ready', pageMetrics);
-        onCoordinateMetricsReady(pageMetrics);
-      })
-      .catch((error) => {
-        console.error('[coordinate-migration] failed to read PDF page metrics', error);
+        return areSizesEqual(previousSurface, nextSurface)
+          ? previousSurface
+          : nextSurface;
       });
-  }, [
-    canEdit,
-    getCurrentPageRect,
-    measures,
-    needsCoordinateMigration,
-    onCoordinateMetricsReady,
-    pdfPageNumber,
-    renderedPageNumber,
-  ]);
+    });
+
+    resizeObserver.observe(canvasStack);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [documentReady, pdfPageNumber, surfaceIdentity]);
+
+  useEffect(() => {
+    measuresRef.current = measures;
+  }, [measures]);
 
   useEffect(() => {
     if (!shouldRenderHighlights) return;
@@ -560,7 +466,14 @@ function ScoreViewer({
       return;
     }
 
-    if (!pdfViewerRef.current || !pdfCanvasStackRef.current || !nextCurrentMeasure) return;
+    if (
+      !pdfViewerRef.current ||
+      !pdfCanvasStackRef.current ||
+      !nextCurrentMeasure ||
+      Number(nextCurrentMeasure.page) !== pdfPageNumber
+    ) {
+      return;
+    }
 
     const highlightRect = calculateHighlightRect(nextCurrentMeasure);
 
@@ -578,143 +491,103 @@ function ScoreViewer({
     scrolledPageNumberRef.current = pdfPageNumber;
   }, [
     calculateHighlightRect,
+    currentMeasureMatchesPage,
     displayMeasureIndex,
     isStudentPageView,
     pdfPageNumber,
-    renderSyncVersion,
+    readySurface?.height,
+    readySurface?.identity,
+    readySurface?.width,
     shouldRenderHighlights,
   ]);
 
   useEffect(() => {
-    if (viewerMode !== STUDENT_MODE) return;
-
-    console.log('[student] state', {
-      hasPdfUrl: Boolean(pdfUrl),
-      measureIndex: displayMeasureIndex,
-      pdfPageNumber,
-      pdfSource: studentPdfSource,
-      renderedPageNumber,
-      measuresLength: measures.length,
-      displayPageNumber,
-      totalPages,
-    });
-  }, [
-    displayMeasureIndex,
-    displayPageNumber,
-    measures.length,
-    pdfPageNumber,
-    pdfUrl,
-    renderedPageNumber,
-    studentPdfSource,
-    totalPages,
-    viewerMode,
-  ]);
+    onDebugSnapshot(getDebugSnapshot('PDF lifecycle changed'));
+  }, [getDebugSnapshot, onDebugSnapshot]);
 
   useEffect(() => {
     console.log('[page-sync]', {
-      role: canEdit ? 'teacher' : viewerMode,
-      viewMode: viewerMode,
       displayPageNumber,
-      pdfPageNumber,
-      renderedPageNumber,
-      totalPages,
-      pdfSource: studentPdfSource,
+      documentReady,
       measureIndex: displayMeasureIndex,
+      pdfPageNumber,
+      pdfSource: studentPdfSource,
+      renderedPageNumber,
+      role: canEdit ? 'teacher' : viewerMode,
+      surfaceReady: isSurfaceReady,
+      totalPages: documentState.totalPages,
+      viewMode: viewerMode,
     });
   }, [
     canEdit,
     displayMeasureIndex,
     displayPageNumber,
+    documentReady,
+    documentState.totalPages,
+    isSurfaceReady,
     pdfPageNumber,
     renderedPageNumber,
     studentPdfSource,
-    totalPages,
     viewerMode,
   ]);
 
-  useEffect(() => {
-    if (!isStudentPageView) return;
-
-    const originDebugData = getPdfOriginDebugData();
-
-    console.log('[fit-page-sync]', {
-      studentViewMode,
-      displayPageNumber,
-      renderedPageNumber,
-      actualPagePropPassedToReactPdf,
-      currentMeasurePage: currentMeasure?.page ?? null,
-      totalPages,
-      canvasRect: originDebugData.canvasRect,
-      overlayRect: originDebugData.overlayRect,
-      highlightVisible: shouldRenderHighlights,
-    });
-  }, [
-    actualPagePropPassedToReactPdf,
-    currentMeasure?.page,
-    displayPageNumber,
-    isStudentPageView,
-    renderedPageNumber,
-    renderSyncVersion,
-    shouldRenderHighlights,
+  const pageKey = [
+    pdfUrl,
+    pdfPageNumber,
+    viewerMode,
+    studentPdfSource,
     studentViewMode,
-    totalPages,
-  ]);
+    renderResetVersion,
+  ].join('|');
 
   return (
     <div className="pdf-viewer" ref={pdfViewerRef}>
       {pdfUrl && (
         <Document
           file={pdfUrl}
-          key={pdfLayoutKey}
-          onLoadSuccess={(pdf) => {
-            pdfDocumentRef.current = pdf;
-            onTotalPagesChange(pdf.numPages);
-            updatePdfWidth();
-            setRenderSyncVersion((previousVersion) => previousVersion + 1);
-          }}
+          key={pdfUrl}
+          onLoadSuccess={(pdf) => handleDocumentLoadSuccess(pdf, pdfUrl)}
           onLoadError={(error) => console.error(error)}
         >
-          <div
-            className={`pdf-page-frame ${isStudentPageView ? 'fit-page-wrapper' : ''}`}
-            key={pdfLayoutKey}
-            ref={pdfPageFrameRef}
-          >
-            <div className="pdf-canvas-stack" ref={pdfCanvasStackRef}>
-              <Page
-                key={
-                  isStudentPageView
-                    ? `fit-${pdfUrl}-${studentPdfSource}-${displayPageNumber}`
-                    : `${pdfLayoutKey}-${pdfPageNumber}`
-                }
-                pageNumber={actualPagePropPassedToReactPdf}
-                width={renderedPdfPageWidth}
-                onClick={handlePageClick}
-                onLoadSuccess={handlePageLoadSuccess}
-                onRenderSuccess={() =>
-                  handlePageRenderSuccess(actualPagePropPassedToReactPdf)
-                }
-              />
+          {documentReady && (
+            <div
+              className={`pdf-page-frame ${isStudentPageView ? 'fit-page-wrapper' : ''}`}
+              ref={pdfPageFrameRef}
+            >
+              <div className="pdf-canvas-stack" ref={pdfCanvasStackRef}>
+                <Page
+                  key={pageKey}
+                  pageNumber={pdfPageNumber}
+                  width={renderedPdfPageWidth}
+                  onClick={handlePageClick}
+                  onLoadSuccess={(pdfPage) =>
+                    handlePageLoadSuccess(pdfPage, pageLoadIdentity)
+                  }
+                  onRenderSuccess={() =>
+                    handlePageRenderSuccess(surfaceIdentity, pdfPageNumber)
+                  }
+                />
 
-              <MeasureOverlay
-                calculateHighlightRect={calculateHighlightRect}
-                currentMeasure={shouldRenderHighlights ? currentMeasure : null}
-                currentMeasureIndex={displayMeasureIndex}
-                currentPageMeasures={shouldRenderHighlights ? currentPageMeasures : []}
-                draggedMeasureIndex={draggedMeasureIndex}
-                mode={mode}
-                onEndMeasureDrag={onEndMeasureDrag}
-                onHighlightRecalculated={logHighlightCalculation}
-                onMoveMeasure={onMoveMeasure}
-                onResizeMeasure={onResizeMeasure}
-                onSelectMeasure={onSelectMeasure}
-                onStartMeasureResize={onStartMeasureResize}
-                onStartMeasureDrag={onStartMeasureDrag}
-                onEndMeasureResize={onEndMeasureResize}
-                resizedMeasureIndex={resizedMeasureIndex}
-                selectedMeasureIndex={canEdit ? selectedMeasureIndex : -1}
-              />
+                <MeasureOverlay
+                  calculateHighlightRect={calculateHighlightRect}
+                  currentMeasure={shouldRenderHighlights ? currentMeasure : null}
+                  currentMeasureIndex={displayMeasureIndex}
+                  currentPageMeasures={shouldRenderHighlights ? currentPageMeasures : []}
+                  draggedMeasureIndex={draggedMeasureIndex}
+                  mode={mode}
+                  onEndMeasureDrag={onEndMeasureDrag}
+                  onEndMeasureResize={onEndMeasureResize}
+                  onMoveMeasure={onMoveMeasure}
+                  onResizeMeasure={onResizeMeasure}
+                  onSelectMeasure={onSelectMeasure}
+                  onStartMeasureDrag={onStartMeasureDrag}
+                  onStartMeasureResize={onStartMeasureResize}
+                  resizedMeasureIndex={resizedMeasureIndex}
+                  selectedMeasureIndex={canEdit ? selectedMeasureIndex : -1}
+                />
+              </div>
             </div>
-          </div>
+          )}
         </Document>
       )}
       {!pdfUrl && !canEdit && (
@@ -733,7 +606,6 @@ function MeasureOverlay({
   mode,
   onEndMeasureDrag,
   onEndMeasureResize,
-  onHighlightRecalculated,
   onMoveMeasure,
   onResizeMeasure,
   onSelectMeasure,
@@ -742,7 +614,6 @@ function MeasureOverlay({
   resizedMeasureIndex,
   selectedMeasureIndex,
 }) {
-  const overlayRef = useRef(null);
   const visibleMeasures =
     mode === REGISTER_MODE
       ? currentPageMeasures
@@ -751,7 +622,7 @@ function MeasureOverlay({
         : [];
 
   return (
-    <div className="overlay" ref={overlayRef}>
+    <div className="overlay">
       {visibleMeasures.map(({ measure, index }) => {
         const highlightRect = calculateHighlightRect(measure);
 
@@ -763,14 +634,6 @@ function MeasureOverlay({
           top: highlightRect.top,
           width: highlightRect.width,
         };
-
-        onHighlightRecalculated?.(
-          index,
-          measure,
-          highlightRect,
-          highlightStyle,
-          overlayRef.current,
-        );
 
         return (
           <button

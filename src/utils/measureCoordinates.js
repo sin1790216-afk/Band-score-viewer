@@ -1,14 +1,29 @@
-function getPositiveCoordinate(value) {
+export const NORMALIZED_COORDINATE_SPACE = 'normalized-page-v1';
+export const NORMALIZED_COORDINATE_STATUS = 'validated';
+export const LEGACY_COORDINATE_STATUS = 'legacy-bounds-unverified';
+export const NORMALIZED_COORDINATE_BASIS = {
+  height: 1,
+  source: 'normalized',
+  width: 1,
+};
+
+function getFiniteCoordinate(value, fallbackValue = 0) {
   const numberValue = Number(value);
 
-  return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : 0;
+  return Number.isFinite(numberValue) ? numberValue : fallbackValue;
 }
 
-function getBasisKey(basis) {
-  return `${basis.width}:${basis.height}`;
+function getPositiveCoordinate(value) {
+  const numberValue = getFiniteCoordinate(value);
+
+  return numberValue > 0 ? numberValue : 0;
 }
 
-export function getMeasureCoordinateBasis(measure) {
+function getExplicitCoordinateBasis(measure) {
+  if (measure?.coordinateSpace === NORMALIZED_COORDINATE_SPACE) {
+    return NORMALIZED_COORDINATE_BASIS;
+  }
+
   const coordinateWidth = getPositiveCoordinate(measure?.coordinateWidth);
   const coordinateHeight = getPositiveCoordinate(measure?.coordinateHeight);
 
@@ -45,138 +60,177 @@ export function getMeasureCoordinateBasis(measure) {
   return null;
 }
 
+function getConsistentPageBasis(pageMeasures) {
+  const explicitBases = pageMeasures
+    .map(getExplicitCoordinateBasis)
+    .filter(Boolean)
+    .filter((basis) => basis.source !== 'normalized');
+
+  if (explicitBases.length === 0) return null;
+
+  const [firstBasis] = explicitBases;
+  const hasOneBasis = explicitBases.every(
+    (basis) =>
+      basis.width === firstBasis.width && basis.height === firstBasis.height,
+  );
+
+  return hasOneBasis
+    ? {
+        ...firstBasis,
+        source: 'page-explicit-basis',
+      }
+    : null;
+}
+
+export function getMeasureCoordinateBasis(measure) {
+  return getExplicitCoordinateBasis(measure);
+}
+
 export function getLegacyPageBounds(pageMeasures) {
   return pageMeasures.reduce(
-    (bounds, measure) => ({
-      height: Math.max(bounds.height, Number(measure.y) + Number(measure.height)),
-      width: Math.max(bounds.width, Number(measure.x) + Number(measure.width)),
-    }),
+    (bounds, measure) => {
+      const x = getFiniteCoordinate(measure?.x);
+      const y = getFiniteCoordinate(measure?.y);
+      const width = getPositiveCoordinate(measure?.width);
+      const height = getPositiveCoordinate(measure?.height);
+
+      return {
+        height: Math.max(bounds.height, y + height),
+        width: Math.max(bounds.width, x + width),
+      };
+    },
     { height: 0, width: 0 },
   );
 }
 
-export function getPreferredPageCoordinateBasis(pageMeasures) {
-  const basisCounts = new Map();
-
-  pageMeasures.forEach((measure, index) => {
-    const basis = getMeasureCoordinateBasis(measure);
-
-    if (!basis) return;
-
-    const key = getBasisKey(basis);
-    const currentEntry = basisCounts.get(key);
-
-    basisCounts.set(key, {
-      basis,
-      count: (currentEntry?.count || 0) + 1,
-      firstIndex: currentEntry?.firstIndex ?? index,
-    });
-  });
-
-  return (
-    [...basisCounts.values()].sort(
-      (left, right) => right.count - left.count || left.firstIndex - right.firstIndex,
-    )[0]?.basis || null
-  );
-}
-
-export function getMeasureRenderBasis(measure, pageMeasures) {
-  const storedBasis = getMeasureCoordinateBasis(measure);
-
-  if (storedBasis) return storedBasis;
-
-  const legacyBounds = getLegacyPageBounds(pageMeasures);
-
-  if (legacyBounds.width <= 0 || legacyBounds.height <= 0) return null;
-
-  return {
-    ...legacyBounds,
-    source: 'legacy-bounds',
+function toCanonicalMeasure(measure, sourceBasis, coordinateStatus) {
+  const sourceWidth = getPositiveCoordinate(sourceBasis?.width) || 1;
+  const sourceHeight = getPositiveCoordinate(sourceBasis?.height) || 1;
+  const nextMeasure = {
+    ...measure,
+    coordinateHeight: 1,
+    coordinateSpace: NORMALIZED_COORDINATE_SPACE,
+    coordinateStatus,
+    coordinateWidth: 1,
+    height: getPositiveCoordinate(measure?.height) / sourceHeight,
+    width: getPositiveCoordinate(measure?.width) / sourceWidth,
+    x: getFiniteCoordinate(measure?.x) / sourceWidth,
+    y: getFiniteCoordinate(measure?.y) / sourceHeight,
   };
-}
 
-export function hasCoordinateMigrationNeed(measures) {
-  const pageBasisKeys = new Map();
-
-  for (const measure of measures) {
-    const coordinateWidth = getPositiveCoordinate(measure?.coordinateWidth);
-    const coordinateHeight = getPositiveCoordinate(measure?.coordinateHeight);
-
-    if (!coordinateWidth || !coordinateHeight) return true;
-
-    const pageKey = Number(measure.page) || 1;
-    const basisKey = `${coordinateWidth}:${coordinateHeight}`;
-    const existingBasisKey = pageBasisKeys.get(pageKey);
-
-    if (existingBasisKey && existingBasisKey !== basisKey) return true;
-
-    pageBasisKeys.set(pageKey, basisKey);
+  if (coordinateStatus === LEGACY_COORDINATE_STATUS) {
+    nextMeasure.legacyCoordinateHeight = sourceHeight;
+    nextMeasure.legacyCoordinateSource = sourceBasis?.source || 'unknown';
+    nextMeasure.legacyCoordinateWidth = sourceWidth;
   }
 
-  return false;
+  return nextMeasure;
 }
 
-export function migrateMeasuresToCoordinateBases(measures, pageRenderMetrics) {
-  const metricsByPage = new Map(
-    pageRenderMetrics.map((metrics) => [Number(metrics.page), metrics]),
-  );
+export function normalizeMeasureCoordinates(measures) {
+  if (!Array.isArray(measures)) return [];
+
   const measuresByPage = new Map();
 
   measures.forEach((measure) => {
-    const page = Number(measure.page) || 1;
+    const page = Number(measure?.page) || 1;
     const pageMeasures = measuresByPage.get(page) || [];
 
     pageMeasures.push(measure);
     measuresByPage.set(page, pageMeasures);
   });
 
-  const targetBasisByPage = new Map();
+  const legacyBasisByPage = new Map();
 
   measuresByPage.forEach((pageMeasures, page) => {
-    const preferredBasis = getPreferredPageCoordinateBasis(pageMeasures);
+    const legacyMeasures = pageMeasures.filter(
+      (measure) => !getExplicitCoordinateBasis(measure),
+    );
 
-    if (preferredBasis) {
-      targetBasisByPage.set(page, preferredBasis);
+    if (legacyMeasures.length === 0) return;
+
+    const consistentPageBasis = getConsistentPageBasis(pageMeasures);
+
+    if (consistentPageBasis) {
+      legacyBasisByPage.set(page, consistentPageBasis);
       return;
     }
 
-    const renderMetrics = metricsByPage.get(page);
+    const bounds = getLegacyPageBounds(legacyMeasures);
 
-    if (!renderMetrics) return;
-
-    const legacyBounds = getLegacyPageBounds(pageMeasures);
-
-    targetBasisByPage.set(page, {
-      height: Math.max(legacyBounds.height, renderMetrics.height),
-      source: 'teacher-render',
-      width: Math.max(legacyBounds.width, renderMetrics.width),
+    legacyBasisByPage.set(page, {
+      height: bounds.height || 1,
+      source: 'legacy-bounds',
+      width: bounds.width || 1,
     });
   });
 
   return measures.map((measure) => {
-    const page = Number(measure.page) || 1;
-    const targetBasis = targetBasisByPage.get(page);
+    if (isCanonicalMeasure(measure)) {
+      return {
+        ...measure,
+        coordinateHeight: 1,
+        coordinateSpace: NORMALIZED_COORDINATE_SPACE,
+        coordinateStatus: measure.coordinateStatus || NORMALIZED_COORDINATE_STATUS,
+        coordinateWidth: 1,
+      };
+    }
 
-    if (!targetBasis) return measure;
+    const explicitBasis = getExplicitCoordinateBasis(measure);
 
-    const sourceBasis = getMeasureCoordinateBasis(measure);
-    const scaleX = sourceBasis ? targetBasis.width / sourceBasis.width : 1;
-    const scaleY = sourceBasis ? targetBasis.height / sourceBasis.height : 1;
-    const alreadyMigrated =
-      sourceBasis?.source === 'coordinate' &&
-      sourceBasis.width === targetBasis.width &&
-      sourceBasis.height === targetBasis.height;
+    if (explicitBasis) {
+      return toCanonicalMeasure(
+        measure,
+        explicitBasis,
+        measure.coordinateStatus || NORMALIZED_COORDINATE_STATUS,
+      );
+    }
 
-    if (alreadyMigrated) return measure;
+    const page = Number(measure?.page) || 1;
 
-    return {
-      ...measure,
-      coordinateHeight: targetBasis.height,
-      coordinateWidth: targetBasis.width,
-      height: Number(measure.height) * scaleY,
-      width: Number(measure.width) * scaleX,
-      x: Number(measure.x) * scaleX,
-      y: Number(measure.y) * scaleY,
-    };
+    return toCanonicalMeasure(
+      measure,
+      legacyBasisByPage.get(page),
+      LEGACY_COORDINATE_STATUS,
+    );
   });
+}
+
+export function isCanonicalMeasure(measure) {
+  if (measure?.coordinateSpace !== NORMALIZED_COORDINATE_SPACE) return false;
+
+  return ['x', 'y', 'width', 'height'].every((field) =>
+    Number.isFinite(Number(measure[field])),
+  );
+}
+
+export function canonicalToRenderRect(measure, surfaceRect) {
+  if (
+    !isCanonicalMeasure(measure) ||
+    !surfaceRect ||
+    surfaceRect.width <= 0 ||
+    surfaceRect.height <= 0
+  ) {
+    return null;
+  }
+
+  return {
+    coordinateBasis: NORMALIZED_COORDINATE_BASIS,
+    height: Number(measure.height) * surfaceRect.height,
+    left: Number(measure.x) * surfaceRect.width,
+    scaleFactor: surfaceRect.width,
+    scaleX: surfaceRect.width,
+    scaleY: surfaceRect.height,
+    top: Number(measure.y) * surfaceRect.height,
+    width: Number(measure.width) * surfaceRect.width,
+  };
+}
+
+export function renderPointToCanonical(clientX, clientY, surfaceRect) {
+  if (!surfaceRect || surfaceRect.width <= 0 || surfaceRect.height <= 0) return null;
+
+  return {
+    x: (clientX - surfaceRect.left) / surfaceRect.width,
+    y: (clientY - surfaceRect.top) / surfaceRect.height,
+  };
 }

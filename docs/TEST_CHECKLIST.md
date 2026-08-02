@@ -30,6 +30,6 @@
 
 ## 명령 검증
 
+- [ ] `npm test`
 - [ ] `npm run lint`
 - [ ] `npm run build`
-

@@ -5,8 +5,9 @@ import { io } from 'socket.io-client';
 import './App.css';
 import ScoreViewer from './components/ScoreViewer.jsx';
 import {
-  hasCoordinateMigrationNeed,
-  migrateMeasuresToCoordinateBases,
+  NORMALIZED_COORDINATE_SPACE,
+  NORMALIZED_COORDINATE_STATUS,
+  normalizeMeasureCoordinates,
 } from './utils/measureCoordinates.js';
 
 const REGISTER_MODE = 'register';
@@ -61,7 +62,11 @@ function normalizeMeasure(measure) {
 }
 
 function normalizeMeasures(nextMeasures) {
-  return Array.isArray(nextMeasures) ? nextMeasures.map(normalizeMeasure) : [];
+  const normalizedMeasures = Array.isArray(nextMeasures)
+    ? nextMeasures.map(normalizeMeasure)
+    : [];
+
+  return normalizeMeasureCoordinates(normalizedMeasures);
 }
 
 function getTrimmedLyric(measure) {
@@ -125,7 +130,6 @@ function App() {
   const pdfObjectUrlRef = useRef('');
   const teacherPdfObjectUrlRef = useRef('');
   const debugSnapshotRef = useRef({});
-  const pendingCoordinateMigrationRef = useRef(false);
   const shouldPublishMeasuresRef = useRef(false);
   const syncStateRef = useRef({
     fileName: '',
@@ -171,28 +175,6 @@ function App() {
   const overlayMode = canEdit ? mode : PLAY_MODE;
   const handleDebugSnapshot = useCallback((snapshot) => {
     debugSnapshotRef.current = snapshot;
-  }, []);
-  const handleCoordinateMetricsReady = useCallback((pageMetrics) => {
-    setMeasures((previousMeasures) => {
-      const migratedMeasures = migrateMeasuresToCoordinateBases(previousMeasures, pageMetrics);
-      const didMigrate = migratedMeasures.some(
-        (measure, index) => measure !== previousMeasures[index],
-      );
-
-      if (!didMigrate) return previousMeasures;
-
-      const normalizedMeasures = normalizeMeasures(migratedMeasures);
-
-      pendingCoordinateMigrationRef.current = false;
-      shouldPublishMeasuresRef.current = true;
-
-      console.log('[coordinate-migration] Teacher measures migrated', {
-        measureCount: normalizedMeasures.length,
-        pages: pageMetrics.map((metrics) => metrics.page),
-      });
-
-      return normalizedMeasures;
-    });
   }, []);
 
   function publishSyncState(nextSyncState) {
@@ -345,7 +327,6 @@ function App() {
     dragStateRef.current = null;
     resizeStateRef.current = null;
     measuresRef.current = [];
-    pendingCoordinateMigrationRef.current = false;
     setMeasures([]);
     publishMeasures([]);
     setSyncedMeasureIndex(0);
@@ -384,14 +365,7 @@ function App() {
 
       const nextMeasures = normalizeMeasures(data);
 
-      pendingCoordinateMigrationRef.current = hasCoordinateMigrationNeed(nextMeasures);
-
-      if (pendingCoordinateMigrationRef.current) {
-        shouldPublishMeasuresRef.current = false;
-        setMeasures(nextMeasures);
-      } else {
-        updateMeasures(nextMeasures);
-      }
+      updateMeasures(nextMeasures);
       setSyncedMeasureIndex(0);
       setSelectedMeasureIndex(-1);
     };
@@ -399,19 +373,24 @@ function App() {
     reader.readAsText(file);
   }
 
-  function addMeasure(event, pageMetrics) {
+  function addMeasure(pageMetrics) {
     if (!canEdit || mode !== REGISTER_MODE || !pageMetrics) return;
 
-    const { coordinateBasis, pageNumber: renderedPageNumber, pageRect, scaleX, scaleY } =
-      pageMetrics;
-    const x = (event.clientX - pageRect.left) / scaleX;
-    const y = (event.clientY - pageRect.top) / scaleY;
+    const {
+      coordinateBasis,
+      pageNumber: renderedPageNumber,
+      point,
+      scaleX,
+      scaleY,
+    } = pageMetrics;
     const nextMeasure = {
       page: renderedPageNumber,
       coordinateHeight: coordinateBasis.height,
+      coordinateSpace: NORMALIZED_COORDINATE_SPACE,
+      coordinateStatus: NORMALIZED_COORDINATE_STATUS,
       coordinateWidth: coordinateBasis.width,
-      x: x - DEFAULT_MEASURE.width / scaleX / 2,
-      y: y - DEFAULT_MEASURE.height / scaleY / 2,
+      x: point.x - DEFAULT_MEASURE.width / scaleX / 2,
+      y: point.y - DEFAULT_MEASURE.height / scaleY / 2,
       ...DEFAULT_MEASURE,
       height: DEFAULT_MEASURE.height / scaleY,
       width: DEFAULT_MEASURE.width / scaleX,
@@ -815,7 +794,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (pendingCoordinateMigrationRef.current || !shouldPublishMeasuresRef.current) return;
+    if (!shouldPublishMeasuresRef.current) return;
 
     shouldPublishMeasuresRef.current = false;
     publishMeasures(measures);
@@ -1068,7 +1047,6 @@ function App() {
             isStudentPageView={isStudentPageView}
             measures={measures}
             mode={overlayMode}
-            onCoordinateMetricsReady={handleCoordinateMetricsReady}
             onDebugSnapshot={handleDebugSnapshot}
             onEndMeasureDrag={endMeasureDrag}
             onEndMeasureResize={endMeasureResize}
@@ -1085,7 +1063,6 @@ function App() {
             selectedMeasureIndex={selectedMeasureIndex}
             studentPdfSource={studentPdfSource}
             studentViewMode={studentViewMode}
-            totalPages={totalPages}
             viewerMode={viewerMode}
           />
         </section>

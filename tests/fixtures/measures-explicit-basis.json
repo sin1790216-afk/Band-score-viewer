@@ -1,0 +1,26 @@
+[
+  {
+    "page": 1,
+    "x": 40,
+    "y": 60,
+    "width": 120,
+    "height": 80,
+    "coordinateWidth": 400,
+    "coordinateHeight": 600,
+    "bpm": 120,
+    "beats": 4,
+    "lyric": "첫 번째 마디"
+  },
+  {
+    "page": 1,
+    "x": 200,
+    "y": 300,
+    "width": 140,
+    "height": 90,
+    "coordinateWidth": 400,
+    "coordinateHeight": 600,
+    "bpm": 90,
+    "beats": 3,
+    "lyric": "두 번째 마디"
+  }
+]

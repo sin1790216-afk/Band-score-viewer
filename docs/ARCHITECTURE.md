@@ -25,12 +25,25 @@ Student는 `sync:state`의 페이지와 마디를 표시 기준으로 사용한�
 
 ## PDF 렌더와 좌표
 
-`react-pdf`의 `Page`와 `.overlay`는 `.pdf-canvas-stack` 안에 함께 배치된다. 하이라이트는 현재 기기의 canvas stack DOM 크기와 measure의 저장 좌표 기준을 이용해 `scaleX`, `scaleY`를 로컬에서 계산한다. Teacher의 렌더 폭은 Student에 전달하거나 강제하지 않는다.
+`react-pdf`의 `Page`와 `.overlay`는 `.pdf-canvas-stack` 안에 함께 배치된다. Measure는
+페이지 전체를 `1 x 1`로 본 canonical 좌표를 사용한다. 하이라이트는 canonical 좌표에
+현재 기기의 canvas stack DOM width/height를 한 번 곱해 계산한다. Pointer 입력은 같은
+surface width/height로 나누어 canonical 좌표로 저장한다. Teacher와 Student는 같은 순수
+변환 함수를 사용하며 Teacher의 렌더 폭은 Student에 전달하거나 강제하지 않는다.
 
-`renderedPageNumber`는 요청 페이지가 실제로 렌더 완료됐는지 확인하는 상태다. 렌더 완료 전에는 하이라이트를 표시하지 않으며, `ResizeObserver`와 화면 크기 변경으로 좌표 재계산을 유도한다.
+PDF lifecycle은 `documentState`, 요청 page, `surfaceIdentity`, `readySurface` 순서로
+진행된다. `surfaceIdentity`에는 PDF object URL, page, 역할/보기 방식, render reset,
+요청 render width가 포함된다. 현재 identity의 `Page.onRenderSuccess`가 유효한 canvas와
+surface geometry를 확인한 경우에만 `readySurface`가 된다. 이전 PDF나 페이지의 완료
+callback은 무시되고 overlay와 스크롤은 현재 surface가 ready일 때만 실행된다.
+
+`ResizeObserver`는 viewer 크기를 Page render width에 반영하고, 현재 ready surface의 실제
+geometry 변경을 갱신한다. 렌더 크기는 기기 로컬에만 존재한다.
 
 ## 프론트엔드 책임 경계
 
 `src/App.jsx`는 역할 전환, 논리 페이지 결정, PDF/JSON 파일 상태, measure 편집, 자동재생, 가사와 Socket 이벤트를 담당한다. `src/components/ScoreViewer.jsx`는 `displayPageNumber` 하나를 입력받아 `react-pdf` 렌더, canvas/overlay DOM, 좌표 변환, 렌더 완료 상태, 크기 관찰과 자동 스크롤을 담당한다.
 
-현재 `renderSyncVersion` 기반 재계산 흐름은 동작 보존을 위해 `ScoreViewer` 내부에 그대로 남아 있다. 다음 리팩터링 단계에서 PDF 렌더 순서와 재계산 트리거를 안정화한다.
+과거 effect 강제 재실행에 사용하던 `renderSyncVersion`은 제거했다. 현재는 동일한
+`surfaceIdentity`의 document/page render 완료 여부가 overlay 표시와 자동 스크롤의
+명시적 조건이다.
