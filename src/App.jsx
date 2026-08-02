@@ -1,13 +1,29 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import { io } from 'socket.io-client';
 
 import './App.css';
 import ScoreViewer from './components/ScoreViewer.jsx';
 import {
+  createInitialProjectState,
+  DEFAULT_MEASURE,
+  exportMeasuresJson,
+  getPositiveNumber,
+  importMeasuresJson,
+  normalizeMeasures,
+  PROJECT_ACTIONS,
+  projectReducer,
+} from './state/projectState.js';
+import {
+  createInitialSessionState,
+  getLogicalSyncState,
+  INITIAL_SYNC_STATE,
+  SESSION_ACTIONS,
+  sessionReducer,
+} from './state/sessionState.js';
+import {
   NORMALIZED_COORDINATE_SPACE,
   NORMALIZED_COORDINATE_STATUS,
-  normalizeMeasureCoordinates,
 } from './utils/measureCoordinates.js';
 
 const REGISTER_MODE = 'register';
@@ -26,14 +42,6 @@ const SOCKET_SERVER_URL =
   `${window.location.protocol}//${formatSocketHost(window.location.hostname)}:${SOCKET_PORT}`;
 const SAME_ORIGIN_SOCKET_URL = window.location.origin;
 
-const DEFAULT_MEASURE = {
-  width: 140,
-  height: 90,
-  bpm: 120,
-  beats: 4,
-  lyric: '',
-};
-
 const MIN_MEASURE_SIZE = {
   width: 40,
   height: 30,
@@ -41,32 +49,6 @@ const MIN_MEASURE_SIZE = {
 
 function getMeasureFileName(fileName) {
   return fileName ? fileName.replace(/\.pdf$/i, '.json') : 'measures.json';
-}
-
-function getPositiveNumber(value, fallbackValue) {
-  const numberValue = Number(value);
-
-  return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : fallbackValue;
-}
-
-function normalizeMeasure(measure) {
-  const nextMeasure = measure && typeof measure === 'object' ? measure : {};
-
-  return {
-    ...DEFAULT_MEASURE,
-    ...nextMeasure,
-    bpm: getPositiveNumber(nextMeasure.bpm, DEFAULT_MEASURE.bpm),
-    beats: getPositiveNumber(nextMeasure.beats, DEFAULT_MEASURE.beats),
-    lyric: typeof nextMeasure.lyric === 'string' ? nextMeasure.lyric : '',
-  };
-}
-
-function normalizeMeasures(nextMeasures) {
-  const normalizedMeasures = Array.isArray(nextMeasures)
-    ? nextMeasures.map(normalizeMeasure)
-    : [];
-
-  return normalizeMeasureCoordinates(normalizedMeasures);
 }
 
 function getTrimmedLyric(measure) {
@@ -105,14 +87,6 @@ function toPdfBlobPart(data) {
   return null;
 }
 
-function getLogicalSyncState(syncState) {
-  return {
-    fileName: syncState?.fileName || '',
-    pageNumber: syncState?.pageNumber || 1,
-    measureIndex: syncState?.measureIndex || 0,
-  };
-}
-
 function App() {
   const fileInputRef = useRef(null);
   const jsonInputRef = useRef(null);
@@ -131,34 +105,38 @@ function App() {
   const teacherPdfObjectUrlRef = useRef('');
   const debugSnapshotRef = useRef({});
   const shouldPublishMeasuresRef = useRef(false);
-  const syncStateRef = useRef({
-    fileName: '',
-    pageNumber: 1,
-    measureIndex: 0,
-  });
+  const syncStateRef = useRef({ ...INITIAL_SYNC_STATE });
 
-  const [fileName, setFileName] = useState('');
-  const [pageNumber, setPageNumber] = useState(1);
+  const [projectState, dispatchProject] = useReducer(
+    projectReducer,
+    undefined,
+    createInitialProjectState,
+  );
+  const [sessionState, dispatchSession] = useReducer(
+    sessionReducer,
+    undefined,
+    createInitialSessionState,
+  );
   const [totalPages, setTotalPages] = useState(0);
   const [pdfUrl, setPdfUrl] = useState('');
-  const [measures, setMeasures] = useState([]);
-  const [measureIndex, setMeasureIndex] = useState(0);
   const [selectedMeasureIndex, setSelectedMeasureIndex] = useState(-1);
   const [draggedMeasureIndex, setDraggedMeasureIndex] = useState(-1);
   const [resizedMeasureIndex, setResizedMeasureIndex] = useState(-1);
-  const [isAutoPlaying, setIsAutoPlaying] = useState(false);
-  const [isRepeatEnabled, setIsRepeatEnabled] = useState(false);
   const [mode, setMode] = useState(REGISTER_MODE);
   const [isLyricEditorOpen, setIsLyricEditorOpen] = useState(false);
   const [pdfRenderResetVersion, setPdfRenderResetVersion] = useState(0);
   const [studentViewMode, setStudentViewMode] = useState(STUDENT_ZOOM_VIEW);
   const [studentPdfSource, setStudentPdfSource] = useState(TEACHER_PDF_SOURCE);
   const [viewerMode, setViewerMode] = useState(ROLE_SELECT_MODE);
-  const [syncState, setSyncState] = useState({
-    fileName: '',
-    pageNumber: 1,
-    measureIndex: 0,
-  });
+  const { measures, pdfMetadata } = projectState;
+  const fileName = pdfMetadata.fileName;
+  const {
+    isAutoPlaying,
+    isRepeatEnabled,
+    measureIndex,
+    pageNumber,
+    syncState,
+  } = sessionState;
 
   const canEdit = viewerMode === TEACHER_MODE;
   const isStudentPageView =
@@ -184,7 +162,10 @@ function App() {
     });
     let mergedSyncState = syncStateRef.current;
 
-    setSyncState(logicalNextSyncState);
+    dispatchSession({
+      type: SESSION_ACTIONS.APPLY_SYNC_STATE,
+      syncState: logicalNextSyncState,
+    });
 
     mergedSyncState = {
       ...syncStateRef.current,
@@ -195,18 +176,41 @@ function App() {
   }
 
   function setSyncedFileName(nextFileName) {
-    setFileName(nextFileName);
+    dispatchProject({
+      type: PROJECT_ACTIONS.SET_PDF_FILE_NAME,
+      fileName: nextFileName,
+    });
     publishSyncState({ fileName: nextFileName });
   }
 
   function setSyncedPageNumber(nextPageNumber) {
-    setPageNumber(nextPageNumber);
+    dispatchSession({
+      type: SESSION_ACTIONS.SET_PAGE_NUMBER,
+      pageNumber: nextPageNumber,
+    });
     publishSyncState({ pageNumber: nextPageNumber });
   }
 
   function setSyncedMeasureIndex(nextMeasureIndex) {
-    setMeasureIndex(nextMeasureIndex);
+    dispatchSession({
+      type: SESSION_ACTIONS.SET_MEASURE_INDEX,
+      measureIndex: nextMeasureIndex,
+    });
     publishSyncState({ measureIndex: nextMeasureIndex });
+  }
+
+  function setAutoPlaying(nextIsAutoPlaying) {
+    dispatchSession({
+      type: SESSION_ACTIONS.SET_AUTO_PLAYING,
+      isAutoPlaying: nextIsAutoPlaying,
+    });
+  }
+
+  function setRepeatEnabled(nextIsRepeatEnabled) {
+    dispatchSession({
+      type: SESSION_ACTIONS.SET_REPEAT_ENABLED,
+      isRepeatEnabled: nextIsRepeatEnabled,
+    });
   }
 
   function setLocalPdfUrl(nextPdfUrl, options = {}) {
@@ -282,7 +286,6 @@ function App() {
 
     // Student local PDFs must match the teacher PDF layout for measure overlays to align.
     setStudentPdfSource(LOCAL_PDF_SOURCE);
-    setFileName(file.name);
     resetPdfRenderState();
     setLocalPdfUrl(URL.createObjectURL(file));
   }
@@ -291,16 +294,9 @@ function App() {
     socketRef.current?.emit('measures:update', normalizeMeasures(nextMeasures));
   }
 
-  function updateMeasures(nextMeasuresOrUpdater) {
+  function dispatchMeasureUpdate(action) {
     shouldPublishMeasuresRef.current = true;
-    setMeasures((previousMeasures) => {
-      const nextMeasures =
-        typeof nextMeasuresOrUpdater === 'function'
-          ? nextMeasuresOrUpdater(previousMeasures)
-          : nextMeasuresOrUpdater;
-
-      return normalizeMeasures(nextMeasures);
-    });
+    dispatchProject(action);
   }
 
   async function publishPdf(file) {
@@ -327,7 +323,7 @@ function App() {
     dragStateRef.current = null;
     resizeStateRef.current = null;
     measuresRef.current = [];
-    setMeasures([]);
+    dispatchProject({ type: PROJECT_ACTIONS.RESET_MEASURES });
     publishMeasures([]);
     setSyncedMeasureIndex(0);
     setSelectedMeasureIndex(-1);
@@ -341,7 +337,7 @@ function App() {
   }
 
   function saveJson() {
-    const data = JSON.stringify(measures, null, 2);
+    const data = exportMeasuresJson(measures);
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -361,11 +357,12 @@ function App() {
     const reader = new FileReader();
 
     reader.onload = (readerEvent) => {
-      const data = JSON.parse(readerEvent.target.result);
+      const nextMeasures = importMeasuresJson(readerEvent.target.result);
 
-      const nextMeasures = normalizeMeasures(data);
-
-      updateMeasures(nextMeasures);
+      dispatchMeasureUpdate({
+        type: PROJECT_ACTIONS.IMPORT_MEASURES,
+        measures: nextMeasures,
+      });
       setSyncedMeasureIndex(0);
       setSelectedMeasureIndex(-1);
     };
@@ -396,10 +393,10 @@ function App() {
       width: DEFAULT_MEASURE.width / scaleX,
     };
 
-    updateMeasures((previousMeasures) => {
-      const nextMeasures = [...previousMeasures, nextMeasure];
-      setSelectedMeasureIndex(nextMeasures.length - 1);
-      return nextMeasures;
+    setSelectedMeasureIndex(measures.length);
+    dispatchMeasureUpdate({
+      type: PROJECT_ACTIONS.ADD_MEASURE,
+      measure: nextMeasure,
     });
   }
 
@@ -413,9 +410,10 @@ function App() {
           ? Math.max(0, measures.length - 2)
           : measureIndex;
 
-    updateMeasures((previousMeasures) =>
-      previousMeasures.filter((_, index) => index !== selectedMeasureIndex),
-    );
+    dispatchMeasureUpdate({
+      type: PROJECT_ACTIONS.DELETE_MEASURE,
+      index: selectedMeasureIndex,
+    });
     setSyncedMeasureIndex(nextMeasureIndex);
     setSelectedMeasureIndex(-1);
   }, [canEdit, measureIndex, measures.length, mode, selectedMeasureIndex]);
@@ -432,7 +430,10 @@ function App() {
     event.currentTarget.setPointerCapture?.(event.pointerId);
 
     dragStateRef.current = {
-      coordinateBasis: highlightRect?.coordinateBasis || null,
+      coordinateHeight:
+        measure.coordinateHeight || highlightRect?.coordinateBasis?.height || measure.height,
+      coordinateWidth:
+        measure.coordinateWidth || highlightRect?.coordinateBasis?.width || measure.width,
       index,
       pointerId: event.pointerId,
       scaleX: highlightRect?.scaleX || 1,
@@ -458,21 +459,16 @@ function App() {
     const nextX = dragState.startX + (event.clientX - dragState.startClientX) / dragState.scaleX;
     const nextY = dragState.startY + (event.clientY - dragState.startClientY) / dragState.scaleY;
 
-    updateMeasures((previousMeasures) =>
-      previousMeasures.map((measure, index) =>
-        index === dragState.index
-          ? {
-              ...measure,
-              coordinateHeight:
-                measure.coordinateHeight || dragState.coordinateBasis?.height || measure.height,
-              coordinateWidth:
-                measure.coordinateWidth || dragState.coordinateBasis?.width || measure.width,
-              x: nextX,
-              y: nextY,
-            }
-          : measure,
-      ),
-    );
+    dispatchMeasureUpdate({
+      type: PROJECT_ACTIONS.UPDATE_MEASURE,
+      index: dragState.index,
+      changes: {
+        coordinateHeight: dragState.coordinateHeight,
+        coordinateWidth: dragState.coordinateWidth,
+        x: nextX,
+        y: nextY,
+      },
+    });
   }
 
   function endMeasureDrag(event) {
@@ -500,7 +496,10 @@ function App() {
     event.currentTarget.setPointerCapture?.(event.pointerId);
 
     resizeStateRef.current = {
-      coordinateBasis: highlightRect?.coordinateBasis || null,
+      coordinateHeight:
+        measure.coordinateHeight || highlightRect?.coordinateBasis?.height || measure.height,
+      coordinateWidth:
+        measure.coordinateWidth || highlightRect?.coordinateBasis?.width || measure.width,
       index,
       pointerId: event.pointerId,
       scaleX: highlightRect?.scaleX || 1,
@@ -533,27 +532,22 @@ function App() {
       resizeState.startHeight + (event.clientY - resizeState.startClientY) / resizeState.scaleY,
     );
 
-    updateMeasures((previousMeasures) =>
-      previousMeasures.map((measure, index) =>
-        index === resizeState.index
-          ? {
-              ...measure,
-              coordinateHeight:
-                measure.coordinateHeight || resizeState.coordinateBasis?.height || measure.height,
-              coordinateWidth:
-                measure.coordinateWidth || resizeState.coordinateBasis?.width || measure.width,
-              width:
-                resizeState.axis === 'horizontal' || resizeState.axis === 'both'
-                  ? resizedWidth
-                  : measure.width,
-              height:
-                resizeState.axis === 'vertical' || resizeState.axis === 'both'
-                  ? resizedHeight
-                  : measure.height,
-            }
-          : measure,
-      ),
-    );
+    dispatchMeasureUpdate({
+      type: PROJECT_ACTIONS.UPDATE_MEASURE,
+      index: resizeState.index,
+      changes: {
+        coordinateHeight: resizeState.coordinateHeight,
+        coordinateWidth: resizeState.coordinateWidth,
+        width:
+          resizeState.axis === 'horizontal' || resizeState.axis === 'both'
+            ? resizedWidth
+            : resizeState.startWidth,
+        height:
+          resizeState.axis === 'vertical' || resizeState.axis === 'both'
+            ? resizedHeight
+            : resizeState.startHeight,
+      },
+    });
   }
 
   function endMeasureResize(event) {
@@ -578,16 +572,13 @@ function App() {
         : selectedMeasure?.beats || DEFAULT_MEASURE.beats;
     const nextValue = getPositiveNumber(value, fallbackValue);
 
-    updateMeasures((previousMeasures) =>
-      previousMeasures.map((measure, index) =>
-        index === selectedMeasureIndex
-          ? {
-              ...measure,
-              [field]: nextValue,
-            }
-          : measure,
-      ),
-    );
+    dispatchMeasureUpdate({
+      type: PROJECT_ACTIONS.UPDATE_MEASURE,
+      index: selectedMeasureIndex,
+      changes: {
+        [field]: nextValue,
+      },
+    });
   }
 
   function openLyricEditor() {
@@ -595,12 +586,11 @@ function App() {
   }
 
   function updateMeasureLyric(measureIndexToUpdate, lyric) {
-    updateMeasures((previousMeasures) =>
-      previousMeasures.map((measure, index) => ({
-        ...measure,
-        lyric: index === measureIndexToUpdate ? lyric : measure.lyric,
-      })),
-    );
+    dispatchMeasureUpdate({
+      type: PROJECT_ACTIONS.UPDATE_MEASURE,
+      index: measureIndexToUpdate,
+      changes: { lyric },
+    });
   }
 
   function goToPage(nextPageNumber) {
@@ -631,7 +621,7 @@ function App() {
 
   function stopAutoplay() {
     clearAutoplayTimer();
-    setIsAutoPlaying(false);
+    setAutoPlaying(false);
   }
 
   function goToMeasureFromAutoplay(nextMeasureIndex) {
@@ -652,7 +642,7 @@ function App() {
     const currentAutoplayMeasure = measuresRef.current[currentIndex];
 
     if (!currentAutoplayMeasure) {
-      setIsAutoPlaying(false);
+      setAutoPlaying(false);
       return;
     }
 
@@ -661,7 +651,7 @@ function App() {
 
       if (isLastMeasure && !isRepeatEnabledRef.current) {
         clearAutoplayTimer();
-        setIsAutoPlaying(false);
+        setAutoPlaying(false);
         return;
       }
 
@@ -671,7 +661,7 @@ function App() {
 
       if (nextMeasureIndex >= measuresRef.current.length - 1 && !isRepeatEnabledRef.current) {
         clearAutoplayTimer();
-        setIsAutoPlaying(false);
+        setAutoPlaying(false);
         return;
       }
 
@@ -684,7 +674,7 @@ function App() {
 
     const startMeasureIndex = Math.min(measureIndexRef.current, measures.length - 1);
 
-    setIsAutoPlaying(true);
+    setAutoPlaying(true);
     scheduleNextAutoplayStep(startMeasureIndex);
   }
 
@@ -722,8 +712,14 @@ function App() {
           ...syncStateRef.current,
           ...nextSyncState,
         });
-        setFileName(syncStateRef.current.fileName);
-        setSyncState(syncStateRef.current);
+        dispatchProject({
+          type: PROJECT_ACTIONS.SET_PDF_FILE_NAME,
+          fileName: syncStateRef.current.fileName,
+        });
+        dispatchSession({
+          type: SESSION_ACTIONS.APPLY_SYNC_STATE,
+          syncState: syncStateRef.current,
+        });
         console.log('[socket] received sync:state', syncStateRef.current);
         console.table({
           ...debugSnapshotRef.current,
@@ -742,7 +738,10 @@ function App() {
           return;
         }
 
-        setFileName(nextPdf.fileName);
+        dispatchProject({
+          type: PROJECT_ACTIONS.SET_PDF_FILE_NAME,
+          fileName: nextPdf.fileName,
+        });
         if (
           viewerModeRef.current === TEACHER_MODE ||
           studentPdfSourceRef.current === TEACHER_PDF_SOURCE
@@ -766,7 +765,10 @@ function App() {
         const normalizedMeasures = normalizeMeasures(nextMeasures);
 
         measuresRef.current = normalizedMeasures;
-        setMeasures(normalizedMeasures);
+        dispatchProject({
+          type: PROJECT_ACTIONS.REPLACE_MEASURES,
+          measures: normalizedMeasures,
+        });
         console.log(
           '[socket] received measures:state',
           Array.isArray(nextMeasures) ? nextMeasures.length : 0,
@@ -997,7 +999,7 @@ function App() {
             onPdfSelected={selectPdf}
             onSaveJson={saveJson}
             onSetMode={setMode}
-            onSetRepeatEnabled={setIsRepeatEnabled}
+            onSetRepeatEnabled={setRepeatEnabled}
             onGoToPage={goToPage}
             onGoToMeasure={goToMeasure}
             onOpenLyricEditor={openLyricEditor}

@@ -10,7 +10,7 @@
     "build": "vite build",
     "fixture:pdf": "node tests/createTestPdf.mjs",
     "lint": "oxlint",
-    "test": "node --test tests/measureCoordinates.test.js tests/pdfRenderLifecycle.test.js",
+    "test": "node --test tests/*.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

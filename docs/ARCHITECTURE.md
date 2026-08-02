@@ -42,7 +42,13 @@ geometry 변경을 갱신한다. 렌더 크기는 기기 로컬에만 존재한�
 
 ## 프론트엔드 책임 경계
 
-`src/App.jsx`는 역할 전환, 논리 페이지 결정, PDF/JSON 파일 상태, measure 편집, 자동재생, 가사와 Socket 이벤트를 담당한다. `src/components/ScoreViewer.jsx`는 `displayPageNumber` 하나를 입력받아 `react-pdf` 렌더, canvas/overlay DOM, 좌표 변환, 렌더 완료 상태, 크기 관찰과 자동 스크롤을 담당한다.
+프론트엔드 상태는 다음 소유권으로 구분한다.
+
+- Project State (`src/state/projectState.js`): Teacher PDF 파일명 metadata와 canonical measures를 소유한다. Measure CRUD, BPM/Beats/lyric 보정, 기존 배열 JSON import/export는 순수 함수로 처리한다.
+- Session State (`src/state/sessionState.js`): Teacher의 논리 페이지·마디, 자동재생/Repeat 상태와 수신한 논리 `syncState`를 소유한다.
+- Local View State (`src/App.jsx`): 역할 선택, Student 개인 PDF와 보기 방식, 선택/드래그/resize 표시 상태, 파일 input, Object URL과 render reset처럼 해당 기기에서만 의미가 있는 상태를 소유한다.
+
+`src/App.jsx`는 이 상태들의 UI 이벤트와 파일·Socket·타이머 부수효과를 조율한다. `src/components/ScoreViewer.jsx`는 `displayPageNumber` 하나를 입력받아 `react-pdf` 렌더, canvas/overlay DOM, 좌표 변환, 렌더 완료 상태, 크기 관찰과 자동 스크롤을 담당한다.
 
 과거 effect 강제 재실행에 사용하던 `renderSyncVersion`은 제거했다. 현재는 동일한
 `surfaceIdentity`의 document/page render 완료 여부가 overlay 표시와 자동 스크롤의

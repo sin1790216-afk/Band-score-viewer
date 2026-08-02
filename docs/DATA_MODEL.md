@@ -36,6 +36,10 @@ JSON 파일은 measure 객체 배열이다. 기존 핵심 필드는 유지된다
 확정할 수 없으므로 실제 수업 데이터 검증이 필요하다. JSON 저장은 canonical measures
 배열을 기록한다.
 
+런타임의 Project State는 `{ pdfMetadata: { fileName }, measures }`로 구성되지만, 이는 내부
+상태 소유권을 구분하기 위한 구조다. JSON 저장 형식은 project wrapper가 아닌 기존 measure
+배열을 그대로 유지한다.
+
 ## 현재 syncState
 
 ```js
