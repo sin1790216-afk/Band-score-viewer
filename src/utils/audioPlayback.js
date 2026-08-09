@@ -6,6 +6,11 @@ export const STUDENT_AUDIO_PICKER_RECOVERY_KEY =
 export const LOCAL_AUDIO_PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
 export const LOCAL_AUDIO_WAVEFORM_MAX_ZOOM = 32;
 export const LOCAL_AUDIO_WAVEFORM_MIN_ZOOM = 1;
+export const COUNT_IN_ACCENT_FREQUENCY = 1_200;
+export const COUNT_IN_BEAT_FREQUENCY = 800;
+
+const DEFAULT_COUNT_IN_BPM = 120;
+const DEFAULT_COUNT_IN_BEATS = 4;
 
 const LOCAL_AUDIO_FILE_EXTENSIONS =
   /\.(aac|flac|m4a|mp3|oga|ogg|wav)$/i;
@@ -99,6 +104,66 @@ export function getWaveformDraggedTime({
     Math.max(visibleDuration, 0);
 
   return clampAudioTime(startTime - draggedDuration, duration);
+}
+
+export function getPinchWaveformState({
+  anchorClientX,
+  anchorTime,
+  currentDistance,
+  duration,
+  rectLeft,
+  rectWidth,
+  startDistance,
+  startZoom,
+}) {
+  const distanceRatio =
+    Number.isFinite(currentDistance) &&
+    Number.isFinite(startDistance) &&
+    startDistance > 0
+      ? currentDistance / startDistance
+      : 1;
+  const zoom = normalizeWaveformZoom(startZoom * distanceRatio);
+  const visibleDuration = getWaveformVisibleDuration(duration, zoom);
+  const anchorRatio =
+    Number.isFinite(rectWidth) && rectWidth > 0
+      ? (anchorClientX - rectLeft) / rectWidth
+      : 0.5;
+  const currentTime = clampAudioTime(
+    anchorTime - (anchorRatio - 0.5) * visibleDuration,
+    duration,
+  );
+
+  return {
+    currentTime,
+    zoom,
+  };
+}
+
+export function getCountInTiming(bpm, beats) {
+  const numericBpm = Number(bpm);
+  const numericBeats = Number(beats);
+  const safeBpm =
+    Number.isFinite(numericBpm) && numericBpm > 0
+      ? numericBpm
+      : DEFAULT_COUNT_IN_BPM;
+  const safeBeats =
+    Number.isFinite(numericBeats) && numericBeats > 0
+      ? Math.max(1, Math.round(numericBeats))
+      : DEFAULT_COUNT_IN_BEATS;
+  const beatDurationSeconds = 60 / safeBpm;
+
+  return {
+    beatDurationSeconds,
+    beats: safeBeats,
+    bpm: safeBpm,
+    totalDurationSeconds: beatDurationSeconds * safeBeats,
+  };
+}
+
+export function getCountInFrequency(beatIndex) {
+  return beatIndex === 0
+    ? COUNT_IN_ACCENT_FREQUENCY
+    : COUNT_IN_BEAT_FREQUENCY;
 }
 
 export function createWaveformPeaks(channelData, peakCount = 2_048) {

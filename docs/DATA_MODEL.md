@@ -64,6 +64,18 @@ Student가 직접 선택한 로컬 음원 파일은 데이터 모델에 저장�
 파일 경로, 재생속도와 분석한 파형 peak는 JSON, `.bsv`, `localStorage`, Socket에 포함되지 않는다.
 파형에서 지정한 시작 위치만 기존 `startOffsetSeconds`로 저장한다.
 
+Student 개인 마디 타임라인은 프로젝트 measure를 수정하지 않고 별도 로컬 데이터로 저장한다.
+
+```json
+{
+  "measureId": "measure-...",
+  "timeSeconds": 12.345
+}
+```
+
+타임라인은 PDF document identity와 로컬 음원 파일 identity 조합으로 구분한다. 같은 PDF라도 다른
+음원 파일에는 기존 marker를 적용하지 않으며, marker는 JSON, `.bsv`, Socket에 포함하지 않는다.
+
 ## 현재 syncState
 
 ```js

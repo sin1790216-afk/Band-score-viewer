@@ -95,6 +95,8 @@ function areSizesEqual(left, right) {
 }
 
 function ScoreViewer({
+  audioMappedMeasureIds = [],
+  audioTargetMeasureIndex = -1,
   annotationColor = '#d62828',
   annotationEnabled,
   annotationStrokes = [],
@@ -106,6 +108,7 @@ function ScoreViewer({
   measures,
   mode,
   onAddAnnotationStroke,
+  onActivateMeasure,
   onDebugSnapshot,
   onEndMeasureDrag,
   onEndMeasureResize,
@@ -120,6 +123,7 @@ function ScoreViewer({
   renderResetVersion,
   resizedMeasureIndex,
   selectedMeasureIndex,
+  showAudioMeasureTargets = false,
   studentPdfSource,
   studentViewMode,
   viewerMode,
@@ -694,12 +698,15 @@ function ScoreViewer({
                 />
 
                 <MeasureOverlay
+                  audioMappedMeasureIds={audioMappedMeasureIds}
+                  audioTargetMeasureIndex={audioTargetMeasureIndex}
                   calculateHighlightRect={calculateHighlightRect}
                   currentMeasure={shouldRenderHighlights ? currentMeasure : null}
                   currentMeasureIndex={displayMeasureIndex}
                   currentPageMeasures={shouldRenderHighlights ? currentPageMeasures : []}
                   draggedMeasureIndex={draggedMeasureIndex}
                   mode={mode}
+                  onActivateMeasure={onActivateMeasure}
                   onEndMeasureDrag={onEndMeasureDrag}
                   onEndMeasureResize={onEndMeasureResize}
                   onMoveMeasure={onMoveMeasure}
@@ -709,6 +716,7 @@ function ScoreViewer({
                   onStartMeasureResize={onStartMeasureResize}
                   resizedMeasureIndex={resizedMeasureIndex}
                   selectedMeasureIndex={canEdit ? selectedMeasureIndex : -1}
+                  showAudioMeasureTargets={showAudioMeasureTargets}
                 />
 
                 {viewerMode === 'student' && isSurfaceReady && (
@@ -806,12 +814,15 @@ function StudentAnnotationStroke({ stroke, surfaceSize }) {
 }
 
 function MeasureOverlay({
+  audioMappedMeasureIds,
+  audioTargetMeasureIndex,
   calculateHighlightRect,
   currentMeasure,
   currentMeasureIndex,
   currentPageMeasures,
   draggedMeasureIndex,
   mode,
+  onActivateMeasure,
   onEndMeasureDrag,
   onEndMeasureResize,
   onMoveMeasure,
@@ -821,9 +832,10 @@ function MeasureOverlay({
   onStartMeasureResize,
   resizedMeasureIndex,
   selectedMeasureIndex,
+  showAudioMeasureTargets,
 }) {
   const visibleMeasures =
-    mode === REGISTER_MODE
+    mode === REGISTER_MODE || showAudioMeasureTargets
       ? currentPageMeasures
       : currentMeasure
         ? [{ measure: currentMeasure, index: currentMeasureIndex }]
@@ -833,6 +845,7 @@ function MeasureOverlay({
     <div className="overlay">
       {visibleMeasures.map(({ measure, index }) => {
         const highlightRect = calculateHighlightRect(measure);
+        const isAudioMapped = audioMappedMeasureIds.includes(measure.id);
 
         if (!highlightRect) return null;
 
@@ -848,18 +861,28 @@ function MeasureOverlay({
             type="button"
             className={`highlight ${index === selectedMeasureIndex ? 'selected' : ''} ${
               index === draggedMeasureIndex ? 'dragging' : ''
-            } ${index === resizedMeasureIndex ? 'resizing' : ''}`}
+            } ${index === resizedMeasureIndex ? 'resizing' : ''} ${
+              showAudioMeasureTargets ? 'audio-target' : ''
+            } ${isAudioMapped ? 'audio-mapped' : ''} ${
+              index === audioTargetMeasureIndex ? 'audio-target-selected' : ''
+            } ${index === currentMeasureIndex ? 'current-measure' : ''}`}
             key={measure.id}
             onClick={(event) => {
               event.stopPropagation();
               if (mode === REGISTER_MODE) {
                 onSelectMeasure(index);
+              } else {
+                onActivateMeasure?.(index);
               }
             }}
-            onPointerDown={(event) => onStartMeasureDrag(index, event, highlightRect)}
-            onPointerMove={onMoveMeasure}
-            onPointerUp={onEndMeasureDrag}
-            onPointerCancel={onEndMeasureDrag}
+            onPointerDown={
+              mode === REGISTER_MODE
+                ? (event) => onStartMeasureDrag(index, event, highlightRect)
+                : undefined
+            }
+            onPointerMove={mode === REGISTER_MODE ? onMoveMeasure : undefined}
+            onPointerUp={mode === REGISTER_MODE ? onEndMeasureDrag : undefined}
+            onPointerCancel={mode === REGISTER_MODE ? onEndMeasureDrag : undefined}
             style={highlightStyle}
             aria-label={`measure ${index + 1}`}
           >

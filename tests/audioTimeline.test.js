@@ -1,0 +1,87 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  createLocalAudioIdentity,
+  createStudentAudioTimelineKey,
+  getMeasureTimelineTime,
+  getStudentAudioTimelineMarkers,
+  loadStudentAudioTimelineLibrary,
+  removeStudentAudioTimelineMarker,
+  saveStudentAudioTimelineLibrary,
+  setStudentAudioTimelineMarker,
+  STUDENT_AUDIO_TIMELINE_STORAGE_KEY,
+} from '../src/utils/audioTimeline.js';
+
+test('local audio timeline identity separates different files for the same PDF', () => {
+  const firstAudioIdentity = createLocalAudioIdentity({
+    lastModified: 10,
+    name: 'lesson.wav',
+    size: 100,
+  });
+  const secondAudioIdentity = createLocalAudioIdentity({
+    lastModified: 20,
+    name: 'lesson.wav',
+    size: 100,
+  });
+
+  assert.notEqual(firstAudioIdentity, secondAudioIdentity);
+  assert.notEqual(
+    createStudentAudioTimelineKey('teacher:score.pdf', firstAudioIdentity),
+    createStudentAudioTimelineKey('teacher:score.pdf', secondAudioIdentity),
+  );
+});
+
+test('measure timeline markers update and remove by stable measure ID', () => {
+  const timelineKey = 'teacher:score.pdf|local-audio:lesson.wav:100:10';
+  let library = setStudentAudioTimelineMarker(null, timelineKey, {
+    measureId: 'measure-1',
+    timeSeconds: 1.2344,
+  });
+
+  library = setStudentAudioTimelineMarker(library, timelineKey, {
+    measureId: 'measure-1',
+    timeSeconds: 2.3456,
+  });
+  library = setStudentAudioTimelineMarker(library, timelineKey, {
+    measureId: 'measure-2',
+    timeSeconds: 8,
+  });
+
+  const markers = getStudentAudioTimelineMarkers(library, timelineKey);
+
+  assert.equal(markers.length, 2);
+  assert.equal(getMeasureTimelineTime(markers, 'measure-1'), 2.346);
+  assert.equal(getMeasureTimelineTime(markers, 'measure-2'), 8);
+
+  library = removeStudentAudioTimelineMarker(library, timelineKey, 'measure-1');
+  assert.equal(
+    getMeasureTimelineTime(
+      getStudentAudioTimelineMarkers(library, timelineKey),
+      'measure-1',
+    ),
+    null,
+  );
+});
+
+test('student audio timeline round-trips through local storage', () => {
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+  };
+  const timelineKey = 'teacher:score.pdf|local-audio:lesson.wav:100:10';
+  const library = setStudentAudioTimelineMarker(null, timelineKey, {
+    measureId: 'measure-1',
+    timeSeconds: 12.5,
+  });
+
+  assert.equal(saveStudentAudioTimelineLibrary(storage, library), true);
+  assert.deepEqual(loadStudentAudioTimelineLibrary(storage), library);
+
+  values.set(STUDENT_AUDIO_TIMELINE_STORAGE_KEY, '{bad json');
+  assert.deepEqual(loadStudentAudioTimelineLibrary(storage), {
+    timelines: {},
+    version: 1,
+  });
+});

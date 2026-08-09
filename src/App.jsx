@@ -69,6 +69,16 @@ import {
   LOCAL_AUDIO_FILE_ACCEPT,
   markStudentAudioPickerRecovery,
 } from './utils/audioPlayback.js';
+import {
+  createLocalAudioIdentity,
+  createStudentAudioTimelineKey,
+  getMeasureTimelineTime,
+  getStudentAudioTimelineMarkers,
+  loadStudentAudioTimelineLibrary,
+  removeStudentAudioTimelineMarker,
+  saveStudentAudioTimelineLibrary,
+  setStudentAudioTimelineMarker,
+} from './utils/audioTimeline.js';
 
 const REGISTER_MODE = 'register';
 const PLAY_MODE = 'play';
@@ -177,6 +187,7 @@ function App() {
   const teacherPdfBlobRef = useRef(null);
   const studentAudioDocumentKeyRef = useRef('');
   const studentLocalAudioObjectUrlRef = useRef('');
+  const studentAudioSeekVersionRef = useRef(0);
   const debugSnapshotRef = useRef({});
   const shouldPublishMeasuresRef = useRef(false);
   const syncStateRef = useRef({ ...INITIAL_SYNC_STATE });
@@ -225,6 +236,11 @@ function App() {
   );
   const [studentAudioSettingsLibrary, setStudentAudioSettingsLibrary] =
     useState(() => loadStudentAudioSettingsLibrary(getBrowserStorage()));
+  const [studentAudioTimelineLibrary, setStudentAudioTimelineLibrary] =
+    useState(() => loadStudentAudioTimelineLibrary(getBrowserStorage()));
+  const [studentAudioTargetMeasureIndex, setStudentAudioTargetMeasureIndex] =
+    useState(-1);
+  const [studentAudioSeekRequest, setStudentAudioSeekRequest] = useState(null);
   const [studentLocalAudioFileName, setStudentLocalAudioFileName] = useState('');
   const [studentLocalAudioFile, setStudentLocalAudioFile] = useState(null);
   const [studentLocalAudioUrl, setStudentLocalAudioUrl] = useState('');
@@ -295,6 +311,29 @@ function App() {
   const studentOpenableAudioUrl = getOpenableAudioUrl(
     studentDisplayAudioSettings.url,
   );
+  const studentLocalAudioIdentity = createLocalAudioIdentity(studentLocalAudioFile);
+  const studentAudioTimelineKey = createStudentAudioTimelineKey(
+    studentAnnotationDocumentKey,
+    studentLocalAudioIdentity,
+  );
+  const studentAudioTimelineMarkers = getStudentAudioTimelineMarkers(
+    studentAudioTimelineLibrary,
+    studentAudioTimelineKey,
+  );
+  const configuredAudioTargetMeasure = measures[studentAudioTargetMeasureIndex];
+  const audioTargetMeasureIndex =
+    configuredAudioTargetMeasure?.page === displayPageNumber
+      ? studentAudioTargetMeasureIndex
+      : displayMeasureIndex;
+  const audioTargetMeasure = measures[audioTargetMeasureIndex] || null;
+  const audioTargetMeasureTime = getMeasureTimelineTime(
+    studentAudioTimelineMarkers,
+    audioTargetMeasure?.id,
+  );
+  const canUseStudentMeasureAudio =
+    viewerMode === STUDENT_MODE &&
+    studentAudioSource === LOCAL_AUDIO_SOURCE &&
+    Boolean(studentLocalAudioUrl && studentAudioTimelineKey);
   const studentPageAnnotationCount = studentAnnotationStrokes.filter(
     (stroke) => stroke.page === displayPageNumber,
   ).length;
@@ -1120,6 +1159,8 @@ function App() {
     setStudentLocalAudioFileName('');
     setStudentLocalAudioFile(null);
     setStudentLocalAudioUrl('');
+    setStudentAudioSeekRequest(null);
+    setStudentAudioTargetMeasureIndex(-1);
     if (studentAudioInputRef.current) {
       studentAudioInputRef.current.value = '';
     }
@@ -1154,6 +1195,66 @@ function App() {
     setStudentLocalAudioFileName(file.name);
     setStudentLocalAudioUrl(nextAudioUrl);
     setStudentAudioSource(LOCAL_AUDIO_SOURCE);
+    setStudentAudioTargetMeasureIndex(displayMeasureIndex);
+  }
+
+  function toggleStudentAudioPanel() {
+    const shouldOpen = !isStudentAudioPanelOpen;
+
+    if (shouldOpen) {
+      setIsStudentAnnotationEnabled(false);
+      setStudentAudioTargetMeasureIndex(displayMeasureIndex);
+    }
+    setIsStudentAudioPanelOpen(shouldOpen);
+  }
+
+  function activateStudentAudioMeasure(nextMeasureIndex) {
+    if (!canUseStudentMeasureAudio) return;
+
+    const measure = measures[nextMeasureIndex];
+
+    if (!measure) return;
+
+    setStudentAudioTargetMeasureIndex(nextMeasureIndex);
+    const markerTime = getMeasureTimelineTime(
+      studentAudioTimelineMarkers,
+      measure.id,
+    );
+
+    if (markerTime === null) {
+      setIsStudentAudioPanelOpen(true);
+      return;
+    }
+
+    studentAudioSeekVersionRef.current += 1;
+    setStudentAudioSeekRequest({
+      playAfterSeek: true,
+      timeSeconds: markerTime,
+      version: studentAudioSeekVersionRef.current,
+    });
+  }
+
+  function setStudentMeasureAudioTime(measureId, timeSeconds) {
+    if (!studentAudioTimelineKey) return;
+
+    setStudentAudioTimelineLibrary((previousLibrary) =>
+      setStudentAudioTimelineMarker(previousLibrary, studentAudioTimelineKey, {
+        measureId,
+        timeSeconds,
+      }),
+    );
+  }
+
+  function removeStudentMeasureAudioTime(measureId) {
+    if (!studentAudioTimelineKey) return;
+
+    setStudentAudioTimelineLibrary((previousLibrary) =>
+      removeStudentAudioTimelineMarker(
+        previousLibrary,
+        studentAudioTimelineKey,
+        measureId,
+      ),
+    );
   }
 
   function openStudentAudioLink() {
@@ -1536,6 +1637,17 @@ function App() {
   }, [studentAudioSettingsLibrary]);
 
   useEffect(() => {
+    if (
+      !saveStudentAudioTimelineLibrary(
+        getBrowserStorage(),
+        studentAudioTimelineLibrary,
+      )
+    ) {
+      console.warn('[audio] student timeline local storage save failed');
+    }
+  }, [studentAudioTimelineLibrary]);
+
+  useEffect(() => {
     function updateFullscreenState() {
       setIsFullscreen(Boolean(getFullscreenElement(document)));
     }
@@ -1664,7 +1776,11 @@ function App() {
 
       {viewerMode === STUDENT_MODE && (
         <>
-          <div className="student-pdf-controls">
+          <div
+            className={`student-pdf-controls ${
+              isStudentAudioPanelOpen ? 'audio-panel-open' : ''
+            }`}
+          >
             <button
               className={studentPdfSource === TEACHER_PDF_SOURCE ? 'active' : ''}
               onClick={useTeacherPdf}
@@ -1697,7 +1813,7 @@ function App() {
               <button
                 aria-expanded={isStudentAudioPanelOpen}
                 className={isStudentAudioPanelOpen ? 'active' : ''}
-                onClick={() => setIsStudentAudioPanelOpen((isOpen) => !isOpen)}
+                onClick={toggleStudentAudioPanel}
                 type="button"
               >
                 음원 설정
@@ -1798,14 +1914,24 @@ function App() {
                       {studentLocalAudioUrl ? (
                         <LocalAudioPlayer
                           audioFile={studentLocalAudioFile}
+                          countInBeats={audioTargetMeasure?.beats}
+                          countInBpm={audioTargetMeasure?.bpm}
                           fileName={studentLocalAudioFileName}
                           isEditorVisible={isStudentAudioPanelOpen}
+                          measureMarkerTimeSeconds={audioTargetMeasureTime}
+                          onMeasureMarkerChange={setStudentMeasureAudioTime}
+                          onMeasureMarkerRemove={removeStudentMeasureAudioTime}
                           onStartOffsetChange={(startOffsetSeconds) =>
                             updateStudentLocalAudioSettings({ startOffsetSeconds })
                           }
                           sourceUrl={studentLocalAudioUrl}
+                          seekRequest={studentAudioSeekRequest}
                           startOffsetSeconds={
                             studentLocalAudioSettings.startOffsetSeconds
+                          }
+                          targetMeasureId={audioTargetMeasure?.id || ''}
+                          targetMeasureNumber={
+                            audioTargetMeasure ? audioTargetMeasureIndex + 1 : 0
                           }
                         />
                       ) : (
@@ -1991,6 +2117,10 @@ function App() {
           )}
 
           <ScoreViewer
+            audioMappedMeasureIds={studentAudioTimelineMarkers.map(
+              (marker) => marker.measureId,
+            )}
+            audioTargetMeasureIndex={audioTargetMeasureIndex}
             annotationEnabled={
               viewerMode === STUDENT_MODE && isStudentAnnotationEnabled
             }
@@ -2004,6 +2134,9 @@ function App() {
             measures={measures}
             mode={overlayMode}
             onAddAnnotationStroke={addStudentAnnotationStroke}
+            onActivateMeasure={
+              canUseStudentMeasureAudio ? activateStudentAudioMeasure : null
+            }
             onDebugSnapshot={handleDebugSnapshot}
             onEndMeasureDrag={endMeasureDrag}
             onEndMeasureResize={endMeasureResize}
@@ -2018,6 +2151,9 @@ function App() {
             renderResetVersion={pdfRenderResetVersion}
             resizedMeasureIndex={resizedMeasureIndex}
             selectedMeasureIndex={selectedMeasureIndex}
+            showAudioMeasureTargets={
+              canUseStudentMeasureAudio && isStudentAudioPanelOpen
+            }
             studentPdfSource={studentPdfSource}
             studentViewMode={studentViewMode}
             viewerMode={viewerMode}

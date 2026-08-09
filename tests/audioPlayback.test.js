@@ -7,7 +7,10 @@ import {
   consumeStudentAudioPickerRecovery,
   createWaveformPeaks,
   formatAudioTime,
+  getCountInFrequency,
+  getCountInTiming,
   getLocalAudioStartTime,
+  getPinchWaveformState,
   getWaveformDraggedTime,
   getWaveformPointerTime,
   getWaveformVisibleDuration,
@@ -60,6 +63,43 @@ test('waveform zoom and pointer calculations stay inside the audio duration', ()
     25,
   );
   assert.equal(clampAudioTime(200, 120), 120);
+});
+
+test('pinch zoom keeps the time below the gesture center anchored', () => {
+  assert.deepEqual(
+    getPinchWaveformState({
+      anchorClientX: 75,
+      anchorTime: 65,
+      currentDistance: 200,
+      duration: 120,
+      rectLeft: 0,
+      rectWidth: 100,
+      startDistance: 100,
+      startZoom: 2,
+    }),
+    {
+      currentTime: 57.5,
+      zoom: 4,
+    },
+  );
+});
+
+test('count-in uses one measure and accents only the first beat', () => {
+  assert.deepEqual(getCountInTiming(120, 4), {
+    beatDurationSeconds: 0.5,
+    beats: 4,
+    bpm: 120,
+    totalDurationSeconds: 2,
+  });
+  assert.deepEqual(getCountInTiming('invalid', 0), {
+    beatDurationSeconds: 0.5,
+    beats: 4,
+    bpm: 120,
+    totalDurationSeconds: 2,
+  });
+  assert.equal(getCountInFrequency(0), 1_200);
+  assert.equal(getCountInFrequency(1), 800);
+  assert.equal(getCountInFrequency(3), 800);
 });
 
 test('waveform peaks are normalized and audio times include milliseconds', () => {

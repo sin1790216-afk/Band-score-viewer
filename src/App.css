@@ -166,6 +166,10 @@ html:-webkit-full-screen #root{
     opacity:1;
 }
 
+.student-pdf-controls.audio-panel-open{
+    opacity:1;
+}
+
 .student-pdf-controls button{
     font-size:12px;
     padding:4px 6px;
@@ -278,6 +282,47 @@ html:-webkit-full-screen #root{
     white-space:nowrap;
 }
 
+.audio-count-in{
+    align-items:center;
+    background:#e7e9ed;
+    border:1px solid #b9bdc5;
+    border-radius:4px;
+    display:grid;
+    gap:6px;
+    grid-template-columns:minmax(0, 1fr) auto;
+    min-height:34px;
+    padding:5px 7px;
+}
+
+.audio-count-in.active{
+    background:#fff4d8;
+    border-color:#d49b21;
+}
+
+.audio-count-in-toggle{
+    align-items:center;
+    display:flex;
+    gap:6px;
+}
+
+.audio-count-in-toggle input{
+    margin:0;
+}
+
+.audio-count-in-toggle span{
+    font-size:11px;
+    font-weight:700;
+}
+
+.audio-count-in strong{
+    font-size:12px;
+    font-variant-numeric:tabular-nums;
+}
+
+.audio-count-in button{
+    grid-column:1 / -1;
+}
+
 .local-audio-options{
     align-items:end;
     display:grid;
@@ -287,7 +332,45 @@ html:-webkit-full-screen #root{
 
 .local-audio-options select{
     box-sizing:border-box;
+    padding-inline:12px;
+    text-align:center;
+    text-align-last:center;
     width:100%;
+}
+
+.local-audio-options option{
+    text-align:center;
+}
+
+.audio-measure-marker-editor{
+    border-top:1px solid #c7c9ce;
+    display:flex;
+    flex-direction:column;
+    gap:7px;
+    padding-top:8px;
+}
+
+.audio-measure-marker-header{
+    align-items:baseline;
+    display:flex;
+    justify-content:space-between;
+}
+
+.audio-measure-marker-header span{
+    color:#357a55;
+    font-size:12px;
+    font-variant-numeric:tabular-nums;
+}
+
+.audio-measure-marker-actions{
+    display:grid;
+    gap:5px;
+    grid-template-columns:repeat(3, minmax(0, 1fr));
+}
+
+.audio-measure-marker-actions button{
+    min-width:0;
+    white-space:normal;
 }
 
 .audio-waveform-editor{
@@ -348,13 +431,7 @@ html:-webkit-full-screen #root{
     align-items:center;
     display:grid;
     gap:6px;
-    grid-template-columns:auto minmax(0, 1fr) 34px;
-}
-
-.audio-waveform-zoom output{
-    font-size:11px;
-    font-variant-numeric:tabular-nums;
-    text-align:right;
+    grid-template-columns:auto minmax(0, 1fr);
 }
 
 .student-audio-panel .audio-error{
@@ -767,6 +844,25 @@ html:-webkit-full-screen #root{
 
 .highlight.resizing{
     cursor:nwse-resize;
+}
+
+.highlight.audio-target{
+    background:rgba(50,132,190,0.1);
+    border-color:rgba(50,132,190,0.75);
+}
+
+.highlight.audio-target.audio-mapped{
+    background:rgba(77,204,131,0.14);
+    border-color:#329c62;
+}
+
+.highlight.audio-target.current-measure{
+    border-color:#e2c500;
+}
+
+.highlight.audio-target.audio-target-selected{
+    border-color:#e43d4f;
+    box-shadow:0 0 0 2px rgba(228,61,79,0.25);
 }
 
 .resize-handle{

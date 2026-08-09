@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   createWaveformPeaks,
   formatAudioTime,
+  getPinchWaveformState,
   getWaveformDraggedTime,
   getWaveformPointerTime,
   getWaveformVisibleDuration,
@@ -46,11 +47,14 @@ export default function AudioWaveform({
   currentTime,
   duration,
   isVisible,
+  measureMarkerTimeSeconds,
   onSeek,
   startOffsetSeconds,
 }) {
   const canvasRef = useRef(null);
   const dragStateRef = useRef(null);
+  const pinchStateRef = useRef(null);
+  const pointerPositionsRef = useRef(new Map());
   const [canvasWidth, setCanvasWidth] = useState(0);
   const [peaks, setPeaks] = useState(null);
   const [waveformError, setWaveformError] = useState('');
@@ -184,6 +188,19 @@ export default function AudioWaveform({
         context.lineTo(offsetX, WAVEFORM_HEIGHT);
         context.stroke();
       }
+
+      const markerX =
+        ((Number(measureMarkerTimeSeconds) - visibleStart) / visibleDuration) *
+        canvasWidth;
+
+      if (Number.isFinite(markerX) && markerX >= 0 && markerX <= canvasWidth) {
+        context.strokeStyle = '#4dcc83';
+        context.lineWidth = 2;
+        context.beginPath();
+        context.moveTo(markerX, 0);
+        context.lineTo(markerX, WAVEFORM_HEIGHT);
+        context.stroke();
+      }
     }
 
     context.strokeStyle = '#ff4f5e';
@@ -197,6 +214,7 @@ export default function AudioWaveform({
     currentTime,
     duration,
     isVisible,
+    measureMarkerTimeSeconds,
     peaks,
     startOffsetSeconds,
     visibleDuration,
@@ -207,6 +225,39 @@ export default function AudioWaveform({
 
     event.preventDefault();
     event.currentTarget.setPointerCapture?.(event.pointerId);
+    pointerPositionsRef.current.set(event.pointerId, {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+
+    if (pointerPositionsRef.current.size >= 2) {
+      const [firstPointer, secondPointer] = Array.from(
+        pointerPositionsRef.current.values(),
+      );
+      const anchorClientX = (firstPointer.clientX + secondPointer.clientX) / 2;
+      const distance = Math.hypot(
+        secondPointer.clientX - firstPointer.clientX,
+        secondPointer.clientY - firstPointer.clientY,
+      );
+      const rect = event.currentTarget.getBoundingClientRect();
+
+      dragStateRef.current = null;
+      pinchStateRef.current = {
+        anchorClientX,
+        anchorTime: getWaveformPointerTime({
+          clientX: anchorClientX,
+          currentTime,
+          duration,
+          rectLeft: rect.left,
+          rectWidth: rect.width,
+          visibleDuration,
+        }),
+        startDistance: Math.max(distance, 1),
+        startZoom: zoom,
+      };
+      return;
+    }
+
     dragStateRef.current = {
       hasMoved: false,
       pointerId: event.pointerId,
@@ -217,6 +268,41 @@ export default function AudioWaveform({
   }
 
   function handlePointerMove(event) {
+    if (pointerPositionsRef.current.has(event.pointerId)) {
+      pointerPositionsRef.current.set(event.pointerId, {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
+    }
+
+    const pinchState = pinchStateRef.current;
+
+    if (pinchState && pointerPositionsRef.current.size >= 2) {
+      event.preventDefault();
+      const [firstPointer, secondPointer] = Array.from(
+        pointerPositionsRef.current.values(),
+      );
+      const currentDistance = Math.hypot(
+        secondPointer.clientX - firstPointer.clientX,
+        secondPointer.clientY - firstPointer.clientY,
+      );
+      const rect = event.currentTarget.getBoundingClientRect();
+      const nextWaveformState = getPinchWaveformState({
+        anchorClientX: pinchState.anchorClientX,
+        anchorTime: pinchState.anchorTime,
+        currentDistance,
+        duration,
+        rectLeft: rect.left,
+        rectWidth: rect.width,
+        startDistance: pinchState.startDistance,
+        startZoom: pinchState.startZoom,
+      });
+
+      setZoom(nextWaveformState.zoom);
+      onSeek(nextWaveformState.currentTime);
+      return;
+    }
+
     const dragState = dragStateRef.current;
 
     if (!dragState || dragState.pointerId !== event.pointerId) return;
@@ -236,13 +322,23 @@ export default function AudioWaveform({
   }
 
   function handlePointerUp(event) {
+    const wasPinching = Boolean(pinchStateRef.current);
+
+    pointerPositionsRef.current.delete(event.pointerId);
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+
+    if (wasPinching) {
+      event.preventDefault();
+      pinchStateRef.current = null;
+      dragStateRef.current = null;
+      return;
+    }
+
     const dragState = dragStateRef.current;
 
     if (!dragState || dragState.pointerId !== event.pointerId) return;
 
     event.preventDefault();
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
-
     if (!dragState.hasMoved) {
       const rect = event.currentTarget.getBoundingClientRect();
 
@@ -259,6 +355,13 @@ export default function AudioWaveform({
     }
 
     dragStateRef.current = null;
+  }
+
+  function handlePointerCancel(event) {
+    pointerPositionsRef.current.delete(event.pointerId);
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    dragStateRef.current = null;
+    pinchStateRef.current = null;
   }
 
   function handleKeyDown(event) {
@@ -285,7 +388,7 @@ export default function AudioWaveform({
           aria-valuenow={currentTime || 0}
           className="audio-waveform-canvas"
           onKeyDown={handleKeyDown}
-          onPointerCancel={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
@@ -310,9 +413,10 @@ export default function AudioWaveform({
           type="range"
           value={zoom}
         />
-        <output>{zoom}x</output>
       </label>
-      <small>파형을 좌우로 드래그하거나 눌러 재생 위치를 조절합니다.</small>
+      <small>
+        파형을 좌우로 드래그해 위치를 조절하고 두 손가락으로 확대·축소합니다.
+      </small>
       {waveformError && <small className="audio-error">{waveformError}</small>}
     </div>
   );
