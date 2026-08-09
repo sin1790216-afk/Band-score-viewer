@@ -15,6 +15,10 @@ import {
   getTargetPageNumber,
   isReadySurface as isReadyPdfSurface,
 } from '../utils/pdfRenderLifecycle.js';
+import {
+  createStudentAnnotationId,
+  MAX_ANNOTATION_POINTS,
+} from '../utils/studentAnnotations.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = `${import.meta.env.BASE_URL}pdf.worker.min.mjs`;
 
@@ -91,6 +95,9 @@ function areSizesEqual(left, right) {
 }
 
 function ScoreViewer({
+  annotationColor = '#d62828',
+  annotationEnabled,
+  annotationStrokes = [],
   canEdit,
   displayMeasureIndex,
   displayPageNumber,
@@ -98,6 +105,7 @@ function ScoreViewer({
   isStudentPageView,
   measures,
   mode,
+  onAddAnnotationStroke,
   onDebugSnapshot,
   onEndMeasureDrag,
   onEndMeasureResize,
@@ -119,6 +127,7 @@ function ScoreViewer({
   const pdfViewerRef = useRef(null);
   const pdfPageFrameRef = useRef(null);
   const pdfCanvasStackRef = useRef(null);
+  const annotationPointerRef = useRef(null);
   const documentIdentityRef = useRef(pdfUrl);
   const pageLoadIdentityRef = useRef('');
   const surfaceIdentityRef = useRef('');
@@ -134,6 +143,7 @@ function ScoreViewer({
     identity: '',
   });
   const [readySurface, setReadySurface] = useState(null);
+  const [draftAnnotationStroke, setDraftAnnotationStroke] = useState(null);
 
   documentIdentityRef.current = pdfUrl;
 
@@ -188,6 +198,13 @@ function ScoreViewer({
         .map((measure, index) => ({ measure, index }))
         .filter(({ measure }) => Number(measure.page) === pdfPageNumber),
     [measures, pdfPageNumber],
+  );
+  const currentPageAnnotationStrokes = useMemo(
+    () =>
+      annotationStrokes.filter(
+        (stroke) => Number(stroke.page) === pdfPageNumber,
+      ),
+    [annotationStrokes, pdfPageNumber],
   );
 
   const measureViewer = useCallback(() => {
@@ -374,6 +391,107 @@ function ScoreViewer({
     });
   }
 
+  function getAnnotationPoint(event) {
+    const pageRect = getCurrentSurfaceRect();
+
+    if (!pageRect) return null;
+
+    const point = renderPointToCanonical(
+      event.clientX,
+      event.clientY,
+      pageRect,
+    );
+
+    if (!point) return null;
+
+    return {
+      x: Math.min(Math.max(point.x, 0), 1),
+      y: Math.min(Math.max(point.y, 0), 1),
+    };
+  }
+
+  function startAnnotationStroke(event) {
+    if (!annotationEnabled || !isSurfaceReady || event.button !== 0) return;
+
+    const point = getAnnotationPoint(event);
+
+    if (!point) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+
+    const stroke = {
+      color: annotationColor,
+      id: createStudentAnnotationId(),
+      page: pdfPageNumber,
+      points: [point],
+      width: 3,
+    };
+
+    annotationPointerRef.current = {
+      pointerId: event.pointerId,
+      stroke,
+    };
+    setDraftAnnotationStroke(stroke);
+  }
+
+  function moveAnnotationStroke(event) {
+    const activePointer = annotationPointerRef.current;
+
+    if (!activePointer || activePointer.pointerId !== event.pointerId) return;
+
+    const point = getAnnotationPoint(event);
+
+    if (!point) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const previousPoints = activePointer.stroke.points;
+    const previousPoint = previousPoints[previousPoints.length - 1];
+    const pointDistance = Math.hypot(
+      point.x - previousPoint.x,
+      point.y - previousPoint.y,
+    );
+
+    if (
+      pointDistance < 0.0005 ||
+      previousPoints.length >= MAX_ANNOTATION_POINTS
+    ) {
+      return;
+    }
+
+    const stroke = {
+      ...activePointer.stroke,
+      points: [...previousPoints, point],
+    };
+
+    annotationPointerRef.current = {
+      ...activePointer,
+      stroke,
+    };
+    setDraftAnnotationStroke(stroke);
+  }
+
+  function finishAnnotationStroke(event, shouldCommit) {
+    const activePointer = annotationPointerRef.current;
+
+    if (!activePointer || activePointer.pointerId !== event.pointerId) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    annotationPointerRef.current = null;
+    setDraftAnnotationStroke(null);
+
+    if (shouldCommit) {
+      onAddAnnotationStroke(activePointer.stroke);
+    }
+  }
+
   useEffect(() => {
     measureViewer();
     window.addEventListener('resize', measureViewer);
@@ -418,6 +536,11 @@ function ScoreViewer({
   ]);
 
   useEffect(() => {
+    annotationPointerRef.current = null;
+    setDraftAnnotationStroke(null);
+  }, [annotationEnabled, surfaceIdentity]);
+
+  useEffect(() => {
     const canvasStack = pdfCanvasStackRef.current;
 
     if (!canvasStack || typeof ResizeObserver === 'undefined') return;
@@ -456,6 +579,7 @@ function ScoreViewer({
   }, [measures]);
 
   useEffect(() => {
+    if (annotationEnabled) return;
     if (!shouldRenderHighlights) return;
 
     const nextCurrentMeasure = measuresRef.current[displayMeasureIndex];
@@ -490,6 +614,7 @@ function ScoreViewer({
     });
     scrolledPageNumberRef.current = pdfPageNumber;
   }, [
+    annotationEnabled,
     calculateHighlightRect,
     currentMeasureMatchesPage,
     displayMeasureIndex,
@@ -585,6 +710,21 @@ function ScoreViewer({
                   resizedMeasureIndex={resizedMeasureIndex}
                   selectedMeasureIndex={canEdit ? selectedMeasureIndex : -1}
                 />
+
+                {viewerMode === 'student' && isSurfaceReady && (
+                  <StudentAnnotationOverlay
+                    draftStroke={draftAnnotationStroke}
+                    enabled={annotationEnabled}
+                    onPointerCancel={(event) =>
+                      finishAnnotationStroke(event, false)
+                    }
+                    onPointerDown={startAnnotationStroke}
+                    onPointerMove={moveAnnotationStroke}
+                    onPointerUp={(event) => finishAnnotationStroke(event, true)}
+                    strokes={currentPageAnnotationStrokes}
+                    surfaceSize={readySurface}
+                  />
+                )}
               </div>
             </div>
           )}
@@ -594,6 +734,74 @@ function ScoreViewer({
         <div className="student-waiting-message">Teacher가 PDF를 열기를 기다리는 중</div>
       )}
     </div>
+  );
+}
+
+function StudentAnnotationOverlay({
+  draftStroke,
+  enabled,
+  onPointerCancel,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  strokes,
+  surfaceSize,
+}) {
+  const visibleStrokes = draftStroke ? [...strokes, draftStroke] : strokes;
+
+  return (
+    <div
+      className={`student-annotation-overlay ${enabled ? 'drawing-enabled' : ''}`}
+      onPointerCancel={onPointerCancel}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+    >
+      <svg
+        aria-hidden="true"
+        className="student-annotation-svg"
+        preserveAspectRatio="none"
+        viewBox={`0 0 ${surfaceSize.width} ${surfaceSize.height}`}
+      >
+        {visibleStrokes.map((stroke) => (
+          <StudentAnnotationStroke
+            key={stroke.id}
+            stroke={stroke}
+            surfaceSize={surfaceSize}
+          />
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function StudentAnnotationStroke({ stroke, surfaceSize }) {
+  const renderedPoints = stroke.points.map((point) => ({
+    x: point.x * surfaceSize.width,
+    y: point.y * surfaceSize.height,
+  }));
+
+  if (renderedPoints.length === 1) {
+    return (
+      <circle
+        cx={renderedPoints[0].x}
+        cy={renderedPoints[0].y}
+        fill={stroke.color}
+        r={stroke.width / 2}
+      />
+    );
+  }
+
+  return (
+    <polyline
+      fill="none"
+      points={renderedPoints.map((point) => `${point.x},${point.y}`).join(' ')}
+      stroke={stroke.color}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={stroke.width}
+      vectorEffect="non-scaling-stroke"
+    />
   );
 }
 

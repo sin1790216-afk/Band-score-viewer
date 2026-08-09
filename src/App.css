@@ -175,6 +175,69 @@ html:-webkit-full-screen #root{
     border:2px solid #fff;
 }
 
+.student-annotation-controls{
+    align-items:center;
+    bottom:max(8px, env(safe-area-inset-bottom));
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    left:max(8px, env(safe-area-inset-left));
+    opacity:0.55;
+    position:fixed;
+    z-index:220;
+}
+
+.student-annotation-controls:hover,
+.student-annotation-controls:focus-within{
+    opacity:1;
+}
+
+.student-annotation-controls button{
+    font-size:12px;
+    min-height:32px;
+    padding:4px 8px;
+}
+
+.student-annotation-controls .active{
+    border:2px solid #fff;
+    opacity:1;
+}
+
+.student-annotation-palette,
+.student-annotation-pages{
+    align-items:center;
+    display:flex;
+    gap:4px;
+}
+
+.student-annotation-palette .annotation-color-swatch{
+    align-items:center;
+    display:inline-flex;
+    height:30px;
+    justify-content:center;
+    min-height:30px;
+    padding:0;
+    width:30px;
+}
+
+.annotation-color-swatch span{
+    background:var(--annotation-color);
+    border:1px solid rgba(255,255,255,0.75);
+    border-radius:50%;
+    display:block;
+    height:16px;
+    width:16px;
+}
+
+.student-annotation-palette .annotation-color-swatch.selected{
+    border:2px solid #fff;
+}
+
+.student-annotation-pages output{
+    min-width:54px;
+    text-align:center;
+}
+
 .header {
   
 
@@ -211,6 +274,16 @@ html:-webkit-full-screen #root{
     background:red;
     display:flex;
     flex-direction:column;
+}
+
+.sidebar .session-end-button{
+    background:#611818;
+    color:#fff;
+    margin-top:4px;
+}
+
+.sidebar .session-end-button:disabled{
+    opacity:0.45;
 }
 
 .lyric-editor-panel{
@@ -436,6 +509,26 @@ html:-webkit-full-screen #root{
     z-index:100;
 }
 
+.student-annotation-overlay{
+    inset:0;
+    pointer-events:none;
+    position:absolute;
+    z-index:120;
+}
+
+.student-annotation-overlay.drawing-enabled{
+    cursor:crosshair;
+    pointer-events:auto;
+    touch-action:none;
+}
+
+.student-annotation-svg{
+    display:block;
+    height:100%;
+    overflow:hidden;
+    width:100%;
+}
+
 
 
 
@@ -578,6 +671,11 @@ html:-webkit-full-screen #root{
     .student-mode .student-pdf-controls button{
         min-width:0;
         white-space:normal;
+    }
+
+    .student-mode .student-annotation-controls{
+        bottom:max(8px, env(safe-area-inset-bottom));
+        max-width:calc(100vw - 16px);
     }
 
     .vocal-mode .floating-view-controls{

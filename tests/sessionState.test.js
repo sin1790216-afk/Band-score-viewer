@@ -2,11 +2,25 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  createEmptySharedSessionState,
   createInitialSessionState,
   getLogicalSyncState,
+  getTeacherSyncState,
   SESSION_ACTIONS,
   sessionReducer,
 } from '../src/state/sessionState.js';
+
+test('empty shared session clears the PDF, measures, and logical position', () => {
+  assert.deepEqual(createEmptySharedSessionState(), {
+    measures: [],
+    pdf: null,
+    syncState: {
+      fileName: '',
+      measureIndex: 0,
+      pageNumber: 1,
+    },
+  });
+});
 
 test('session state changes the Teacher page and current measure independently', () => {
   const pageState = sessionReducer(createInitialSessionState(), {
@@ -88,6 +102,25 @@ test('received sync state keeps only the existing logical Socket fields', () => 
     pageNumber: 2,
   });
   assert.equal('pageRenderWidth' in state.syncState, false);
+});
+
+test('Teacher entry replaces a stale server position with the local position', () => {
+  assert.deepEqual(
+    getTeacherSyncState(
+      {
+        fileName: 'lesson.pdf',
+        measureIndex: 8,
+        pageNumber: 3,
+      },
+      1,
+      0,
+    ),
+    {
+      fileName: 'lesson.pdf',
+      measureIndex: 0,
+      pageNumber: 1,
+    },
+  );
 });
 
 test('processing the same session event twice produces the same state values', () => {

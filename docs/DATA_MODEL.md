@@ -81,3 +81,23 @@ BPM, Beats, lyric, stable ID와 normalized 좌표는 measures가 유일한 원�
 모든 measure의 유효하고 고유한 ID를 검증한다. 현재 페이지/마디,
 재생·Repeat, 선택/drag 상태, Student 개인 PDF와 보기 방식 같은 Session/Local View 데이터는
 저장하지 않는다. 기존 measure 배열 JSON과 `.bsv` import 경로는 분리되어 있다.
+
+## Student 로컬 필기
+
+학생 필기는 measure와 분리된 브라우저 로컬 데이터다. PDF 페이지 기준 `0..1` 좌표의 점
+목록을 페이지별 stroke로 저장한다.
+
+```js
+{
+  version: 1,
+  documents: {
+    "PDF 출처와 파일 identity": [
+      { id, page, color, width, points: [{ x, y }] }
+    ]
+  }
+}
+```
+
+이 데이터는 현재 기기의 `localStorage`에만 남으며 Teacher/다른 Student로 동기화하지 않고
+JSON 또는 `.bsv`에도 저장하지 않는다. Teacher PDF와 학생 개인 PDF는 서로 다른 document
+key를 사용한다.

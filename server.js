@@ -3,7 +3,10 @@ import { createServer } from 'node:http';
 import { extname, join, resolve } from 'node:path';
 import { Server } from 'socket.io';
 
-import { getLogicalSyncState } from './src/state/sessionState.js';
+import {
+  createEmptySharedSessionState,
+  getLogicalSyncState,
+} from './src/state/sessionState.js';
 import {
   isValidMeasuresState,
   MAX_PDF_BYTES,
@@ -14,13 +17,10 @@ import {
 const PORT = process.env.PORT || 4000;
 const distDir = resolve('dist');
 
-let latestSyncState = {
-  fileName: '',
-  pageNumber: 1,
-  measureIndex: 0,
-};
-let latestPdf = null;
-let latestMeasures = [];
+const initialSharedSessionState = createEmptySharedSessionState();
+let latestSyncState = initialSharedSessionState.syncState;
+let latestPdf = initialSharedSessionState.pdf;
+let latestMeasures = initialSharedSessionState.measures;
 
 const mimeTypes = {
   '.css': 'text/css',
@@ -143,6 +143,16 @@ io.on('connection', (socket) => {
     latestMeasures = nextMeasures;
     console.log(`[socket] received measures:update count=${latestMeasures.length}`);
     socket.broadcast.emit('measures:state', latestMeasures);
+  });
+
+  socket.on('session:reset', () => {
+    const emptySessionState = createEmptySharedSessionState();
+
+    latestPdf = emptySessionState.pdf;
+    latestMeasures = emptySessionState.measures;
+    latestSyncState = emptySessionState.syncState;
+    console.log(`[socket] session reset requested by ${socket.id}`);
+    socket.broadcast.emit('session:reset', emptySessionState);
   });
 });
 

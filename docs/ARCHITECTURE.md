@@ -21,6 +21,14 @@ Teacher가 논리 상태의 기준이다. `syncState`는 현재 코드에서 다
 ```
 
 Teacher 변경은 `sync:update`, `pdf:update`, `measures:update`로 서버에 전달된다. 서버는 최신 PDF, measures, syncState를 메모리에 보관하고 새 연결에 PDF -> measures -> syncState 순서로 전송한다. Room, 인증, 영속 저장소는 아직 없다.
+사용자가 Teacher 역할을 선택하면 현재 Teacher 로컬 페이지와 마디를 다시 발행해 서버에 남아
+있던 과거 위치를 교체한다. Teacher 화면이 활성화된 동안 수신한 과거 sync 위치는 로컬
+Teacher 위치를 덮지 않는다.
+
+Teacher의 `수업 종료`는 `session:reset`을 보내 서버 메모리의 PDF, measures와 syncState를
+초기화한다. 접속 중인 화면도 같은 이벤트를 적용하며, 이후 접속한 Student에게는 이전
+악보를 보내지 않는다. Student 개인 PDF와 브라우저 로컬 필기는 공유 세션 밖의 데이터라
+삭제하지 않는다.
 
 Student는 `sync:state`의 페이지와 마디를 표시 기준으로 사용한다. Teacher PDF는 Socket 바이너리를 Blob/Object URL로 바꾸어 표시하고, 개인 PDF를 선택한 경우에는 PDF 출처만 로컬 파일로 교체한다. measures와 논리 위치는 계속 Teacher 값을 사용한다.
 
@@ -47,9 +55,16 @@ geometry 변경을 갱신한다. 렌더 크기는 기기 로컬에만 존재한�
 
 - Project State (`src/state/projectState.js`): Teacher PDF 파일명 metadata와 stable ID가 있는 canonical measures를 소유한다. 새 마디·JSON·Socket 유입 경계에서 ID를 한 번 준비하고, reducer의 CRUD와 BPM/Beats/lyric 보정은 기존 ID를 보존한다. 기존 배열 JSON import/export 형식은 유지한다.
 - Session State (`src/state/sessionState.js`): Teacher의 논리 페이지·마디, 자동재생/Repeat 상태와 수신한 논리 `syncState`를 소유한다.
-- Local View State (`src/App.jsx`): 역할 선택, Student 개인 PDF와 보기 방식, 선택/드래그/resize 표시 상태, 파일 input, Object URL과 render reset처럼 해당 기기에서만 의미가 있는 상태를 소유한다.
+- Local View State (`src/App.jsx`): 역할 선택, Student 개인 PDF와 보기 방식, 학생 필기, 선택/드래그/resize 표시 상태, 파일 input, Object URL과 render reset처럼 해당 기기에서만 의미가 있는 상태를 소유한다.
 
 `src/App.jsx`는 이 상태들의 UI 이벤트와 파일·Socket·타이머 부수효과를 조율한다. `src/components/ScoreViewer.jsx`는 `displayPageNumber` 하나를 입력받아 `react-pdf` 렌더, canvas/overlay DOM, 좌표 변환, 렌더 완료 상태, 크기 관찰과 자동 스크롤을 담당한다.
+
+Student 필기는 `ScoreViewer`의 현재 PDF surface에서 pointer 좌표를 `0..1` 범위로
+정규화하고, 같은 canvas stack 위의 전용 SVG overlay에 렌더한다. 필기 데이터는 PDF 출처와
+파일 identity별로 브라우저 `localStorage`에만 저장하며 Socket, measure JSON, `.bsv`에는
+포함하지 않는다. 필기 모드를 시작하면 현재 sync 페이지와 마디를 학생 로컬 탐색 상태로
+복사하고 자동 스크롤을 멈춘다. Socket의 최신 syncState는 계속 수신하며, 필기를 끝내면
+별도 요청 없이 최신 Teacher 페이지와 마디를 다시 표시한다.
 
 ## 프로젝트 파일
 

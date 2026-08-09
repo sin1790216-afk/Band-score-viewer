@@ -22,8 +22,10 @@ import {
   projectReducer,
 } from './state/projectState.js';
 import {
+  createEmptySharedSessionState,
   createInitialSessionState,
   getLogicalSyncState,
+  getTeacherSyncState,
   INITIAL_SYNC_STATE,
   SESSION_ACTIONS,
   sessionReducer,
@@ -37,6 +39,17 @@ import {
   isFullscreenSupported,
   toggleDocumentFullscreen,
 } from './utils/fullscreen.js';
+import {
+  clampStudentAnnotationPageNumber,
+  createStudentAnnotationDocumentKey,
+  getStudentAnnotationStrokes,
+  loadStudentAnnotationLibrary,
+  removeLastStudentAnnotationStroke,
+  removeStudentAnnotationPage,
+  saveStudentAnnotationLibrary,
+  setStudentAnnotationStrokes,
+  STUDENT_ANNOTATION_PALETTE,
+} from './utils/studentAnnotations.js';
 
 const REGISTER_MODE = 'register';
 const PLAY_MODE = 'play';
@@ -83,6 +96,14 @@ function getMeasureDurationMs(measure) {
 
 function formatSocketHost(hostname) {
   return hostname.includes(':') ? `[${hostname}]` : hostname;
+}
+
+function getBrowserStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 function toPdfBlobPart(data) {
@@ -149,6 +170,19 @@ function App() {
   const [pdfRenderResetVersion, setPdfRenderResetVersion] = useState(0);
   const [studentViewMode, setStudentViewMode] = useState(STUDENT_ZOOM_VIEW);
   const [studentPdfSource, setStudentPdfSource] = useState(TEACHER_PDF_SOURCE);
+  const [studentLocalPdfIdentity, setStudentLocalPdfIdentity] = useState('');
+  const [studentAnnotationLibrary, setStudentAnnotationLibrary] = useState(() =>
+    loadStudentAnnotationLibrary(getBrowserStorage()),
+  );
+  const [studentAnnotationColor, setStudentAnnotationColor] = useState(
+    STUDENT_ANNOTATION_PALETTE[0].value,
+  );
+  const [studentAnnotationPageNumber, setStudentAnnotationPageNumber] =
+    useState(1);
+  const [studentAnnotationMeasureIndex, setStudentAnnotationMeasureIndex] =
+    useState(0);
+  const [isStudentAnnotationEnabled, setIsStudentAnnotationEnabled] =
+    useState(false);
   const [viewerMode, setViewerMode] = useState(ROLE_SELECT_MODE);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const { measures, pdfMetadata } = projectState;
@@ -165,8 +199,23 @@ function App() {
   const canEdit = viewerMode === TEACHER_MODE;
   const isStudentPageView =
     viewerMode === STUDENT_MODE && studentViewMode === STUDENT_PAGE_VIEW;
-  const displayPageNumber = canEdit ? pageNumber : syncState.pageNumber;
-  const displayMeasureIndex = canEdit ? measureIndex : syncState.measureIndex;
+  const isStudentAnnotating =
+    viewerMode === STUDENT_MODE && isStudentAnnotationEnabled;
+  const synchronizedDisplayPageNumber = canEdit
+    ? pageNumber
+    : syncState.pageNumber;
+  const synchronizedDisplayMeasureIndex = canEdit
+    ? measureIndex
+    : syncState.measureIndex;
+  const displayPageNumber = isStudentAnnotating
+    ? clampStudentAnnotationPageNumber(
+        studentAnnotationPageNumber,
+        totalPages,
+      )
+    : synchronizedDisplayPageNumber;
+  const displayMeasureIndex = isStudentAnnotating
+    ? studentAnnotationMeasureIndex
+    : synchronizedDisplayMeasureIndex;
   const currentMeasure = measures[displayMeasureIndex] || null;
   const nextDifferentLyric =
     measures
@@ -175,6 +224,22 @@ function App() {
       .find((lyric) => lyric && lyric !== getTrimmedLyric(currentMeasure)) || '';
   const selectedMeasure = measures[selectedMeasureIndex] || null;
   const overlayMode = canEdit ? mode : PLAY_MODE;
+  const teacherAnnotationDocumentKey = createStudentAnnotationDocumentKey({
+    byteLength: teacherPdfBlobRef.current?.size,
+    fileName: fileName || syncState.fileName,
+    source: TEACHER_PDF_SOURCE,
+  });
+  const studentAnnotationDocumentKey =
+    studentPdfSource === LOCAL_PDF_SOURCE
+      ? studentLocalPdfIdentity
+      : teacherAnnotationDocumentKey;
+  const studentAnnotationStrokes = getStudentAnnotationStrokes(
+    studentAnnotationLibrary,
+    studentAnnotationDocumentKey,
+  );
+  const studentPageAnnotationCount = studentAnnotationStrokes.filter(
+    (stroke) => stroke.page === displayPageNumber,
+  ).length;
   const fullscreenSupported = isFullscreenSupported(document);
   const handleDebugSnapshot = useCallback((snapshot) => {
     debugSnapshotRef.current = snapshot;
@@ -217,6 +282,7 @@ function App() {
   }
 
   function setSyncedPageNumber(nextPageNumber) {
+    pageNumberRef.current = nextPageNumber;
     dispatchSession({
       type: SESSION_ACTIONS.SET_PAGE_NUMBER,
       pageNumber: nextPageNumber,
@@ -225,6 +291,7 @@ function App() {
   }
 
   function setSyncedMeasureIndex(nextMeasureIndex) {
+    measureIndexRef.current = nextMeasureIndex;
     dispatchSession({
       type: SESSION_ACTIONS.SET_MEASURE_INDEX,
       measureIndex: nextMeasureIndex,
@@ -281,14 +348,42 @@ function App() {
     setPdfRenderResetVersion((previousVersion) => previousVersion + 1);
   }, []);
 
+  const publishCurrentTeacherPosition = useCallback((targetSocket) => {
+    const nextSyncState = getTeacherSyncState(
+      syncStateRef.current,
+      pageNumberRef.current,
+      measureIndexRef.current,
+    );
+
+    syncStateRef.current = nextSyncState;
+    dispatchSession({
+      type: SESSION_ACTIONS.APPLY_SYNC_STATE,
+      syncState: nextSyncState,
+    });
+    (targetSocket || socketRef.current)?.emit('sync:update', nextSyncState);
+    console.log('[sync] published current Teacher position', nextSyncState);
+  }, []);
+
   const selectViewerMode = useCallback((nextViewerMode) => {
     // TODO: 향후 Teacher 선택 시 인증/비밀번호 검사를 이 지점에 연결.
-    if (nextViewerMode === viewerMode) return;
+    if (nextViewerMode === viewerMode) {
+      if (nextViewerMode === TEACHER_MODE) {
+        publishCurrentTeacherPosition();
+      }
+      return;
+    }
 
     resetViewRenderState();
     setIsLyricEditorOpen(false);
+    setIsStudentAnnotationEnabled(false);
+    viewerModeRef.current = nextViewerMode;
+
+    if (nextViewerMode === TEACHER_MODE) {
+      publishCurrentTeacherPosition();
+    }
+
     setViewerMode(nextViewerMode);
-  }, [resetViewRenderState, viewerMode]);
+  }, [publishCurrentTeacherPosition, resetViewRenderState, viewerMode]);
 
   function setTeacherPdfUrl(nextPdfUrl) {
     const previousTeacherPdfUrl = teacherPdfObjectUrlRef.current;
@@ -313,6 +408,7 @@ function App() {
   }
 
   function useTeacherPdf() {
+    setIsStudentAnnotationEnabled(false);
     setStudentPdfSource(TEACHER_PDF_SOURCE);
 
     if (teacherPdfObjectUrlRef.current) {
@@ -331,6 +427,15 @@ function App() {
     if (!file) return;
 
     // Student local PDFs must match the teacher PDF layout for measure overlays to align.
+    setIsStudentAnnotationEnabled(false);
+    setStudentLocalPdfIdentity(
+      createStudentAnnotationDocumentKey({
+        byteLength: file.size,
+        fileName: file.name,
+        lastModified: file.lastModified,
+        source: LOCAL_PDF_SOURCE,
+      }),
+    );
     setStudentPdfSource(LOCAL_PDF_SOURCE);
     resetPdfRenderState();
     setLocalPdfUrl(URL.createObjectURL(file));
@@ -338,6 +443,141 @@ function App() {
 
   function publishMeasures(nextMeasures) {
     socketRef.current?.emit('measures:update', normalizeMeasures(nextMeasures));
+  }
+
+  function updateStudentAnnotationDocument(updateStrokes) {
+    if (!studentAnnotationDocumentKey) return;
+
+    setStudentAnnotationLibrary((previousLibrary) => {
+      const previousStrokes = getStudentAnnotationStrokes(
+        previousLibrary,
+        studentAnnotationDocumentKey,
+      );
+
+      return setStudentAnnotationStrokes(
+        previousLibrary,
+        studentAnnotationDocumentKey,
+        updateStrokes(previousStrokes),
+      );
+    });
+  }
+
+  function addStudentAnnotationStroke(stroke) {
+    if (viewerMode !== STUDENT_MODE || !isStudentAnnotationEnabled) return;
+
+    updateStudentAnnotationDocument((previousStrokes) => [
+      ...previousStrokes,
+      stroke,
+    ]);
+  }
+
+  function toggleStudentAnnotation() {
+    if (isStudentAnnotationEnabled) {
+      setIsStudentAnnotationEnabled(false);
+      return;
+    }
+
+    setStudentAnnotationPageNumber(
+      clampStudentAnnotationPageNumber(syncState.pageNumber, totalPages),
+    );
+    setStudentAnnotationMeasureIndex(syncState.measureIndex);
+    setIsStudentAnnotationEnabled(true);
+  }
+
+  function moveStudentAnnotationPage(offset) {
+    setStudentAnnotationPageNumber((currentPageNumber) =>
+      clampStudentAnnotationPageNumber(
+        currentPageNumber + offset,
+        totalPages,
+      ),
+    );
+  }
+
+  function undoStudentAnnotation() {
+    updateStudentAnnotationDocument((previousStrokes) =>
+      removeLastStudentAnnotationStroke(
+        previousStrokes,
+        displayPageNumber,
+      ),
+    );
+  }
+
+  function clearStudentAnnotationPage() {
+    if (
+      studentPageAnnotationCount === 0 ||
+      !window.confirm('현재 페이지의 필기를 모두 지울까요?')
+    ) {
+      return;
+    }
+
+    updateStudentAnnotationDocument((previousStrokes) =>
+      removeStudentAnnotationPage(previousStrokes, displayPageNumber),
+    );
+  }
+
+  function applySharedSessionReset() {
+    const emptySessionState = createEmptySharedSessionState();
+    const wasShowingTeacherPdf =
+      viewerModeRef.current === TEACHER_MODE ||
+      studentPdfSourceRef.current === TEACHER_PDF_SOURCE;
+
+    stopAutoplay();
+    dragStateRef.current = null;
+    resizeStateRef.current = null;
+    measuresRef.current = [];
+    measureIndexRef.current = 0;
+    pageNumberRef.current = 1;
+    isRepeatEnabledRef.current = false;
+    returnToStartOnEndRef.current = false;
+    shouldPublishMeasuresRef.current = false;
+    syncStateRef.current = emptySessionState.syncState;
+    teacherPdfBlobRef.current = null;
+
+    dispatchProject({
+      type: PROJECT_ACTIONS.RESET_PROJECT,
+      pdfMetadata: {
+        fileName: '',
+        mimeType: PDF_MIME_TYPE,
+      },
+    });
+    dispatchSession({ type: SESSION_ACTIONS.RESET_POSITION });
+    dispatchSession({
+      type: SESSION_ACTIONS.SET_REPEAT_ENABLED,
+      isRepeatEnabled: false,
+    });
+    dispatchSession({
+      type: SESSION_ACTIONS.SET_RETURN_TO_START_ON_END,
+      returnToStartOnEnd: false,
+    });
+    dispatchSession({
+      type: SESSION_ACTIONS.APPLY_SYNC_STATE,
+      syncState: emptySessionState.syncState,
+    });
+    setSelectedMeasureIndex(-1);
+    setDraggedMeasureIndex(-1);
+    setResizedMeasureIndex(-1);
+    setIsLyricEditorOpen(false);
+    setIsStudentAnnotationEnabled(false);
+    setMode(REGISTER_MODE);
+    setTeacherPdfUrl('');
+
+    if (wasShowingTeacherPdf) {
+      resetPdfRenderState();
+    }
+  }
+
+  function endClassSession() {
+    if (
+      !canEdit ||
+      !window.confirm(
+        '현재 수업을 종료할까요? 선생님 PDF와 마디 정보가 모든 화면에서 초기화됩니다.',
+      )
+    ) {
+      return;
+    }
+
+    applySharedSessionReset();
+    socketRef.current?.emit('session:reset');
   }
 
   function dispatchMeasureUpdate(action) {
@@ -878,6 +1118,10 @@ function App() {
 
       socket.on('connect', () => {
         console.log(`[socket] connected to ${label}`, socket.id);
+
+        if (viewerModeRef.current === TEACHER_MODE) {
+          publishCurrentTeacherPosition(socket);
+        }
       });
 
       socket.on('connect_error', (error) => {
@@ -897,6 +1141,11 @@ function App() {
       });
 
       socket.on('sync:state', (nextSyncState) => {
+        if (viewerModeRef.current === TEACHER_MODE) {
+          console.log('[socket] ignored remote sync:state while in Teacher mode');
+          return;
+        }
+
         syncStateRef.current = getLogicalSyncState({
           ...syncStateRef.current,
           ...nextSyncState,
@@ -971,6 +1220,11 @@ function App() {
           receivedMeasuresLength: normalizedMeasures.length,
         });
       });
+
+      socket.on('session:reset', () => {
+        console.log('[socket] received session:reset');
+        applySharedSessionReset();
+      });
     }
 
     attachSocket(
@@ -985,7 +1239,7 @@ function App() {
       activeSocket?.disconnect();
       socketRef.current = null;
     };
-  }, []);
+  }, [publishCurrentTeacherPosition]);
 
   useEffect(() => {
     if (!shouldPublishMeasuresRef.current) return;
@@ -1032,6 +1286,9 @@ function App() {
     if (viewerMode !== TEACHER_MODE) {
       stopAutoplay();
     }
+    if (viewerMode !== STUDENT_MODE) {
+      setIsStudentAnnotationEnabled(false);
+    }
 
     console.log('[debug] viewMode changed');
     console.table({
@@ -1044,6 +1301,17 @@ function App() {
   useEffect(() => {
     studentPdfSourceRef.current = studentPdfSource;
   }, [studentPdfSource]);
+
+  useEffect(() => {
+    if (
+      !saveStudentAnnotationLibrary(
+        getBrowserStorage(),
+        studentAnnotationLibrary,
+      )
+    ) {
+      console.warn('[annotations] local storage save failed');
+    }
+  }, [studentAnnotationLibrary]);
 
   useEffect(() => {
     function updateFullscreenState() {
@@ -1062,6 +1330,15 @@ function App() {
 
   useEffect(() => {
     function handleKeyDown(event) {
+      if (
+        viewerMode === STUDENT_MODE &&
+        isStudentAnnotationEnabled &&
+        event.key === 'Escape'
+      ) {
+        setIsStudentAnnotationEnabled(false);
+        return;
+      }
+
       if ((viewerMode === STUDENT_MODE || viewerMode === VOCAL_MODE) && event.key === 'Escape') {
         if (getFullscreenElement(document)) return;
 
@@ -1086,7 +1363,12 @@ function App() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [deleteSelectedMeasure, selectViewerMode, viewerMode]);
+  }, [
+    deleteSelectedMeasure,
+    isStudentAnnotationEnabled,
+    selectViewerMode,
+    viewerMode,
+  ]);
 
   return (
     <div
@@ -1157,43 +1439,125 @@ function App() {
       )}
 
       {viewerMode === STUDENT_MODE && (
-        <div className="student-pdf-controls">
-          <button
-            className={studentPdfSource === TEACHER_PDF_SOURCE ? 'active' : ''}
-            onClick={useTeacherPdf}
-            type="button"
-          >
-            선생님 PDF 보기
-          </button>
-          <button
-            className={studentPdfSource === LOCAL_PDF_SOURCE ? 'active' : ''}
-            onClick={openStudentPdf}
-            type="button"
-          >
-            내 PDF 열기
-          </button>
-          <button
-            className={studentViewMode === STUDENT_ZOOM_VIEW ? 'active' : ''}
-            onClick={() => setStudentViewMode(STUDENT_ZOOM_VIEW)}
-            type="button"
-          >
-            확대모드
-          </button>
-          <button
-            className={studentViewMode === STUDENT_PAGE_VIEW ? 'active' : ''}
-            onClick={() => setStudentViewMode(STUDENT_PAGE_VIEW)}
-            type="button"
-          >
-            한 페이지 보기
-          </button>
-          <input
-            accept=".pdf"
-            className="file-input"
-            onChange={selectStudentPdf}
-            ref={studentPdfInputRef}
-            type="file"
-          />
-        </div>
+        <>
+          <div className="student-pdf-controls">
+            <button
+              className={studentPdfSource === TEACHER_PDF_SOURCE ? 'active' : ''}
+              onClick={useTeacherPdf}
+              type="button"
+            >
+              선생님 PDF 보기
+            </button>
+            <button
+              className={studentPdfSource === LOCAL_PDF_SOURCE ? 'active' : ''}
+              onClick={openStudentPdf}
+              type="button"
+            >
+              내 PDF 열기
+            </button>
+            <button
+              className={studentViewMode === STUDENT_ZOOM_VIEW ? 'active' : ''}
+              onClick={() => setStudentViewMode(STUDENT_ZOOM_VIEW)}
+              type="button"
+            >
+              확대모드
+            </button>
+            <button
+              className={studentViewMode === STUDENT_PAGE_VIEW ? 'active' : ''}
+              onClick={() => setStudentViewMode(STUDENT_PAGE_VIEW)}
+              type="button"
+            >
+              한 페이지 보기
+            </button>
+            <input
+              accept=".pdf"
+              className="file-input"
+              onChange={selectStudentPdf}
+              ref={studentPdfInputRef}
+              type="file"
+            />
+          </div>
+          <div className="student-annotation-controls">
+            <button
+              aria-pressed={isStudentAnnotationEnabled}
+              className={isStudentAnnotationEnabled ? 'active' : ''}
+              disabled={!pdfUrl || !studentAnnotationDocumentKey}
+              onClick={toggleStudentAnnotation}
+              type="button"
+            >
+              {isStudentAnnotationEnabled ? '필기 종료' : '필기'}
+            </button>
+            {isStudentAnnotationEnabled && (
+              <>
+                <div
+                  aria-label="필기 색상"
+                  className="student-annotation-palette"
+                  role="group"
+                >
+                  {STUDENT_ANNOTATION_PALETTE.map((color) => (
+                    <button
+                      aria-label={`${color.label} 펜`}
+                      aria-pressed={studentAnnotationColor === color.value}
+                      className={`annotation-color-swatch ${
+                        studentAnnotationColor === color.value ? 'selected' : ''
+                      }`}
+                      key={color.value}
+                      onClick={() => setStudentAnnotationColor(color.value)}
+                      style={{ '--annotation-color': color.value }}
+                      title={color.label}
+                      type="button"
+                    >
+                      <span aria-hidden="true" />
+                    </button>
+                  ))}
+                </div>
+                <div
+                  aria-label="필기 페이지 이동"
+                  className="student-annotation-pages"
+                  role="group"
+                >
+                  <button
+                    aria-label="이전 필기 페이지"
+                    disabled={displayPageNumber <= 1}
+                    onClick={() => moveStudentAnnotationPage(-1)}
+                    title="이전 페이지"
+                    type="button"
+                  >
+                    ‹
+                  </button>
+                  <output aria-live="polite">
+                    {displayPageNumber} / {totalPages || '-'}
+                  </output>
+                  <button
+                    aria-label="다음 필기 페이지"
+                    disabled={totalPages === 0 || displayPageNumber >= totalPages}
+                    onClick={() => moveStudentAnnotationPage(1)}
+                    title="다음 페이지"
+                    type="button"
+                  >
+                    ›
+                  </button>
+                </div>
+              </>
+            )}
+            <button
+              aria-label="현재 페이지 필기 실행 취소"
+              disabled={studentPageAnnotationCount === 0}
+              onClick={undoStudentAnnotation}
+              title="실행 취소"
+              type="button"
+            >
+              ↶
+            </button>
+            <button
+              disabled={studentPageAnnotationCount === 0}
+              onClick={clearStudentAnnotationPage}
+              type="button"
+            >
+              페이지 지우기
+            </button>
+          </div>
+        </>
       )}
 
       {viewerMode === ROLE_SELECT_MODE ? null : viewerMode === VOCAL_MODE ? (
@@ -1205,6 +1569,7 @@ function App() {
             bsvInputRef={bsvInputRef}
             canEdit={canEdit}
             canSaveProject={Boolean(teacherPdfBlobRef.current)}
+            canEndSession={Boolean(teacherPdfBlobRef.current || measures.length)}
             fileInputRef={fileInputRef}
             isAutoPlaying={isAutoPlaying}
             isRepeatEnabled={isRepeatEnabled}
@@ -1227,6 +1592,7 @@ function App() {
             onSetReturnToStartOnEnd={setReturnToStartOnEnd}
             onGoToPage={goToPage}
             onGoToMeasure={goToMeasure}
+            onEndClassSession={endClassSession}
             onOpenLyricEditor={openLyricEditor}
             onUpdateSelectedMeasureTiming={updateSelectedMeasureTiming}
             pageNumber={pageNumber}
@@ -1268,6 +1634,11 @@ function App() {
           )}
 
           <ScoreViewer
+            annotationEnabled={
+              viewerMode === STUDENT_MODE && isStudentAnnotationEnabled
+            }
+            annotationColor={studentAnnotationColor}
+            annotationStrokes={studentAnnotationStrokes}
             canEdit={canEdit}
             displayMeasureIndex={displayMeasureIndex}
             displayPageNumber={displayPageNumber}
@@ -1275,6 +1646,7 @@ function App() {
             isStudentPageView={isStudentPageView}
             measures={measures}
             mode={overlayMode}
+            onAddAnnotationStroke={addStudentAnnotationStroke}
             onDebugSnapshot={handleDebugSnapshot}
             onEndMeasureDrag={endMeasureDrag}
             onEndMeasureResize={endMeasureResize}
@@ -1352,6 +1724,7 @@ function VocalView({ currentMeasure, nextLyric }) {
 function Sidebar({
   bsvInputRef,
   canEdit,
+  canEndSession,
   canSaveProject,
   fileInputRef,
   isAutoPlaying,
@@ -1360,6 +1733,7 @@ function Sidebar({
   measureIndex,
   measureTotal,
   mode,
+  onEndClassSession,
   onGoToMeasure,
   onGoToPage,
   onLoadJson,
@@ -1421,6 +1795,14 @@ function Sidebar({
           <button onClick={onSaveJson}>💾 JSON 저장</button>
           <button onClick={onOpenJson}>📂 JSON 불러오기</button>
           <button onClick={onOpenLyricEditor}>가사 편집</button>
+          <button
+            className="session-end-button"
+            disabled={!canEndSession}
+            onClick={onEndClassSession}
+            type="button"
+          >
+            수업 종료
+          </button>
 
           <input
             accept=".bsv"

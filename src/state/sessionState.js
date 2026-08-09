@@ -23,6 +23,14 @@ export const INITIAL_SESSION_STATE = {
   syncState: INITIAL_SYNC_STATE,
 };
 
+export function createEmptySharedSessionState() {
+  return {
+    measures: [],
+    pdf: null,
+    syncState: { ...INITIAL_SYNC_STATE },
+  };
+}
+
 export function getLogicalSyncState(syncState) {
   const fileName =
     typeof syncState?.fileName === 'string'
@@ -42,6 +50,14 @@ export function getLogicalSyncState(syncState) {
     pageNumber,
     measureIndex,
   };
+}
+
+export function getTeacherSyncState(syncState, pageNumber, measureIndex) {
+  return getLogicalSyncState({
+    ...syncState,
+    measureIndex,
+    pageNumber,
+  });
 }
 
 export function createInitialSessionState(initialState = {}) {
