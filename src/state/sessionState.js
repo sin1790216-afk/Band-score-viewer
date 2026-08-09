@@ -5,6 +5,7 @@ export const SESSION_ACTIONS = {
   SET_MEASURE_INDEX: 'session/set-measure-index',
   SET_PAGE_NUMBER: 'session/set-page-number',
   SET_REPEAT_ENABLED: 'session/set-repeat-enabled',
+  SET_RETURN_TO_START_ON_END: 'session/set-return-to-start-on-end',
 };
 
 export const INITIAL_SYNC_STATE = {
@@ -16,6 +17,7 @@ export const INITIAL_SYNC_STATE = {
 export const INITIAL_SESSION_STATE = {
   isAutoPlaying: false,
   isRepeatEnabled: false,
+  returnToStartOnEnd: false,
   measureIndex: 0,
   pageNumber: 1,
   syncState: INITIAL_SYNC_STATE,
@@ -64,6 +66,12 @@ export function sessionReducer(state, action) {
       return {
         ...state,
         isRepeatEnabled: Boolean(action.isRepeatEnabled),
+      };
+
+    case SESSION_ACTIONS.SET_RETURN_TO_START_ON_END:
+      return {
+        ...state,
+        returnToStartOnEnd: Boolean(action.returnToStartOnEnd),
       };
 
     case SESSION_ACTIONS.APPLY_SYNC_STATE:

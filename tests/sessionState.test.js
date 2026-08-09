@@ -26,7 +26,7 @@ test('session state changes the Teacher page and current measure independently',
   });
 });
 
-test('session state handles play, stop, and Repeat without changing position', () => {
+test('session state handles playback options without changing position', () => {
   const playingState = sessionReducer(createInitialSessionState(), {
     type: SESSION_ACTIONS.SET_AUTO_PLAYING,
     isAutoPlaying: true,
@@ -35,23 +35,29 @@ test('session state handles play, stop, and Repeat without changing position', (
     type: SESSION_ACTIONS.SET_REPEAT_ENABLED,
     isRepeatEnabled: true,
   });
-  const stoppedState = sessionReducer(repeatState, {
+  const returnState = sessionReducer(repeatState, {
+    type: SESSION_ACTIONS.SET_RETURN_TO_START_ON_END,
+    returnToStartOnEnd: true,
+  });
+  const stoppedState = sessionReducer(returnState, {
     type: SESSION_ACTIONS.SET_AUTO_PLAYING,
     isAutoPlaying: false,
   });
 
   assert.equal(stoppedState.isAutoPlaying, false);
   assert.equal(stoppedState.isRepeatEnabled, true);
+  assert.equal(stoppedState.returnToStartOnEnd, true);
   assert.equal(stoppedState.pageNumber, 1);
   assert.equal(stoppedState.measureIndex, 0);
 });
 
-test('session reset stops playback and resets position while keeping Repeat', () => {
+test('session reset stops playback and resets position while keeping playback options', () => {
   const state = createInitialSessionState({
     isAutoPlaying: true,
     isRepeatEnabled: true,
     measureIndex: 8,
     pageNumber: 2,
+    returnToStartOnEnd: true,
   });
   const resetState = sessionReducer(state, {
     type: SESSION_ACTIONS.RESET_POSITION,
@@ -61,6 +67,7 @@ test('session reset stops playback and resets position while keeping Repeat', ()
   assert.equal(resetState.measureIndex, 0);
   assert.equal(resetState.isAutoPlaying, false);
   assert.equal(resetState.isRepeatEnabled, true);
+  assert.equal(resetState.returnToStartOnEnd, true);
 });
 
 test('received sync state keeps only the existing logical Socket fields', () => {

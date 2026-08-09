@@ -111,7 +111,9 @@ function App() {
   const viewerModeRef = useRef(ROLE_SELECT_MODE);
   const socketRef = useRef(null);
   const autoplayTimerRef = useRef(null);
+  const autoplayTimerVersionRef = useRef(0);
   const isRepeatEnabledRef = useRef(false);
+  const returnToStartOnEndRef = useRef(false);
   const measuresRef = useRef([]);
   const measureIndexRef = useRef(0);
   const pageNumberRef = useRef(1);
@@ -150,6 +152,7 @@ function App() {
     isRepeatEnabled,
     measureIndex,
     pageNumber,
+    returnToStartOnEnd,
     syncState,
   } = sessionState;
 
@@ -225,6 +228,16 @@ function App() {
     dispatchSession({
       type: SESSION_ACTIONS.SET_REPEAT_ENABLED,
       isRepeatEnabled: nextIsRepeatEnabled,
+    });
+  }
+
+  function setReturnToStartOnEnd(nextReturnToStartOnEnd) {
+    const normalizedValue = Boolean(nextReturnToStartOnEnd);
+
+    returnToStartOnEndRef.current = normalizedValue;
+    dispatchSession({
+      type: SESSION_ACTIONS.SET_RETURN_TO_START_ON_END,
+      returnToStartOnEnd: normalizedValue,
     });
   }
 
@@ -748,9 +761,15 @@ function App() {
     }
 
     setSyncedMeasureIndex(nextMeasureIndex);
+
+    if (isAutoPlaying) {
+      scheduleNextAutoplayStep(nextMeasureIndex);
+    }
   }
 
   function clearAutoplayTimer() {
+    autoplayTimerVersionRef.current += 1;
+
     if (!autoplayTimerRef.current) return;
 
     window.clearTimeout(autoplayTimerRef.current);
@@ -774,6 +793,15 @@ function App() {
     setSyncedMeasureIndex(nextMeasureIndex);
   }
 
+  function finishAutoplayAtEnd() {
+    clearAutoplayTimer();
+    setAutoPlaying(false);
+
+    if (returnToStartOnEndRef.current) {
+      goToMeasureFromAutoplay(0);
+    }
+  }
+
   function scheduleNextAutoplayStep(currentIndex) {
     clearAutoplayTimer();
 
@@ -784,12 +812,15 @@ function App() {
       return;
     }
 
+    const timerVersion = autoplayTimerVersionRef.current;
+
     autoplayTimerRef.current = window.setTimeout(() => {
+      if (timerVersion !== autoplayTimerVersionRef.current) return;
+
       const isLastMeasure = currentIndex >= measuresRef.current.length - 1;
 
       if (isLastMeasure && !isRepeatEnabledRef.current) {
-        clearAutoplayTimer();
-        setAutoPlaying(false);
+        finishAutoplayAtEnd();
         return;
       }
 
@@ -798,6 +829,11 @@ function App() {
       goToMeasureFromAutoplay(nextMeasureIndex);
 
       if (nextMeasureIndex >= measuresRef.current.length - 1 && !isRepeatEnabledRef.current) {
+        if (returnToStartOnEndRef.current) {
+          scheduleNextAutoplayStep(nextMeasureIndex);
+          return;
+        }
+
         clearAutoplayTimer();
         setAutoPlaying(false);
         return;
@@ -1146,11 +1182,13 @@ function App() {
             onSaveBsvProject={saveBsvProject}
             onSetMode={setMode}
             onSetRepeatEnabled={setRepeatEnabled}
+            onSetReturnToStartOnEnd={setReturnToStartOnEnd}
             onGoToPage={goToPage}
             onGoToMeasure={goToMeasure}
             onOpenLyricEditor={openLyricEditor}
             onUpdateSelectedMeasureTiming={updateSelectedMeasureTiming}
             pageNumber={pageNumber}
+            returnToStartOnEnd={returnToStartOnEnd}
             selectedMeasure={selectedMeasure}
             selectedMeasureIndex={selectedMeasureIndex}
             totalPages={totalPages}
@@ -1278,10 +1316,12 @@ function Sidebar({
   onSaveBsvProject,
   onSetMode,
   onSetRepeatEnabled,
+  onSetReturnToStartOnEnd,
   onStartAutoplay,
   onStopAutoplay,
   onUpdateSelectedMeasureTiming,
   pageNumber,
+  returnToStartOnEnd,
   selectedMeasure,
   selectedMeasureIndex,
   totalPages,
@@ -1359,11 +1399,17 @@ function Sidebar({
             </>
           ) : (
             <>
+              <div className="current-measure-display" aria-live="polite">
+                <span>현재 마디</span>
+                <strong>
+                  {measureTotal > 0 ? measureIndex + 1 : 0} / {measureTotal}
+                </strong>
+              </div>
               <button onClick={() => onGoToMeasure(0)}>⏮ 처음</button>
               <button onClick={() => onGoToMeasure(measureIndex - 1)}>◀ 마디</button>
               <button onClick={() => onGoToMeasure(measureIndex + 1)}>▶ 마디</button>
               <form className="measure-jump-form" onSubmit={submitMeasureNumber}>
-                <label htmlFor="measure-number-input">마디 번호</label>
+                <label htmlFor="measure-number-input">이동할 마디</label>
                 <input
                   id="measure-number-input"
                   inputMode="numeric"
@@ -1389,6 +1435,14 @@ function Sidebar({
               />
               반복재생
             </label>
+            <label className="repeat-toggle">
+              <input
+                checked={returnToStartOnEnd}
+                onChange={(event) => onSetReturnToStartOnEnd(event.target.checked)}
+                type="checkbox"
+              />
+              종료 후 처음으로
+            </label>
             <button
               disabled={isAutoPlaying || measureTotal === 0}
               onClick={onStartAutoplay}
@@ -1403,54 +1457,49 @@ function Sidebar({
         </>
       )}
 
-      {canEdit ? (
-        <>
-          {mode === REGISTER_MODE && selectedMeasure && (
-            <div className="measure-timing-editor">
-              <p>선택 마디 : {selectedMeasureIndex + 1}</p>
-              <label>
-                BPM
-                <input
-                  min="1"
-                  onChange={(event) =>
-                    onUpdateSelectedMeasureTiming('bpm', event.target.value)
-                  }
-                  type="number"
-                  value={selectedMeasure.bpm}
-                />
-              </label>
-              <label>
-                Beats
-                <input
-                  min="1"
-                  onChange={(event) =>
-                    onUpdateSelectedMeasureTiming('beats', event.target.value)
-                  }
-                  type="number"
-                  value={selectedMeasure.beats}
-                />
-              </label>
-            </div>
-          )}
-
-          <p>key</p>
-          <p>현재 마디</p>
-          <p>{mode}</p>
-        </>
-      ) : (
-        <>
-          <p>{STUDENT_MODE}</p>
-          <p>현재 마디</p>
-        </>
+      {canEdit && mode === REGISTER_MODE && selectedMeasure && (
+        <div className="measure-timing-editor">
+          <p>선택 마디 : {selectedMeasureIndex + 1}</p>
+          <label>
+            BPM
+            <input
+              min="1"
+              onChange={(event) =>
+                onUpdateSelectedMeasureTiming('bpm', event.target.value)
+              }
+              type="number"
+              value={selectedMeasure.bpm}
+            />
+          </label>
+          <label>
+            Beats
+            <input
+              min="1"
+              onChange={(event) =>
+                onUpdateSelectedMeasureTiming('beats', event.target.value)
+              }
+              type="number"
+              value={selectedMeasure.beats}
+            />
+          </label>
+        </div>
       )}
 
-      <p>
-        {measureTotal > 0 ? measureIndex + 1 : 0} / {measureTotal}
-      </p>
-      {!canEdit && <p>현재 페이지</p>}
-      <p>
-        {pageNumber} / {totalPages}
-      </p>
+      {mode === REGISTER_MODE && (
+        <div className="sidebar-status">
+          <span>현재 마디</span>
+          <strong>
+            {measureTotal > 0 ? measureIndex + 1 : 0} / {measureTotal}
+          </strong>
+        </div>
+      )}
+
+      <div className="sidebar-status">
+        <span>현재 페이지</span>
+        <strong>
+          {pageNumber} / {totalPages}
+        </strong>
+      </div>
     </aside>
   );
 }
