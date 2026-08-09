@@ -6,6 +6,19 @@
 
 }
 
+html:fullscreen,
+html:-webkit-full-screen{
+    background:#111;
+}
+
+html:fullscreen #root,
+html:-webkit-full-screen #root{
+    border-inline:0;
+    margin:0;
+    max-width:none;
+    width:100%;
+}
+
 #root:has(.student-mode){
     width:100%;
     border-inline:0;
@@ -171,13 +184,19 @@
 
 .viewer-mode-controls{
     display:flex;
+    flex-wrap:wrap;
     justify-content:center;
     gap:8px;
     margin:8px 0;
+    padding-inline:8px;
 }
 
 .viewer-mode-controls .active{
     border:2px solid #111;
+}
+
+.fullscreen-toggle[aria-pressed="true"]{
+    border:2px solid currentColor;
 }
 
 .main{
@@ -500,4 +519,69 @@
 
 
 
+}
+
+@media (max-width:600px){
+    .teacher-mode{
+        height:100svh;
+        overflow:hidden;
+    }
+
+    .teacher-mode .header{
+        flex:0 0 auto;
+        padding-top:max(0px, env(safe-area-inset-top));
+    }
+
+    .teacher-mode .header h1{
+        font-size:28px;
+        line-height:1.1;
+        margin:12px 0 4px;
+    }
+
+    .teacher-mode .header p{
+        font-size:13px;
+    }
+
+    .teacher-mode .viewer-mode-controls{
+        gap:6px;
+        margin:6px 0 8px;
+    }
+
+    .teacher-mode .viewer-mode-controls button{
+        font-size:12px;
+        padding:5px 8px;
+    }
+
+    .teacher-mode .main{
+        flex:1;
+        height:auto;
+        min-height:0;
+    }
+
+    .student-mode .floating-view-controls{
+        box-sizing:border-box;
+        justify-content:flex-end;
+        left:max(8px, env(safe-area-inset-left));
+        right:max(8px, env(safe-area-inset-right));
+        top:max(8px, env(safe-area-inset-top));
+    }
+
+    .student-mode .student-pdf-controls{
+        box-sizing:border-box;
+        display:grid;
+        grid-template-columns:repeat(2, minmax(0, 1fr));
+        left:max(8px, env(safe-area-inset-left));
+        right:max(8px, env(safe-area-inset-right));
+        top:calc(max(8px, env(safe-area-inset-top)) + 36px);
+    }
+
+    .student-mode .student-pdf-controls button{
+        min-width:0;
+        white-space:normal;
+    }
+
+    .vocal-mode .floating-view-controls{
+        right:max(8px, env(safe-area-inset-right));
+        top:max(8px, env(safe-area-inset-top));
+    }
 }

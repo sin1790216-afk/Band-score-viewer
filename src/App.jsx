@@ -32,6 +32,11 @@ import {
   NORMALIZED_COORDINATE_SPACE,
   NORMALIZED_COORDINATE_STATUS,
 } from './utils/measureCoordinates.js';
+import {
+  getFullscreenElement,
+  isFullscreenSupported,
+  toggleDocumentFullscreen,
+} from './utils/fullscreen.js';
 
 const REGISTER_MODE = 'register';
 const PLAY_MODE = 'play';
@@ -145,6 +150,7 @@ function App() {
   const [studentViewMode, setStudentViewMode] = useState(STUDENT_ZOOM_VIEW);
   const [studentPdfSource, setStudentPdfSource] = useState(TEACHER_PDF_SOURCE);
   const [viewerMode, setViewerMode] = useState(ROLE_SELECT_MODE);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const { measures, pdfMetadata } = projectState;
   const fileName = pdfMetadata.fileName;
   const {
@@ -169,9 +175,18 @@ function App() {
       .find((lyric) => lyric && lyric !== getTrimmedLyric(currentMeasure)) || '';
   const selectedMeasure = measures[selectedMeasureIndex] || null;
   const overlayMode = canEdit ? mode : PLAY_MODE;
+  const fullscreenSupported = isFullscreenSupported(document);
   const handleDebugSnapshot = useCallback((snapshot) => {
     debugSnapshotRef.current = snapshot;
   }, []);
+
+  async function toggleFullscreen() {
+    try {
+      await toggleDocumentFullscreen(document);
+    } catch (error) {
+      console.error('[fullscreen] failed', error);
+    }
+  }
 
   function publishSyncState(nextSyncState) {
     const logicalNextSyncState = getLogicalSyncState({
@@ -1031,8 +1046,25 @@ function App() {
   }, [studentPdfSource]);
 
   useEffect(() => {
+    function updateFullscreenState() {
+      setIsFullscreen(Boolean(getFullscreenElement(document)));
+    }
+
+    updateFullscreenState();
+    document.addEventListener('fullscreenchange', updateFullscreenState);
+    document.addEventListener('webkitfullscreenchange', updateFullscreenState);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', updateFullscreenState);
+      document.removeEventListener('webkitfullscreenchange', updateFullscreenState);
+    };
+  }, []);
+
+  useEffect(() => {
     function handleKeyDown(event) {
       if ((viewerMode === STUDENT_MODE || viewerMode === VOCAL_MODE) && event.key === 'Escape') {
+        if (getFullscreenElement(document)) return;
+
         selectViewerMode(ROLE_SELECT_MODE);
         return;
       }
@@ -1101,6 +1133,11 @@ function App() {
             <button onClick={() => selectViewerMode(ROLE_SELECT_MODE)} type="button">
               화면 선택
             </button>
+            <FullscreenButton
+              isFullscreen={isFullscreen}
+              isSupported={fullscreenSupported}
+              onToggle={toggleFullscreen}
+            />
           </div>
         </header>
       ) : (
@@ -1111,6 +1148,11 @@ function App() {
           <button onClick={() => selectViewerMode(TEACHER_MODE)} type="button">
             Teacher
           </button>
+          <FullscreenButton
+            isFullscreen={isFullscreen}
+            isSupported={fullscreenSupported}
+            onToggle={toggleFullscreen}
+          />
         </div>
       )}
 
@@ -1277,6 +1319,21 @@ function RoleSelectView({ onSelectViewerMode }) {
         </button>
       </div>
     </main>
+  );
+}
+
+function FullscreenButton({ isFullscreen, isSupported, onToggle }) {
+  if (!isSupported) return null;
+
+  return (
+    <button
+      aria-pressed={isFullscreen}
+      className="fullscreen-toggle"
+      onClick={onToggle}
+      type="button"
+    >
+      {isFullscreen ? '전체화면 종료' : '⛶ 전체화면'}
+    </button>
   );
 }
 
