@@ -59,6 +59,11 @@ Teacher의 `audioSettings`는 서버가 메모리에 최신값을 보관해 새 
 개인 설정은 Teacher PDF 또는 개인 PDF의 document key별로 브라우저 `localStorage`에 저장하며,
 Project State와 Socket 데이터에는 합치지 않는다.
 
+Student가 직접 선택한 로컬 음원 파일은 데이터 모델에 저장하지 않는다. 현재 Student 화면의
+런타임 `File`과 Object URL로만 재생하며, 역할 또는 PDF가 바뀌면 해제한다. 따라서 음원 bytes,
+파일 경로, 재생속도와 분석한 파형 peak는 JSON, `.bsv`, `localStorage`, Socket에 포함되지 않는다.
+파형에서 지정한 시작 위치만 기존 `startOffsetSeconds`로 저장한다.
+
 ## 현재 syncState
 
 ```js

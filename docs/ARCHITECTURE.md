@@ -75,8 +75,13 @@ App은 준비가 모두 성공한 뒤에만 Project State, PDF URL과 초기 Ses
 `pdf:update`, `measures:update`, `sync:update` 흐름으로 공유한다.
 
 음원 링크와 start offset은 `.bsv` Project State에 저장하고 별도 `audio:state` 이벤트로
-Student에 공유한다. 논리 `syncState`에는 포함하지 않는다. Student 개인 음원은 PDF identity별
-브라우저 로컬 데이터이며 Socket이나 `.bsv`로 보내지 않는다. 실제 재생 연동은 다음 단계의 책임이다.
+Student에 공유한다. 논리 `syncState`에는 포함하지 않는다. Student 개인 링크와 offset은 PDF
+identity별 브라우저 로컬 데이터이며 Socket이나 `.bsv`로 보내지 않는다. 로컬 음원 파일은
+`LocalAudioPlayer`가 브라우저 Object URL로 재생하고 역할/PDF 전환 시 해제한다. 파일 bytes와
+재생속도와 파형 peak는 영속 저장하거나 공유하지 않는다. 로컬 audio와 파형 컴포넌트는
+설정 패널의 표시 여부와 분리해 패널을 닫아도 재생 상태를 유지한다. 모바일 파일 선택 중 페이지가 재생성될 때만
+`sessionStorage`의 일회성 표시로 Student 음원 패널을 복구하며 파일 자체는 다시 선택해야 한다.
+음원 시간과 measure timeline 연결은 후속 책임이다.
 
 과거 effect 강제 재실행에 사용하던 `renderSyncVersion`은 제거했다. 현재는 동일한
 `surfaceIdentity`의 document/page render 완료 여부가 overlay 표시와 자동 스크롤의
