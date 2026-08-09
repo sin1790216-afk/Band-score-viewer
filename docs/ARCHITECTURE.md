@@ -6,6 +6,7 @@
 - 실시간 서버: Node HTTP 서버 + Socket.IO
 - 개발 연결: 브라우저가 접속한 hostname의 4000 포트를 우선 사용하고, 실패하면 same-origin으로 재시도
 - 배포 실행: `server.js`가 빌드된 `dist` 정적 파일과 Socket.IO를 함께 제공할 수 있음
+- PWA: production 빌드에서 manifest와 서비스 워커를 등록한다. 서비스 워커는 앱/PDF/Socket 요청을 캐시하지 않으며 새 버전 활성화와 기존 앱 캐시 정리만 담당한다.
 
 ## 상태 흐름
 

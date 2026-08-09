@@ -24,9 +24,18 @@
 ## 네트워크와 서버
 
 - 기관 Wi-Fi의 AP isolation, 방화벽 또는 포트 정책이 기기 간 4000 포트 통신을 차단할 수 있다.
+- `http://Teacher-Mac-IP` 같은 LAN 주소는 보안 연결이 아니므로 브라우저에 따라 PWA 설치와 서비스 워커가 제한된다. 온라인 배포에서는 HTTPS가 필요하다.
 - 서버 상태는 메모리에만 있으므로 서버 재시작 시 PDF, measures, syncState가 사라진다.
 - 현재 Room, 접속 코드, Teacher 인증, 다중 수업 분리는 구현되어 있지 않다.
+- 현재 Socket.IO는 같은 Wi-Fi 수업을 위해 모든 origin을 허용하며 역할 인증도 없다. 따라서 같은 서버에 연결할 수 있는 클라이언트는 동기화 상태를 변경할 수 있다. 공개 배포 전에는 Teacher 인증, 수업별 Room, 허용 origin 제한과 요청 빈도 제한이 필수다.
+- PDF 전송 한도는 100MB이며 서버 상태는 메모리에 저장된다. 인증과 요청 빈도 제한이 없는 현재 구조를 인터넷에 그대로 공개하면 메모리 고갈 공격에 취약하다.
 - Student 개인 PDF는 Teacher 악보와 페이지 크기·줄바꿈·마디 배치가 다르면 하이라이트가 맞지 않을 수 있다.
+
+## 보안 검증 범위
+
+- 정적 파일 서버는 `dist` 밖의 경로를 거부하고 PDF/measures/sync Socket payload의 기본 형식과 크기를 검증한다.
+- PDF.js worker는 외부 CDN이 아니라 빌드에 포함된 로컬 파일을 사용한다.
+- Content Security Policy, Teacher 인증, Room 격리, rate limit과 HTTPS 배포 설정은 아직 구현되지 않았다.
 
 ## .bsv v1 파일 크기
 

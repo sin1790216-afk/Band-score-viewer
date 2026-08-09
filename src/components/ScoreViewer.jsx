@@ -16,7 +16,7 @@ import {
   isReadySurface as isReadyPdfSurface,
 } from '../utils/pdfRenderLifecycle.js';
 
-pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+pdfjs.GlobalWorkerOptions.workerSrc = `${import.meta.env.BASE_URL}pdf.worker.min.mjs`;
 
 const REGISTER_MODE = 'register';
 const PDF_WIDTH_SCALE = 1.5;

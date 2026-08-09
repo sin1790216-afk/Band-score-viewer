@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   createInitialSessionState,
+  getLogicalSyncState,
   SESSION_ACTIONS,
   sessionReducer,
 } from '../src/state/sessionState.js';
@@ -102,4 +103,28 @@ test('processing the same session event twice produces the same state values', (
   const twice = sessionReducer(once, action);
 
   assert.deepEqual(twice, once);
+});
+
+test('logical sync state rejects unsafe page, measure, and filename values', () => {
+  assert.deepEqual(
+    getLogicalSyncState({
+      fileName: { value: 'lesson.pdf' },
+      measureIndex: -1,
+      pageNumber: '2',
+    }),
+    {
+      fileName: '',
+      measureIndex: 0,
+      pageNumber: 1,
+    },
+  );
+
+  assert.equal(
+    getLogicalSyncState({
+      fileName: 'a'.repeat(300),
+      measureIndex: 0,
+      pageNumber: 1,
+    }).fileName.length,
+    255,
+  );
 });

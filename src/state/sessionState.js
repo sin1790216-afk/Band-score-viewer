@@ -24,10 +24,23 @@ export const INITIAL_SESSION_STATE = {
 };
 
 export function getLogicalSyncState(syncState) {
+  const fileName =
+    typeof syncState?.fileName === 'string'
+      ? syncState.fileName.slice(0, 255)
+      : '';
+  const pageNumber =
+    Number.isSafeInteger(syncState?.pageNumber) && syncState.pageNumber > 0
+      ? syncState.pageNumber
+      : 1;
+  const measureIndex =
+    Number.isSafeInteger(syncState?.measureIndex) && syncState.measureIndex >= 0
+      ? syncState.measureIndex
+      : 0;
+
   return {
-    fileName: syncState?.fileName || '',
-    pageNumber: syncState?.pageNumber || 1,
-    measureIndex: syncState?.measureIndex || 0,
+    fileName,
+    pageNumber,
+    measureIndex,
   };
 }
 

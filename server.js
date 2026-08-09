@@ -1,7 +1,15 @@
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, resolve } from 'node:path';
 import { Server } from 'socket.io';
+
+import { getLogicalSyncState } from './src/state/sessionState.js';
+import {
+  isValidMeasuresState,
+  MAX_PDF_BYTES,
+  resolveStaticRequest,
+  validatePdfState,
+} from './src/utils/serverSecurity.js';
 
 const PORT = process.env.PORT || 4000;
 const distDir = resolve('dist');
@@ -19,15 +27,34 @@ const mimeTypes = {
   '.html': 'text/html',
   '.js': 'text/javascript',
   '.json': 'application/json',
+  '.mjs': 'text/javascript',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
+  '.webmanifest': 'application/manifest+json',
 };
 
 const httpServer = createServer((request, response) => {
-  const requestPath = request.url === '/' ? '/index.html' : request.url;
-  const filePath = join(distDir, requestPath);
+  if (!['GET', 'HEAD'].includes(request.method)) {
+    response.writeHead(405, {
+      Allow: 'GET, HEAD',
+      'Content-Type': 'text/plain; charset=utf-8',
+    });
+    response.end('Method not allowed.');
+    return;
+  }
+
+  const staticRequest = resolveStaticRequest(distDir, request.url);
+
+  if (!staticRequest) {
+    response.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    response.end('Invalid request path.');
+    return;
+  }
+
+  const { filePath, requestPath } = staticRequest;
   const fallbackPath = join(distDir, 'index.html');
-  const staticPath = existsSync(filePath) ? filePath : fallbackPath;
+  const isFile = (path) => existsSync(path) && statSync(path).isFile();
+  const staticPath = isFile(filePath) ? filePath : fallbackPath;
 
   if (!existsSync(staticPath)) {
     response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -35,26 +62,33 @@ const httpServer = createServer((request, response) => {
     return;
   }
 
+  const isHashedBuildAsset = requestPath.startsWith('/assets/');
+
   response.writeHead(200, {
+    'Cache-Control': isHashedBuildAsset
+      ? 'public, max-age=31536000, immutable'
+      : 'no-cache',
     'Content-Type': mimeTypes[extname(staticPath)] || 'application/octet-stream',
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
   });
-  createReadStream(staticPath).pipe(response);
+
+  if (request.method === 'HEAD') {
+    response.end();
+    return;
+  }
+
+  const stream = createReadStream(staticPath);
+  stream.on('error', () => response.destroy());
+  stream.pipe(response);
 });
 
 const io = new Server(httpServer, {
   cors: {
     origin: '*',
   },
-  maxHttpBufferSize: 100 * 1024 * 1024,
+  maxHttpBufferSize: MAX_PDF_BYTES,
 });
-
-function getLogicalSyncState(syncState) {
-  return {
-    fileName: syncState?.fileName || '',
-    pageNumber: syncState?.pageNumber || 1,
-    measureIndex: syncState?.measureIndex || 0,
-  };
-}
 
 io.on('connection', (socket) => {
   console.log(
@@ -82,19 +116,31 @@ io.on('connection', (socket) => {
   });
 
   socket.on('pdf:update', (nextPdf) => {
-    latestPdf = nextPdf;
+    const validatedPdf = validatePdfState(nextPdf);
+
+    if (!validatedPdf) {
+      console.warn(`[socket] rejected invalid pdf:update from ${socket.id}`);
+      return;
+    }
+
+    latestPdf = validatedPdf;
     latestSyncState = getLogicalSyncState({
       ...latestSyncState,
-      fileName: nextPdf.fileName,
+      fileName: validatedPdf.fileName,
     });
 
-    console.log(`[socket] received pdf:update file=${nextPdf.fileName}`);
+    console.log(`[socket] received pdf:update file=${validatedPdf.fileName}`);
     socket.broadcast.emit('pdf:state', latestPdf);
     socket.broadcast.emit('sync:state', latestSyncState);
   });
 
   socket.on('measures:update', (nextMeasures) => {
-    latestMeasures = Array.isArray(nextMeasures) ? nextMeasures : [];
+    if (!isValidMeasuresState(nextMeasures)) {
+      console.warn(`[socket] rejected invalid measures:update from ${socket.id}`);
+      return;
+    }
+
+    latestMeasures = nextMeasures;
     console.log(`[socket] received measures:update count=${latestMeasures.length}`);
     socket.broadcast.emit('measures:state', latestMeasures);
   });
