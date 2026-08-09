@@ -25,6 +25,8 @@
 .role-select-mode{
     align-items:center;
     background:#f6f7f9;
+    color:#24212a;
+    color-scheme:light;
     min-height:100vh;
 }
 
@@ -41,6 +43,7 @@
 }
 
 .role-select h1{
+    color:#08060d;
     font-size:40px;
     margin:0 0 12px;
 }
@@ -58,6 +61,9 @@
 }
 
 .role-select-actions button{
+    background:#fff;
+    border:1px solid #b9bdc6;
+    color:#24212a;
     font-size:18px;
     min-width:120px;
     padding:12px 18px;
