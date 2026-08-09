@@ -1286,6 +1286,30 @@ function Sidebar({
   selectedMeasureIndex,
   totalPages,
 }) {
+  const [measureNumberInput, setMeasureNumberInput] = useState(
+    measureTotal > 0 ? String(measureIndex + 1) : '',
+  );
+
+  useEffect(() => {
+    setMeasureNumberInput(measureTotal > 0 ? String(measureIndex + 1) : '');
+  }, [measureIndex, measureTotal]);
+
+  function submitMeasureNumber(event) {
+    event.preventDefault();
+
+    const measureNumber = Number(measureNumberInput);
+
+    if (
+      !Number.isInteger(measureNumber) ||
+      measureNumber < 1 ||
+      measureNumber > measureTotal
+    ) {
+      return;
+    }
+
+    onGoToMeasure(measureNumber - 1);
+  }
+
   return (
     <aside className="sidebar">
       {canEdit && (
@@ -1338,6 +1362,21 @@ function Sidebar({
               <button onClick={() => onGoToMeasure(0)}>⏮ 처음</button>
               <button onClick={() => onGoToMeasure(measureIndex - 1)}>◀ 마디</button>
               <button onClick={() => onGoToMeasure(measureIndex + 1)}>▶ 마디</button>
+              <form className="measure-jump-form" onSubmit={submitMeasureNumber}>
+                <label htmlFor="measure-number-input">마디 번호</label>
+                <input
+                  id="measure-number-input"
+                  inputMode="numeric"
+                  max={measureTotal || undefined}
+                  min="1"
+                  onChange={(event) => setMeasureNumberInput(event.target.value)}
+                  type="number"
+                  value={measureNumberInput}
+                />
+                <button disabled={measureTotal === 0} type="submit">
+                  이동
+                </button>
+              </form>
             </>
           )}
 

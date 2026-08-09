@@ -282,6 +282,28 @@
     gap:6px;
 }
 
+.measure-jump-form{
+    display:grid;
+    gap:4px;
+    grid-template-columns:minmax(0, 1fr) auto;
+    padding:4px;
+}
+
+.measure-jump-form label{
+    font-size:12px;
+    grid-column:1 / -1;
+}
+
+.measure-jump-form input{
+    box-sizing:border-box;
+    min-width:0;
+    width:100%;
+}
+
+.measure-jump-form button{
+    padding-inline:6px;
+}
+
 .repeat-toggle{
     align-items:center;
     display:flex;
