@@ -82,10 +82,13 @@ identity별 브라우저 로컬 데이터이며 Socket이나 `.bsv`로 보내지
 설정 패널의 표시 여부와 분리해 패널을 닫아도 재생 상태를 유지한다. 모바일 파일 선택 중 페이지가 재생성될 때만
 `sessionStorage`의 일회성 표시로 Student 음원 패널을 복구하며 파일 자체는 다시 선택해야 한다.
 Student 개인 타임라인은 PDF document identity와 로컬 음원 identity 조합 아래에
-`measureId + timeSeconds` marker를 `localStorage`로 저장한다. 이 marker는 JSON, `.bsv`, Socket에
-포함하지 않으며 Teacher의 논리적 `pageNumber`/`measureIndex`를 변경하지 않고 로컬 audio seek에만 사용한다.
+`measureId + timeSeconds` marker와 선택적인 개인 BPM/Beats를 `localStorage`로 저장한다. 이 데이터는
+JSON, `.bsv`, Socket에 포함하지 않는다. 음원 따라가기가 켜진 동안 플레이어는 현재 시간 이전의 가장
+최근 marker가 바뀔 때만 App에 measure ID를 전달하고, Student의 로컬 표시 페이지/하이라이트만 바꾼다.
+Teacher의 논리적 `pageNumber`/`measureIndex`와 Socket 상태는 수정하지 않는다.
 로컬 재생은 HTML media element를 유지하되 Web Audio oscillator로 한 마디 예비박을 예약한다. 처음 재생,
-일시정지 후 재개, marker 마디 클릭 모두 예비박을 거치며 첫 박은 다른 주파수로 accent한다.
+일시정지 후 재개, marker 마디 클릭 모두 예비박을 거치며 첫 박은 다른 주파수로 accent한다. 개인 BPM/Beats가
+있으면 예비박에 우선 사용하고, 없으면 Teacher measure 값을 사용한다.
 
 과거 effect 강제 재실행에 사용하던 `renderSyncVersion`은 제거했다. 현재는 동일한
 `surfaceIdentity`의 document/page render 완료 여부가 overlay 표시와 자동 스크롤의

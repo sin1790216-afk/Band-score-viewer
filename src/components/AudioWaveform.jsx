@@ -47,9 +47,10 @@ export default function AudioWaveform({
   currentTime,
   duration,
   isVisible,
-  measureMarkerTimeSeconds,
+  measureMarkers = [],
   onSeek,
   startOffsetSeconds,
+  targetMeasureId,
 }) {
   const canvasRef = useRef(null);
   const dragStateRef = useRef(null);
@@ -189,18 +190,28 @@ export default function AudioWaveform({
         context.stroke();
       }
 
-      const markerX =
-        ((Number(measureMarkerTimeSeconds) - visibleStart) / visibleDuration) *
-        canvasWidth;
+      measureMarkers.forEach((marker) => {
+        const markerX =
+          ((Number(marker.timeSeconds) - visibleStart) / visibleDuration) *
+          canvasWidth;
 
-      if (Number.isFinite(markerX) && markerX >= 0 && markerX <= canvasWidth) {
-        context.strokeStyle = '#4dcc83';
-        context.lineWidth = 2;
+        if (!Number.isFinite(markerX) || markerX < 0 || markerX > canvasWidth) {
+          return;
+        }
+
+        const isTarget = marker.measureId === targetMeasureId;
+
+        context.strokeStyle = isTarget ? '#ff4f5e' : '#4dcc83';
+        context.lineWidth = isTarget ? 3 : 1.5;
         context.beginPath();
         context.moveTo(markerX, 0);
         context.lineTo(markerX, WAVEFORM_HEIGHT);
         context.stroke();
-      }
+
+        context.fillStyle = isTarget ? '#ff8a94' : '#8be2ad';
+        context.font = 'bold 10px sans-serif';
+        context.fillText(String(marker.measureNumber), markerX + 3, 12);
+      });
     }
 
     context.strokeStyle = '#ff4f5e';
@@ -214,9 +225,10 @@ export default function AudioWaveform({
     currentTime,
     duration,
     isVisible,
-    measureMarkerTimeSeconds,
+    measureMarkers,
     peaks,
     startOffsetSeconds,
+    targetMeasureId,
     visibleDuration,
   ]);
 

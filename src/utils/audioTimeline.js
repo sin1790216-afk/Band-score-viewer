@@ -5,6 +5,7 @@ export const STUDENT_AUDIO_TIMELINE_VERSION = 1;
 const MAX_AUDIO_FILE_NAME_LENGTH = 256;
 const MAX_AUDIO_TIME_SECONDS = 172_800;
 const MAX_TIMELINE_MARKERS = 10_000;
+const MAX_TIMING_VALUE = 10_000;
 
 function isObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -26,6 +27,30 @@ function normalizeMarker(marker) {
   return {
     measureId,
     timeSeconds: Number(timeSeconds.toFixed(3)),
+  };
+}
+
+function normalizeMeasureTiming(timing) {
+  const measureId = typeof timing?.measureId === 'string' ? timing.measureId.trim() : '';
+  const bpm = Number(timing?.bpm);
+  const beats = Number(timing?.beats);
+
+  if (
+    !measureId ||
+    !Number.isFinite(bpm) ||
+    bpm <= 0 ||
+    bpm > MAX_TIMING_VALUE ||
+    !Number.isFinite(beats) ||
+    beats <= 0 ||
+    beats > MAX_TIMING_VALUE
+  ) {
+    return null;
+  }
+
+  return {
+    beats: Number(beats.toFixed(3)),
+    bpm: Number(bpm.toFixed(3)),
+    measureId,
   };
 }
 
@@ -60,11 +85,15 @@ export function normalizeStudentAudioTimelineLibrary(value) {
   const timelines = {};
 
   Object.entries(sourceTimelines).forEach(([timelineKey, timeline]) => {
-    if (!timelineKey || !Array.isArray(timeline?.markers)) return;
+    if (!timelineKey || !isObject(timeline)) return;
 
     const markersByMeasureId = new Map();
+    const timingsByMeasureId = new Map();
 
-    timeline.markers.slice(0, MAX_TIMELINE_MARKERS).forEach((marker) => {
+    const sourceMarkers = Array.isArray(timeline.markers) ? timeline.markers : [];
+    const sourceTimings = Array.isArray(timeline.timings) ? timeline.timings : [];
+
+    sourceMarkers.slice(0, MAX_TIMELINE_MARKERS).forEach((marker) => {
       const normalizedMarker = normalizeMarker(marker);
 
       if (normalizedMarker) {
@@ -72,8 +101,17 @@ export function normalizeStudentAudioTimelineLibrary(value) {
       }
     });
 
+    sourceTimings.slice(0, MAX_TIMELINE_MARKERS).forEach((timing) => {
+      const normalizedTiming = normalizeMeasureTiming(timing);
+
+      if (normalizedTiming) {
+        timingsByMeasureId.set(normalizedTiming.measureId, normalizedTiming);
+      }
+    });
+
     timelines[timelineKey] = {
       markers: Array.from(markersByMeasureId.values()),
+      timings: Array.from(timingsByMeasureId.values()),
     };
   });
 
@@ -127,6 +165,44 @@ export function getMeasureTimelineTime(markers, measureId) {
   return marker?.timeSeconds ?? null;
 }
 
+export function getAudioTimelineMarkerAtTime(markers, timeSeconds) {
+  const safeTime = Number(timeSeconds);
+
+  if (!Number.isFinite(safeTime) || safeTime < 0 || !Array.isArray(markers)) {
+    return null;
+  }
+
+  return markers.reduce((activeMarker, candidate) => {
+    const marker = normalizeMarker(candidate);
+
+    if (
+      !marker ||
+      marker.timeSeconds > safeTime ||
+      (activeMarker && marker.timeSeconds < activeMarker.timeSeconds)
+    ) {
+      return activeMarker;
+    }
+
+    return marker;
+  }, null);
+}
+
+export function getStudentAudioTimelineTimings(library, timelineKey) {
+  if (!timelineKey) return [];
+
+  const normalizedLibrary = normalizeStudentAudioTimelineLibrary(library);
+
+  return normalizedLibrary.timelines[timelineKey]?.timings || [];
+}
+
+export function getMeasureTimelineTiming(timings, measureId) {
+  const timing = Array.isArray(timings)
+    ? timings.find((candidate) => candidate.measureId === measureId)
+    : null;
+
+  return timing || null;
+}
+
 export function setStudentAudioTimelineMarker(
   library,
   timelineKey,
@@ -152,7 +228,11 @@ export function setStudentAudioTimelineMarker(
     ...normalizedLibrary,
     timelines: {
       ...normalizedLibrary.timelines,
-      [timelineKey]: { markers },
+      [timelineKey]: {
+        ...normalizedLibrary.timelines[timelineKey],
+        markers,
+        timings: normalizedLibrary.timelines[timelineKey]?.timings || [],
+      },
     },
   };
 }
@@ -173,8 +253,68 @@ export function removeStudentAudioTimelineMarker(
     timelines: {
       ...normalizedLibrary.timelines,
       [timelineKey]: {
+        ...normalizedLibrary.timelines[timelineKey],
         markers: normalizedLibrary.timelines[timelineKey].markers.filter(
           (marker) => marker.measureId !== measureId,
+        ),
+      },
+    },
+  };
+}
+
+export function setStudentAudioTimelineTiming(
+  library,
+  timelineKey,
+  nextTiming,
+) {
+  const normalizedLibrary = normalizeStudentAudioTimelineLibrary(library);
+  const normalizedTiming = normalizeMeasureTiming(nextTiming);
+
+  if (!timelineKey || !normalizedTiming) return normalizedLibrary;
+
+  const previousTimings = normalizedLibrary.timelines[timelineKey]?.timings || [];
+  const timingIndex = previousTimings.findIndex(
+    (timing) => timing.measureId === normalizedTiming.measureId,
+  );
+  const timings =
+    timingIndex >= 0
+      ? previousTimings.map((timing, index) =>
+          index === timingIndex ? normalizedTiming : timing,
+        )
+      : [...previousTimings, normalizedTiming].slice(-MAX_TIMELINE_MARKERS);
+
+  return {
+    ...normalizedLibrary,
+    timelines: {
+      ...normalizedLibrary.timelines,
+      [timelineKey]: {
+        ...normalizedLibrary.timelines[timelineKey],
+        markers: normalizedLibrary.timelines[timelineKey]?.markers || [],
+        timings,
+      },
+    },
+  };
+}
+
+export function removeStudentAudioTimelineTiming(
+  library,
+  timelineKey,
+  measureId,
+) {
+  const normalizedLibrary = normalizeStudentAudioTimelineLibrary(library);
+
+  if (!timelineKey || !measureId || !normalizedLibrary.timelines[timelineKey]) {
+    return normalizedLibrary;
+  }
+
+  return {
+    ...normalizedLibrary,
+    timelines: {
+      ...normalizedLibrary.timelines,
+      [timelineKey]: {
+        ...normalizedLibrary.timelines[timelineKey],
+        timings: normalizedLibrary.timelines[timelineKey].timings.filter(
+          (timing) => timing.measureId !== measureId,
         ),
       },
     },

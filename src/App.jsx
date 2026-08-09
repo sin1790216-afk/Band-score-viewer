@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 
 import { io } from 'socket.io-client';
 
@@ -72,12 +79,16 @@ import {
 import {
   createLocalAudioIdentity,
   createStudentAudioTimelineKey,
+  getMeasureTimelineTiming,
   getMeasureTimelineTime,
   getStudentAudioTimelineMarkers,
+  getStudentAudioTimelineTimings,
   loadStudentAudioTimelineLibrary,
   removeStudentAudioTimelineMarker,
+  removeStudentAudioTimelineTiming,
   saveStudentAudioTimelineLibrary,
   setStudentAudioTimelineMarker,
+  setStudentAudioTimelineTiming,
 } from './utils/audioTimeline.js';
 
 const REGISTER_MODE = 'register';
@@ -186,6 +197,7 @@ function App() {
   const teacherPdfObjectUrlRef = useRef('');
   const teacherPdfBlobRef = useRef(null);
   const studentAudioDocumentKeyRef = useRef('');
+  const studentAudioPlaybackMeasureIdRef = useRef('');
   const studentLocalAudioObjectUrlRef = useRef('');
   const studentAudioSeekVersionRef = useRef(0);
   const debugSnapshotRef = useRef({});
@@ -240,6 +252,10 @@ function App() {
     useState(() => loadStudentAudioTimelineLibrary(getBrowserStorage()));
   const [studentAudioTargetMeasureIndex, setStudentAudioTargetMeasureIndex] =
     useState(-1);
+  const [studentAudioPlaybackMeasureId, setStudentAudioPlaybackMeasureId] =
+    useState('');
+  const [isStudentAudioFollowEnabled, setIsStudentAudioFollowEnabled] =
+    useState(true);
   const [studentAudioSeekRequest, setStudentAudioSeekRequest] = useState(null);
   const [studentLocalAudioFileName, setStudentLocalAudioFileName] = useState('');
   const [studentLocalAudioFile, setStudentLocalAudioFile] = useState(null);
@@ -270,23 +286,6 @@ function App() {
   const synchronizedDisplayMeasureIndex = canEdit
     ? measureIndex
     : syncState.measureIndex;
-  const displayPageNumber = isStudentAnnotating
-    ? clampStudentAnnotationPageNumber(
-        studentAnnotationPageNumber,
-        totalPages,
-      )
-    : synchronizedDisplayPageNumber;
-  const displayMeasureIndex = isStudentAnnotating
-    ? studentAnnotationMeasureIndex
-    : synchronizedDisplayMeasureIndex;
-  const currentMeasure = measures[displayMeasureIndex] || null;
-  const nextDifferentLyric =
-    measures
-      .slice(displayMeasureIndex + 1)
-      .map(getTrimmedLyric)
-      .find((lyric) => lyric && lyric !== getTrimmedLyric(currentMeasure)) || '';
-  const selectedMeasure = measures[selectedMeasureIndex] || null;
-  const overlayMode = canEdit ? mode : PLAY_MODE;
   const teacherAnnotationDocumentKey = createStudentAnnotationDocumentKey({
     byteLength: teacherPdfBlobRef.current?.size,
     fileName: fileName || syncState.fileName,
@@ -316,10 +315,72 @@ function App() {
     studentAnnotationDocumentKey,
     studentLocalAudioIdentity,
   );
-  const studentAudioTimelineMarkers = getStudentAudioTimelineMarkers(
-    studentAudioTimelineLibrary,
-    studentAudioTimelineKey,
+  const studentAudioTimelineMarkers = useMemo(
+    () =>
+      getStudentAudioTimelineMarkers(
+        studentAudioTimelineLibrary,
+        studentAudioTimelineKey,
+      ),
+    [studentAudioTimelineKey, studentAudioTimelineLibrary],
   );
+  const studentAudioTimelineTimings = useMemo(
+    () =>
+      getStudentAudioTimelineTimings(
+        studentAudioTimelineLibrary,
+        studentAudioTimelineKey,
+      ),
+    [studentAudioTimelineKey, studentAudioTimelineLibrary],
+  );
+  const studentAudioWaveformMarkers = useMemo(() => {
+    const measureIndexById = new Map(
+      measures.map((measure, index) => [measure.id, index]),
+    );
+
+    return studentAudioTimelineMarkers
+      .map((marker) => {
+        const markerMeasureIndex = measureIndexById.get(marker.measureId);
+
+        return Number.isInteger(markerMeasureIndex)
+          ? { ...marker, measureNumber: markerMeasureIndex + 1 }
+          : null;
+      })
+      .filter(Boolean);
+  }, [measures, studentAudioTimelineMarkers]);
+  const studentAudioPlaybackMeasureIndex = measures.findIndex(
+    (measure) => measure.id === studentAudioPlaybackMeasureId,
+  );
+  const studentAudioPlaybackMeasure =
+    measures[studentAudioPlaybackMeasureIndex] || null;
+  const canUseStudentMeasureAudio =
+    viewerMode === STUDENT_MODE &&
+    studentAudioSource === LOCAL_AUDIO_SOURCE &&
+    Boolean(studentLocalAudioUrl && studentAudioTimelineKey);
+  const isStudentAudioFollowing = Boolean(
+    canUseStudentMeasureAudio &&
+      isStudentAudioFollowEnabled &&
+      studentAudioPlaybackMeasure,
+  );
+  const displayPageNumber = isStudentAnnotating
+    ? clampStudentAnnotationPageNumber(
+        studentAnnotationPageNumber,
+        totalPages,
+      )
+    : isStudentAudioFollowing
+      ? studentAudioPlaybackMeasure.page
+      : synchronizedDisplayPageNumber;
+  const displayMeasureIndex = isStudentAnnotating
+    ? studentAnnotationMeasureIndex
+    : isStudentAudioFollowing
+      ? studentAudioPlaybackMeasureIndex
+      : synchronizedDisplayMeasureIndex;
+  const currentMeasure = measures[displayMeasureIndex] || null;
+  const nextDifferentLyric =
+    measures
+      .slice(displayMeasureIndex + 1)
+      .map(getTrimmedLyric)
+      .find((lyric) => lyric && lyric !== getTrimmedLyric(currentMeasure)) || '';
+  const selectedMeasure = measures[selectedMeasureIndex] || null;
+  const overlayMode = canEdit ? mode : PLAY_MODE;
   const configuredAudioTargetMeasure = measures[studentAudioTargetMeasureIndex];
   const audioTargetMeasureIndex =
     configuredAudioTargetMeasure?.page === displayPageNumber
@@ -330,10 +391,18 @@ function App() {
     studentAudioTimelineMarkers,
     audioTargetMeasure?.id,
   );
-  const canUseStudentMeasureAudio =
-    viewerMode === STUDENT_MODE &&
-    studentAudioSource === LOCAL_AUDIO_SOURCE &&
-    Boolean(studentLocalAudioUrl && studentAudioTimelineKey);
+  const audioTargetPersonalTiming = getMeasureTimelineTiming(
+    studentAudioTimelineTimings,
+    audioTargetMeasure?.id,
+  );
+  const audioTargetBpm =
+    audioTargetPersonalTiming?.bpm ||
+    audioTargetMeasure?.bpm ||
+    DEFAULT_MEASURE.bpm;
+  const audioTargetBeats =
+    audioTargetPersonalTiming?.beats ||
+    audioTargetMeasure?.beats ||
+    DEFAULT_MEASURE.beats;
   const studentPageAnnotationCount = studentAnnotationStrokes.filter(
     (stroke) => stroke.page === displayPageNumber,
   ).length;
@@ -1159,6 +1228,8 @@ function App() {
     setStudentLocalAudioFileName('');
     setStudentLocalAudioFile(null);
     setStudentLocalAudioUrl('');
+    studentAudioPlaybackMeasureIdRef.current = '';
+    setStudentAudioPlaybackMeasureId('');
     setStudentAudioSeekRequest(null);
     setStudentAudioTargetMeasureIndex(-1);
     if (studentAudioInputRef.current) {
@@ -1250,6 +1321,76 @@ function App() {
 
     setStudentAudioTimelineLibrary((previousLibrary) =>
       removeStudentAudioTimelineMarker(
+        previousLibrary,
+        studentAudioTimelineKey,
+        measureId,
+      ),
+    );
+  }
+
+  function updateStudentAudioTimelineMeasure(measureId) {
+    if (!measureId) {
+      if (!studentAudioPlaybackMeasureIdRef.current) return;
+
+      studentAudioPlaybackMeasureIdRef.current = '';
+      setStudentAudioPlaybackMeasureId('');
+      return;
+    }
+
+    const nextMeasureIndex = measures.findIndex(
+      (measure) => measure.id === measureId,
+    );
+
+    if (nextMeasureIndex < 0) {
+      studentAudioPlaybackMeasureIdRef.current = '';
+      setStudentAudioPlaybackMeasureId('');
+      return;
+    }
+
+    if (studentAudioPlaybackMeasureIdRef.current === measureId) return;
+
+    studentAudioPlaybackMeasureIdRef.current = measureId;
+    setStudentAudioPlaybackMeasureId(measureId);
+    setStudentAudioTargetMeasureIndex(nextMeasureIndex);
+  }
+
+  function updateStudentAudioFollowEnabled(nextIsEnabled) {
+    setIsStudentAudioFollowEnabled(nextIsEnabled);
+    if (!nextIsEnabled) {
+      studentAudioPlaybackMeasureIdRef.current = '';
+      setStudentAudioPlaybackMeasureId('');
+    }
+  }
+
+  function updateStudentMeasureAudioTiming(measureId, timing) {
+    if (!studentAudioTimelineKey || !measureId) return;
+
+    const measure = measures.find((candidate) => candidate.id === measureId);
+
+    if (!measure) return;
+
+    const previousTiming = getMeasureTimelineTiming(
+      studentAudioTimelineTimings,
+      measureId,
+    );
+    const fallbackBpm = previousTiming?.bpm || measure.bpm || DEFAULT_MEASURE.bpm;
+    const fallbackBeats =
+      previousTiming?.beats || measure.beats || DEFAULT_MEASURE.beats;
+
+    setStudentAudioTimelineLibrary((previousLibrary) =>
+      setStudentAudioTimelineTiming(previousLibrary, studentAudioTimelineKey, {
+        beats: getPositiveNumber(timing.beats, fallbackBeats),
+        bpm: getPositiveNumber(timing.bpm, fallbackBpm),
+        measureId,
+      }),
+    );
+  }
+
+  function resetStudentMeasureAudioTiming(measureId) {
+    if (!studentAudioTimelineKey || !measureId) return;
+
+    setStudentAudioTimelineLibrary((previousLibrary) =>
+      removeStudentAudioTimelineTiming(
         previousLibrary,
         studentAudioTimelineKey,
         measureId,
@@ -1838,7 +1979,11 @@ function App() {
                       className={
                         studentAudioSource === TEACHER_AUDIO_SOURCE ? 'active' : ''
                       }
-                      onClick={() => setStudentAudioSource(TEACHER_AUDIO_SOURCE)}
+                      onClick={() => {
+                        setStudentAudioSource(TEACHER_AUDIO_SOURCE);
+                        studentAudioPlaybackMeasureIdRef.current = '';
+                        setStudentAudioPlaybackMeasureId('');
+                      }}
                       type="button"
                     >
                       선생님 음원
@@ -1914,15 +2059,27 @@ function App() {
                       {studentLocalAudioUrl ? (
                         <LocalAudioPlayer
                           audioFile={studentLocalAudioFile}
-                          countInBeats={audioTargetMeasure?.beats}
-                          countInBpm={audioTargetMeasure?.bpm}
+                          countInBeats={audioTargetBeats}
+                          countInBpm={audioTargetBpm}
                           fileName={studentLocalAudioFileName}
+                          hasPersonalMeasureTiming={Boolean(
+                            audioTargetPersonalTiming,
+                          )}
                           isEditorVisible={isStudentAudioPanelOpen}
                           measureMarkerTimeSeconds={audioTargetMeasureTime}
+                          measureMarkers={studentAudioWaveformMarkers}
                           onMeasureMarkerChange={setStudentMeasureAudioTime}
                           onMeasureMarkerRemove={removeStudentMeasureAudioTime}
+                          onMeasureTimingChange={updateStudentMeasureAudioTiming}
+                          onMeasureTimingReset={resetStudentMeasureAudioTiming}
                           onStartOffsetChange={(startOffsetSeconds) =>
                             updateStudentLocalAudioSettings({ startOffsetSeconds })
+                          }
+                          onTimelineFollowEnabledChange={
+                            updateStudentAudioFollowEnabled
+                          }
+                          onTimelineMeasureChange={
+                            updateStudentAudioTimelineMeasure
                           }
                           sourceUrl={studentLocalAudioUrl}
                           seekRequest={studentAudioSeekRequest}
@@ -1933,6 +2090,7 @@ function App() {
                           targetMeasureNumber={
                             audioTargetMeasure ? audioTargetMeasureIndex + 1 : 0
                           }
+                          timelineFollowEnabled={isStudentAudioFollowEnabled}
                         />
                       ) : (
                         <small>이 기기에 저장된 음원 파일을 선택할 수 있습니다.</small>

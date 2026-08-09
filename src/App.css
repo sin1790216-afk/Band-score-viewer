@@ -299,14 +299,18 @@ html:-webkit-full-screen #root{
     border-color:#d49b21;
 }
 
-.audio-count-in-toggle{
+.student-audio-panel .audio-count-in-toggle,
+.student-audio-panel .audio-timeline-follow-toggle{
     align-items:center;
     display:flex;
+    flex-direction:row;
     gap:6px;
 }
 
-.audio-count-in-toggle input{
+.student-audio-panel .audio-count-in-toggle input,
+.student-audio-panel .audio-timeline-follow-toggle input{
     margin:0;
+    width:auto;
 }
 
 .audio-count-in-toggle span{
@@ -319,8 +323,17 @@ html:-webkit-full-screen #root{
     font-variant-numeric:tabular-nums;
 }
 
-.audio-count-in button{
-    grid-column:1 / -1;
+.audio-timeline-follow-toggle{
+    background:#e7f3ea;
+    border:1px solid #9ab9a2;
+    border-radius:4px;
+    min-height:32px;
+    padding:5px 7px;
+}
+
+.audio-timeline-follow-toggle span{
+    font-size:12px;
+    font-weight:700;
 }
 
 .local-audio-options{
@@ -371,6 +384,20 @@ html:-webkit-full-screen #root{
 .audio-measure-marker-actions button{
     min-width:0;
     white-space:normal;
+}
+
+.audio-measure-timing-editor{
+    border-top:1px solid #c7c9ce;
+    display:flex;
+    flex-direction:column;
+    gap:7px;
+    padding-top:8px;
+}
+
+.audio-measure-timing-inputs{
+    display:grid;
+    gap:6px;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
 }
 
 .audio-waveform-editor{

@@ -10,22 +10,30 @@ import {
   LOCAL_AUDIO_PLAYBACK_RATES,
   normalizeLocalAudioPlaybackRate,
 } from '../utils/audioPlayback.js';
+import { getAudioTimelineMarkerAtTime } from '../utils/audioTimeline.js';
 
 export default function LocalAudioPlayer({
   audioFile,
   countInBeats,
   countInBpm,
   fileName,
+  hasPersonalMeasureTiming,
   isEditorVisible,
   measureMarkerTimeSeconds,
+  measureMarkers,
   onMeasureMarkerChange,
   onMeasureMarkerRemove,
+  onMeasureTimingChange,
+  onMeasureTimingReset,
   onStartOffsetChange,
+  onTimelineFollowEnabledChange,
+  onTimelineMeasureChange,
   seekRequest,
   sourceUrl,
   startOffsetSeconds,
   targetMeasureId,
   targetMeasureNumber,
+  timelineFollowEnabled,
 }) {
   const audioRef = useRef(null);
   const audioContextRef = useRef(null);
@@ -43,6 +51,27 @@ export default function LocalAudioPlayer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [playbackError, setPlaybackError] = useState('');
+  const timelinePlaybackRef = useRef({
+    enabled: timelineFollowEnabled,
+    markers: measureMarkers,
+    onMeasureChange: onTimelineMeasureChange,
+  });
+
+  timelinePlaybackRef.current = {
+    enabled: timelineFollowEnabled,
+    markers: measureMarkers,
+    onMeasureChange: onTimelineMeasureChange,
+  };
+
+  function notifyTimelineMeasure(timeSeconds) {
+    const timelinePlayback = timelinePlaybackRef.current;
+    const activeMarker = timelinePlayback.enabled
+      ? getAudioTimelineMarkerAtTime(timelinePlayback.markers, timeSeconds)
+      : null;
+    const nextMeasureId = activeMarker?.measureId || '';
+
+    timelinePlayback.onMeasureChange?.(nextMeasureId);
+  }
 
   function getCurrentCountInTiming() {
     const measureTiming = getCountInTiming(countInBpm, countInBeats);
@@ -210,6 +239,7 @@ export default function LocalAudioPlayer({
     cancelCountIn();
     audio.currentTime = nextTime;
     setCurrentTime(nextTime);
+    notifyTimelineMeasure(nextTime);
   }
 
   function seekToTime(nextTime, { playAfterSeek = false } = {}) {
@@ -223,6 +253,7 @@ export default function LocalAudioPlayer({
     cancelCountIn();
     audio.currentTime = clampedTime;
     setCurrentTime(clampedTime);
+    notifyTimelineMeasure(clampedTime);
     if (playAfterSeek) {
       if (isCountInEnabledRef.current) {
         startCountIn();
@@ -269,11 +300,14 @@ export default function LocalAudioPlayer({
   );
 
   useEffect(() => {
-    if (!isPlaying || !isEditorVisible) return undefined;
+    if (!isPlaying) return undefined;
 
     function updateCurrentTime() {
       if (audioRef.current) {
-        setCurrentTime(audioRef.current.currentTime);
+        const nextTime = audioRef.current.currentTime;
+
+        if (isEditorVisible) setCurrentTime(nextTime);
+        notifyTimelineMeasure(nextTime);
       }
       animationFrameRef.current = window.requestAnimationFrame(updateCurrentTime);
     }
@@ -282,6 +316,10 @@ export default function LocalAudioPlayer({
 
     return () => window.cancelAnimationFrame(animationFrameRef.current);
   }, [isEditorVisible, isPlaying]);
+
+  useEffect(() => {
+    notifyTimelineMeasure(audioRef.current?.currentTime || 0);
+  }, [measureMarkers, sourceUrl, timelineFollowEnabled]);
 
   useEffect(() => {
     if (!seekRequest || duration <= 0) return;
@@ -302,7 +340,11 @@ export default function LocalAudioPlayer({
         controls
         key={sourceUrl}
         onDurationChange={(event) => setDuration(event.currentTarget.duration || 0)}
-        onEnded={() => setIsPlaying(false)}
+        onEnded={(event) => {
+          setIsPlaying(false);
+          setCurrentTime(event.currentTarget.duration || currentTime);
+          notifyTimelineMeasure(event.currentTarget.duration || currentTime);
+        }}
         onError={() =>
           setPlaybackError('이 기기에서 재생할 수 없는 음원 형식입니다.')
         }
@@ -311,7 +353,10 @@ export default function LocalAudioPlayer({
           setDuration(audioRef.current?.duration || 0);
           seekToStartOffset();
         }}
-        onPause={() => setIsPlaying(false)}
+        onPause={(event) => {
+          setIsPlaying(false);
+          notifyTimelineMeasure(event.currentTarget.currentTime);
+        }}
         onPlay={(event) => {
           if (isCountInPlaybackRef.current) {
             isCountInPlaybackRef.current = false;
@@ -328,7 +373,10 @@ export default function LocalAudioPlayer({
           setIsPlaying(false);
           startCountIn();
         }}
-        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+        onTimeUpdate={(event) => {
+          setCurrentTime(event.currentTarget.currentTime);
+          notifyTimelineMeasure(event.currentTarget.currentTime);
+        }}
         preload="metadata"
         ref={audioRef}
         src={sourceUrl}
@@ -351,20 +399,26 @@ export default function LocalAudioPlayer({
             ? `${countInBeat} / ${displayedCountInTiming.beats}`
             : `BPM ${displayedCountInTiming.bpm} · ${displayedCountInTiming.beats}박`}
         </strong>
-        {isCountInActive && (
-          <button onClick={() => playAudioImmediately()} type="button">
-            예비박 건너뛰기
-          </button>
-        )}
       </div>
+      <label className="audio-timeline-follow-toggle">
+        <input
+          checked={timelineFollowEnabled}
+          onChange={(event) =>
+            onTimelineFollowEnabledChange?.(event.target.checked)
+          }
+          type="checkbox"
+        />
+        <span>음원 따라가기</span>
+      </label>
       <AudioWaveform
         audioFile={audioFile}
         currentTime={currentTime}
         duration={duration}
         isVisible={isEditorVisible}
-        measureMarkerTimeSeconds={measureMarkerTimeSeconds}
+        measureMarkers={measureMarkers}
         onSeek={seekToTime}
         startOffsetSeconds={startOffsetSeconds}
+        targetMeasureId={targetMeasureId}
       />
       <div className="local-audio-options">
         <label>
@@ -431,6 +485,56 @@ export default function LocalAudioPlayer({
             지정 해제
           </button>
         </div>
+      </section>
+      <section className="audio-measure-timing-editor">
+        <div className="audio-measure-marker-header">
+          <strong>
+            {targetMeasureNumber ? `${targetMeasureNumber}마디 개인 템포` : '개인 템포'}
+          </strong>
+          <span>{hasPersonalMeasureTiming ? '개인 설정' : '선생님 설정'}</span>
+        </div>
+        <div className="audio-measure-timing-inputs">
+          <label>
+            BPM
+            <input
+              disabled={!targetMeasureId}
+              min="1"
+              onChange={(event) =>
+                onMeasureTimingChange?.(targetMeasureId, {
+                  beats: countInBeats,
+                  bpm: event.target.value,
+                })
+              }
+              step="1"
+              type="number"
+              value={countInBpm}
+            />
+          </label>
+          <label>
+            Beats
+            <input
+              disabled={!targetMeasureId}
+              min="1"
+              onChange={(event) =>
+                onMeasureTimingChange?.(targetMeasureId, {
+                  beats: event.target.value,
+                  bpm: countInBpm,
+                })
+              }
+              step="1"
+              type="number"
+              value={countInBeats}
+            />
+          </label>
+        </div>
+        <button
+          disabled={!targetMeasureId || !hasPersonalMeasureTiming}
+          onClick={() => onMeasureTimingReset?.(targetMeasureId)}
+          type="button"
+        >
+          선생님 템포 사용
+        </button>
+        <small>이 기기의 현재 PDF와 음원 조합에만 저장됩니다.</small>
       </section>
       {playbackError && <small className="audio-error">{playbackError}</small>}
     </div>

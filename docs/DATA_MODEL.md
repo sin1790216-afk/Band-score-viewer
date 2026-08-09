@@ -68,13 +68,25 @@ Student 개인 마디 타임라인은 프로젝트 measure를 수정하지 않�
 
 ```json
 {
-  "measureId": "measure-...",
-  "timeSeconds": 12.345
+  "markers": [
+    {
+      "measureId": "measure-...",
+      "timeSeconds": 12.345
+    }
+  ],
+  "timings": [
+    {
+      "measureId": "measure-...",
+      "bpm": 90,
+      "beats": 3
+    }
+  ]
 }
 ```
 
 타임라인은 PDF document identity와 로컬 음원 파일 identity 조합으로 구분한다. 같은 PDF라도 다른
-음원 파일에는 기존 marker를 적용하지 않으며, marker는 JSON, `.bsv`, Socket에 포함하지 않는다.
+음원 파일에는 기존 marker와 개인 템포를 적용하지 않는다. 두 데이터는 JSON, `.bsv`, Socket에
+포함하지 않으며 `timings`가 없는 기존 로컬 타임라인은 빈 개인 템포 목록으로 읽는다.
 
 ## 현재 syncState
 
