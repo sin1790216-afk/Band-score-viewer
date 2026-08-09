@@ -42,9 +42,22 @@ JSON 파일은 measure 객체 배열이다. 기존 핵심 필드는 유지된다
 확정할 수 없으므로 실제 수업 데이터 검증이 필요하다. JSON 저장은 canonical measures
 배열을 기록한다.
 
-런타임의 Project State는 `{ metadata, pdfMetadata, measures }`로 구성된다. `metadata`는
-제목과 생성/수정 시각을, `pdfMetadata`는 PDF 파일명과 MIME type을 가진다. 기존 JSON 저장
-형식은 project wrapper가 아닌 measure 배열을 그대로 유지한다.
+런타임의 Project State는 `{ metadata, pdfMetadata, audioSettings, measures }`로 구성된다.
+`metadata`는 제목과 생성/수정 시각을, `pdfMetadata`는 PDF 파일명과 MIME type을 가진다.
+`audioSettings`는 외부 음원 URL과 0 이상인 시작 오프셋(초)을 저장한다.
+
+```js
+audioSettings: {
+  url: "https://example.com/track",
+  startOffsetSeconds: 12.5
+}
+```
+
+이 설정은 measure 배열 JSON에 포함하지 않으므로 기존 JSON 형식은 그대로 유지된다.
+
+Teacher의 `audioSettings`는 서버가 메모리에 최신값을 보관해 새 Student에도 전달한다. Student
+개인 설정은 Teacher PDF 또는 개인 PDF의 document key별로 브라우저 `localStorage`에 저장하며,
+Project State와 Socket 데이터에는 합치지 않는다.
 
 ## 현재 syncState
 
@@ -69,6 +82,7 @@ JSON 파일은 measure 객체 배열이다. 기존 핵심 필드는 유지된다
   metadata: { title, createdAt, updatedAt },
   project: {
     pdfMetadata: { fileName, mimeType: "application/pdf" },
+    audioSettings: { url, startOffsetSeconds },
     measures
   },
   assets: {
@@ -80,7 +94,8 @@ JSON 파일은 measure 객체 배열이다. 기존 핵심 필드는 유지된다
 BPM, Beats, lyric, stable ID와 normalized 좌표는 measures가 유일한 원본이다. `.bsv` v1은
 모든 measure의 유효하고 고유한 ID를 검증한다. 현재 페이지/마디,
 재생·Repeat, 선택/drag 상태, Student 개인 PDF와 보기 방식 같은 Session/Local View 데이터는
-저장하지 않는다. 기존 measure 배열 JSON과 `.bsv` import 경로는 분리되어 있다.
+저장하지 않는다. 기존 `.bsv`에 `audioSettings`가 없으면 빈 URL과 0초로 보정한다. 기존
+measure 배열 JSON과 `.bsv` import 경로는 분리되어 있다.
 
 ## Student 로컬 필기
 

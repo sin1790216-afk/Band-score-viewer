@@ -17,6 +17,7 @@ import {
   NORMALIZED_COORDINATE_SPACE,
   NORMALIZED_COORDINATE_STATUS,
 } from '../src/utils/measureCoordinates.js';
+import { DEFAULT_AUDIO_SETTINGS } from '../src/utils/audioSettings.js';
 
 const TEST_TIMESTAMP = '2026-08-02T05:00:00.000Z';
 const PDF_BYTES = new TextEncoder().encode(
@@ -40,6 +41,10 @@ const MEASURE = {
 
 function createProjectState() {
   return createInitialProjectState({
+    audioSettings: {
+      startOffsetSeconds: 12.5,
+      url: 'https://example.com/backing-track',
+    },
     measures: [MEASURE],
     metadata: {
       createdAt: '2026-08-01T01:00:00.000Z',
@@ -76,6 +81,10 @@ test('.bsv v1 encode and decode round-trip preserves project and PDF data', asyn
   assert.equal(decoded.document.format, BSV_FORMAT);
   assert.equal(decoded.document.schemaVersion, BSV_SCHEMA_VERSION);
   assert.deepEqual(decoded.projectState, {
+    audioSettings: {
+      startOffsetSeconds: 12.5,
+      url: 'https://example.com/backing-track',
+    },
     measures: [MEASURE],
     metadata: {
       createdAt: '2026-08-01T01:00:00.000Z',
@@ -129,6 +138,42 @@ test('.bsv preserves normalized coordinates, BPM, Beats, and multiline lyrics', 
   assert.equal(measure.bpm, 90);
   assert.equal(measure.beats, 3);
   assert.equal(measure.lyric, '첫 번째 줄\n두 번째 줄');
+});
+
+test('.bsv preserves the audio link and start offset', async () => {
+  const decoded = decodeBsvProject((await createEncodedProject()).text);
+
+  assert.deepEqual(decoded.projectState.audioSettings, {
+    startOffsetSeconds: 12.5,
+    url: 'https://example.com/backing-track',
+  });
+});
+
+test('a legacy .bsv without audio settings receives compatible defaults', async () => {
+  const { document } = await createEncodedProject();
+
+  delete document.project.audioSettings;
+  const decoded = decodeBsvProject(JSON.stringify(document));
+
+  assert.deepEqual(decoded.projectState.audioSettings, DEFAULT_AUDIO_SETTINGS);
+});
+
+test('.bsv rejects malformed audio settings instead of replacing them', async () => {
+  const invalidUrlProject = await createEncodedProject();
+
+  invalidUrlProject.document.project.audioSettings.url = 42;
+  expectBsvError(
+    () => decodeBsvProject(JSON.stringify(invalidUrlProject.document)),
+    'AUDIO_URL_INVALID',
+  );
+
+  const invalidOffsetProject = await createEncodedProject();
+
+  invalidOffsetProject.document.project.audioSettings.startOffsetSeconds = -1;
+  expectBsvError(
+    () => decodeBsvProject(JSON.stringify(invalidOffsetProject.document)),
+    'AUDIO_START_OFFSET_INVALID',
+  );
 });
 
 test('.bsv rejects a missing or invalid measure ID', async () => {

@@ -15,6 +15,7 @@ import {
   NORMALIZED_COORDINATE_SPACE,
   NORMALIZED_COORDINATE_STATUS,
 } from '../src/utils/measureCoordinates.js';
+import { DEFAULT_AUDIO_SETTINGS } from '../src/utils/audioSettings.js';
 import { isValidMeasureId } from '../src/utils/measureIdentity.js';
 
 const canonicalMeasure = {
@@ -239,8 +240,30 @@ test('project PDF metadata is independent from measure replacement', () => {
   assert.equal(replacedState.measures.length, 1);
 });
 
+test('project state stores audio settings without changing score data', () => {
+  const initialState = createInitialProjectState({ measures: [canonicalMeasure] });
+  const nextState = projectReducer(initialState, {
+    type: PROJECT_ACTIONS.SET_AUDIO_SETTINGS,
+    audioSettings: {
+      startOffsetSeconds: 8.5,
+      url: 'https://example.com/lesson-track',
+    },
+  });
+
+  assert.deepEqual(nextState.audioSettings, {
+    startOffsetSeconds: 8.5,
+    url: 'https://example.com/lesson-track',
+  });
+  assert.deepEqual(nextState.measures, initialState.measures);
+  assert.deepEqual(initialState.audioSettings, DEFAULT_AUDIO_SETTINGS);
+});
+
 test('starting a new PDF resets prior project metadata and measures together', () => {
   const previousState = createInitialProjectState({
+    audioSettings: {
+      startOffsetSeconds: 20,
+      url: 'https://example.com/previous-track',
+    },
     measures: [canonicalMeasure],
     metadata: {
       createdAt: '2026-08-01T00:00:00.000Z',

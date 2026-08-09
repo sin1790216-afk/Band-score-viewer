@@ -2,6 +2,7 @@ import {
   createInitialProjectState,
   normalizeMeasures,
 } from '../state/projectState.js';
+import { normalizeAudioSettings } from '../utils/audioSettings.js';
 import {
   BASE64_ENCODING,
   BSV_FORMAT,
@@ -206,6 +207,7 @@ export async function encodeBsvProject({ projectState, pdfBlob, now }) {
     format: BSV_FORMAT,
     metadata: getProjectMetadata(projectState, timestamp),
     project: {
+      audioSettings: normalizeAudioSettings(projectState.audioSettings),
       measures: normalizeMeasures(projectState.measures),
       pdfMetadata: {
         fileName,
@@ -237,6 +239,7 @@ export function decodeBsvProject(jsonText) {
   assertPdfSignature(pdfBytes);
 
   const projectState = createInitialProjectState({
+    audioSettings: document.project.audioSettings,
     measures: document.project.measures,
     metadata: document.metadata,
     pdfMetadata: document.project.pdfMetadata,

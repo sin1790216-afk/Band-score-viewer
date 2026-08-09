@@ -18,4 +18,4 @@ Band Score Viewer는 밴드 수업에서 선생님의 진행 위치를 여러 �
 - 자동재생은 현재 measure의 `(60 / bpm) * beats * 1000`만큼 기다린 뒤 다음 마디로 이동하며 Repeat를 지원한다.
 - Student는 기존 확대모드와 페이지 전체를 맞추는 한 페이지 보기를 전환할 수 있다.
 - 가사 편집기는 measure별 textarea이며, Vocal View는 줄바꿈을 유지한다.
-
+- Teacher는 프로젝트에 외부 음원 링크와 시작 오프셋(초)을 기록해 Student에 공유할 수 있다. Student는 공유 음원을 보거나 현재 PDF별 개인 음원 설정으로 전환할 수 있다. 실제 음원 재생과 마디 연동은 아직 없다.

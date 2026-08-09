@@ -1,5 +1,9 @@
 import { normalizeMeasureCoordinates } from '../utils/measureCoordinates.js';
 import {
+  DEFAULT_AUDIO_SETTINGS,
+  normalizeAudioSettings,
+} from '../utils/audioSettings.js';
+import {
   ensureUniqueMeasureIds,
   isValidMeasureId,
 } from '../utils/measureIdentity.js';
@@ -23,10 +27,12 @@ export const PROJECT_ACTIONS = {
   SET_PDF_FILE_NAME: 'project/set-pdf-file-name',
   SET_PDF_METADATA: 'project/set-pdf-metadata',
   SET_PROJECT_METADATA: 'project/set-project-metadata',
+  SET_AUDIO_SETTINGS: 'project/set-audio-settings',
   UPDATE_MEASURE: 'project/update-measure',
 };
 
 export const INITIAL_PROJECT_STATE = {
+  audioSettings: DEFAULT_AUDIO_SETTINGS,
   metadata: {
     createdAt: '',
     title: '',
@@ -75,6 +81,7 @@ export function createProjectMeasure(measure, options) {
 
 export function createInitialProjectState(initialState = {}) {
   return {
+    audioSettings: normalizeAudioSettings(initialState.audioSettings),
     metadata: {
       ...INITIAL_PROJECT_STATE.metadata,
       ...initialState.metadata,
@@ -111,6 +118,15 @@ export function projectReducer(state, action) {
           ...state.metadata,
           ...action.metadata,
         },
+      };
+
+    case PROJECT_ACTIONS.SET_AUDIO_SETTINGS:
+      return {
+        ...state,
+        audioSettings: normalizeAudioSettings({
+          ...state.audioSettings,
+          ...action.audioSettings,
+        }),
       };
 
     case PROJECT_ACTIONS.SET_PDF_METADATA:

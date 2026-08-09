@@ -12,6 +12,10 @@ import {
 
 test('empty shared session clears the PDF, measures, and logical position', () => {
   assert.deepEqual(createEmptySharedSessionState(), {
+    audioSettings: {
+      startOffsetSeconds: 0,
+      url: '',
+    },
     measures: [],
     pdf: null,
     syncState: {

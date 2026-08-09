@@ -1,3 +1,5 @@
+import { DEFAULT_AUDIO_SETTINGS } from '../utils/audioSettings.js';
+
 export const SESSION_ACTIONS = {
   APPLY_SYNC_STATE: 'session/apply-sync-state',
   RESET_POSITION: 'session/reset-position',
@@ -25,6 +27,7 @@ export const INITIAL_SESSION_STATE = {
 
 export function createEmptySharedSessionState() {
   return {
+    audioSettings: { ...DEFAULT_AUDIO_SETTINGS },
     measures: [],
     pdf: null,
     syncState: { ...INITIAL_SYNC_STATE },

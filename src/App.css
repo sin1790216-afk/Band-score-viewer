@@ -175,6 +175,62 @@ html:-webkit-full-screen #root{
     border:2px solid #fff;
 }
 
+.student-audio-panel{
+    background:#f6f7f9;
+    border:1px solid #8d929d;
+    border-radius:6px;
+    bottom:max(8px, env(safe-area-inset-bottom));
+    box-shadow:0 4px 18px rgba(0,0,0,0.3);
+    box-sizing:border-box;
+    color:#24212a;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    padding:10px;
+    position:fixed;
+    right:max(8px, env(safe-area-inset-right));
+    width:min(280px, calc(100vw - 16px));
+    z-index:230;
+}
+
+.student-audio-panel-header,
+.student-audio-source-controls{
+    align-items:center;
+    display:flex;
+    gap:6px;
+}
+
+.student-audio-panel-header{
+    justify-content:space-between;
+}
+
+.student-audio-source-controls button{
+    flex:1;
+}
+
+.student-audio-source-controls .active{
+    border:2px solid #111;
+}
+
+.student-audio-panel label{
+    display:flex;
+    flex-direction:column;
+    font-size:12px;
+    font-weight:700;
+    gap:3px;
+}
+
+.student-audio-panel input{
+    box-sizing:border-box;
+    min-width:0;
+    width:100%;
+}
+
+.student-audio-panel small{
+    color:#555;
+    font-size:11px;
+}
+
 .student-annotation-controls{
     align-items:center;
     bottom:max(8px, env(safe-area-inset-bottom));
@@ -372,6 +428,29 @@ html:-webkit-full-screen #root{
     display:flex;
     flex-direction:column;
     gap:6px;
+}
+
+.audio-settings-editor{
+    border-block:1px solid rgba(0, 0, 0, 0.45);
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    margin:4px 0;
+    padding:7px 4px;
+}
+
+.audio-settings-editor label{
+    display:flex;
+    flex-direction:column;
+    font-size:12px;
+    font-weight:700;
+    gap:2px;
+}
+
+.audio-settings-editor input{
+    box-sizing:border-box;
+    min-width:0;
+    width:100%;
 }
 
 .measure-jump-form{
@@ -676,6 +755,10 @@ html:-webkit-full-screen #root{
     .student-mode .student-annotation-controls{
         bottom:max(8px, env(safe-area-inset-bottom));
         max-width:calc(100vw - 16px);
+    }
+
+    .student-mode .student-audio-panel{
+        bottom:calc(max(8px, env(safe-area-inset-bottom)) + 76px);
     }
 
     .vocal-mode .floating-view-controls{

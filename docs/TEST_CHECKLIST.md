@@ -66,6 +66,15 @@
 ## 프로젝트 파일
 
 - [ ] PDF, BPM/Beats와 여러 줄 lyric이 있는 프로젝트를 `.bsv`로 저장한다.
+- [ ] 음원 링크와 소수점 start offset을 저장한 `.bsv`를 다시 열면 값이 복원된다.
+- [ ] `audioSettings`가 없는 이전 `.bsv`를 열면 빈 링크와 0초로 안전하게 보정된다.
+- [ ] 새 PDF를 열면 이전 프로젝트의 음원 링크와 start offset이 남지 않는다.
+- [ ] `http/https`가 아닌 음원 주소는 링크 열기 버튼으로 실행되지 않는다.
+- [ ] Teacher가 음원 링크/start offset을 바꾸면 접속 중인 Student의 선생님 음원 값이 즉시 갱신된다.
+- [ ] 늦게 접속한 Student도 서버의 최신 선생님 음원 값을 받는다.
+- [ ] Student가 내 음원을 수정해도 Teacher와 다른 Student의 공유값은 변하지 않는다.
+- [ ] Student 개인 음원은 같은 PDF를 다시 열거나 새로고침한 뒤에도 해당 기기에서 복원된다.
+- [ ] 수업 종료는 서버의 선생님 음원 설정을 비우고 Student 개인 음원은 삭제하지 않는다.
 - [ ] `.bsv` 저장 전후 모든 measure ID가 동일하고 중복되지 않는다.
 - [ ] 다른 PDF를 연 뒤 `.bsv`를 다시 열어 PDF, 파일명, measures와 highlight가 복원된다.
 - [ ] `.bsv`를 열면 page 1, measure 0, Stop, Repeat OFF로 초기화된다.

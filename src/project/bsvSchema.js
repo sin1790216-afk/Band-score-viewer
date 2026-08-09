@@ -3,6 +3,10 @@ import {
   NORMALIZED_COORDINATE_SPACE,
 } from '../utils/measureCoordinates.js';
 import { isValidMeasureId } from '../utils/measureIdentity.js';
+import {
+  DEFAULT_AUDIO_SETTINGS,
+  MAX_AUDIO_URL_LENGTH,
+} from '../utils/audioSettings.js';
 
 export const BSV_FORMAT = 'band-score-viewer-project';
 export const BSV_SCHEMA_VERSION = 1;
@@ -117,6 +121,24 @@ function assertValidProject(project) {
     fail('PROJECT_MEASURES_MISSING', '프로젝트의 마디 데이터가 없습니다.');
   }
 
+  if (!isObject(project.audioSettings)) {
+    fail('AUDIO_SETTINGS_MISSING', '프로젝트의 음원 설정이 없습니다.');
+  }
+
+  if (
+    typeof project.audioSettings.url !== 'string' ||
+    project.audioSettings.url.length > MAX_AUDIO_URL_LENGTH
+  ) {
+    fail('AUDIO_URL_INVALID', '프로젝트의 음원 링크가 올바르지 않습니다.');
+  }
+
+  if (
+    !Number.isFinite(project.audioSettings.startOffsetSeconds) ||
+    project.audioSettings.startOffsetSeconds < 0
+  ) {
+    fail('AUDIO_START_OFFSET_INVALID', '프로젝트의 음원 시작 오프셋이 올바르지 않습니다.');
+  }
+
   const measureIds = new Set();
 
   project.measures.forEach((measure, index) =>
@@ -172,5 +194,20 @@ export function migrateBsvProject(rawProject) {
     );
   }
 
-  return validateBsvV1Document(rawProject);
+  const migratedProject = {
+    ...rawProject,
+    project: isObject(rawProject.project)
+      ? {
+          ...rawProject.project,
+          audioSettings: Object.prototype.hasOwnProperty.call(
+            rawProject.project,
+            'audioSettings',
+          )
+            ? rawProject.project.audioSettings
+            : { ...DEFAULT_AUDIO_SETTINGS },
+        }
+      : rawProject.project,
+  };
+
+  return validateBsvV1Document(migratedProject);
 }

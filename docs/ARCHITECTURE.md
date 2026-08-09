@@ -20,7 +20,7 @@ Teacher가 논리 상태의 기준이다. `syncState`는 현재 코드에서 다
 }
 ```
 
-Teacher 변경은 `sync:update`, `pdf:update`, `measures:update`로 서버에 전달된다. 서버는 최신 PDF, measures, syncState를 메모리에 보관하고 새 연결에 PDF -> measures -> syncState 순서로 전송한다. Room, 인증, 영속 저장소는 아직 없다.
+Teacher 변경은 `sync:update`, `pdf:update`, `measures:update`, `audio:update`로 서버에 전달된다. 서버는 최신 PDF, measures, Teacher 음원 설정과 syncState를 메모리에 보관하고 새 연결에 PDF -> measures -> audio -> syncState 순서로 전송한다. Room, 인증, 영속 저장소는 아직 없다.
 사용자가 Teacher 역할을 선택하면 현재 Teacher 로컬 페이지와 마디를 다시 발행해 서버에 남아
 있던 과거 위치를 교체한다. Teacher 화면이 활성화된 동안 수신한 과거 sync 위치는 로컬
 Teacher 위치를 덮지 않는다.
@@ -53,7 +53,7 @@ geometry 변경을 갱신한다. 렌더 크기는 기기 로컬에만 존재한�
 
 프론트엔드 상태는 다음 소유권으로 구분한다.
 
-- Project State (`src/state/projectState.js`): Teacher PDF 파일명 metadata와 stable ID가 있는 canonical measures를 소유한다. 새 마디·JSON·Socket 유입 경계에서 ID를 한 번 준비하고, reducer의 CRUD와 BPM/Beats/lyric 보정은 기존 ID를 보존한다. 기존 배열 JSON import/export 형식은 유지한다.
+- Project State (`src/state/projectState.js`): Teacher PDF 파일명 metadata, 외부 음원 링크/start offset과 stable ID가 있는 canonical measures를 소유한다. 새 마디·JSON·Socket 유입 경계에서 ID를 한 번 준비하고, reducer의 CRUD와 BPM/Beats/lyric 보정은 기존 ID를 보존한다. 기존 배열 JSON import/export 형식은 유지한다.
 - Session State (`src/state/sessionState.js`): Teacher의 논리 페이지·마디, 자동재생/Repeat 상태와 수신한 논리 `syncState`를 소유한다.
 - Local View State (`src/App.jsx`): 역할 선택, Student 개인 PDF와 보기 방식, 학생 필기, 선택/드래그/resize 표시 상태, 파일 input, Object URL과 render reset처럼 해당 기기에서만 의미가 있는 상태를 소유한다.
 
@@ -73,6 +73,10 @@ migration의 진입점을 제공한다. `src/project/bsvCodec.js`는 Project Sta
 versioned JSON으로 encode하고, import 시 모든 필드와 PDF bytes를 검증한 준비 결과를 만든다.
 App은 준비가 모두 성공한 뒤에만 Project State, PDF URL과 초기 Session을 적용하고 기존
 `pdf:update`, `measures:update`, `sync:update` 흐름으로 공유한다.
+
+음원 링크와 start offset은 `.bsv` Project State에 저장하고 별도 `audio:state` 이벤트로
+Student에 공유한다. 논리 `syncState`에는 포함하지 않는다. Student 개인 음원은 PDF identity별
+브라우저 로컬 데이터이며 Socket이나 `.bsv`로 보내지 않는다. 실제 재생 연동은 다음 단계의 책임이다.
 
 과거 effect 강제 재실행에 사용하던 `renderSyncVersion`은 제거했다. 현재는 동일한
 `surfaceIdentity`의 document/page render 완료 여부가 overlay 표시와 자동 스크롤의

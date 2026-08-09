@@ -50,6 +50,17 @@ import {
   setStudentAnnotationStrokes,
   STUDENT_ANNOTATION_PALETTE,
 } from './utils/studentAnnotations.js';
+import {
+  DEFAULT_AUDIO_SETTINGS,
+  getOpenableAudioUrl,
+  getStudentAudioSettings,
+  loadStudentAudioSettingsLibrary,
+  LOCAL_AUDIO_SOURCE,
+  normalizeAudioSettings,
+  saveStudentAudioSettingsLibrary,
+  setStudentAudioSettings,
+  TEACHER_AUDIO_SOURCE,
+} from './utils/audioSettings.js';
 
 const REGISTER_MODE = 'register';
 const PLAY_MODE = 'play';
@@ -138,6 +149,7 @@ function App() {
   const socketRef = useRef(null);
   const autoplayTimerRef = useRef(null);
   const autoplayTimerVersionRef = useRef(0);
+  const audioSettingsRef = useRef({ ...DEFAULT_AUDIO_SETTINGS });
   const isRepeatEnabledRef = useRef(false);
   const returnToStartOnEndRef = useRef(false);
   const measuresRef = useRef([]);
@@ -183,9 +195,15 @@ function App() {
     useState(0);
   const [isStudentAnnotationEnabled, setIsStudentAnnotationEnabled] =
     useState(false);
+  const [isStudentAudioPanelOpen, setIsStudentAudioPanelOpen] = useState(false);
+  const [studentAudioSource, setStudentAudioSource] = useState(
+    TEACHER_AUDIO_SOURCE,
+  );
+  const [studentAudioSettingsLibrary, setStudentAudioSettingsLibrary] =
+    useState(() => loadStudentAudioSettingsLibrary(getBrowserStorage()));
   const [viewerMode, setViewerMode] = useState(ROLE_SELECT_MODE);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const { measures, pdfMetadata } = projectState;
+  const { audioSettings, measures, pdfMetadata } = projectState;
   const fileName = pdfMetadata.fileName;
   const {
     isAutoPlaying,
@@ -237,10 +255,22 @@ function App() {
     studentAnnotationLibrary,
     studentAnnotationDocumentKey,
   );
+  const studentLocalAudioSettings = getStudentAudioSettings(
+    studentAudioSettingsLibrary,
+    studentAnnotationDocumentKey,
+  );
+  const studentDisplayAudioSettings =
+    studentAudioSource === LOCAL_AUDIO_SOURCE
+      ? studentLocalAudioSettings
+      : audioSettings;
+  const studentOpenableAudioUrl = getOpenableAudioUrl(
+    studentDisplayAudioSettings.url,
+  );
   const studentPageAnnotationCount = studentAnnotationStrokes.filter(
     (stroke) => stroke.page === displayPageNumber,
   ).length;
   const fullscreenSupported = isFullscreenSupported(document);
+  const openableAudioUrl = getOpenableAudioUrl(audioSettings.url);
   const handleDebugSnapshot = useCallback((snapshot) => {
     debugSnapshotRef.current = snapshot;
   }, []);
@@ -364,11 +394,19 @@ function App() {
     console.log('[sync] published current Teacher position', nextSyncState);
   }, []);
 
+  const publishCurrentTeacherAudioSettings = useCallback((targetSocket) => {
+    (targetSocket || socketRef.current)?.emit(
+      'audio:update',
+      audioSettingsRef.current,
+    );
+  }, []);
+
   const selectViewerMode = useCallback((nextViewerMode) => {
     // TODO: 향후 Teacher 선택 시 인증/비밀번호 검사를 이 지점에 연결.
     if (nextViewerMode === viewerMode) {
       if (nextViewerMode === TEACHER_MODE) {
         publishCurrentTeacherPosition();
+        publishCurrentTeacherAudioSettings();
       }
       return;
     }
@@ -380,10 +418,16 @@ function App() {
 
     if (nextViewerMode === TEACHER_MODE) {
       publishCurrentTeacherPosition();
+      publishCurrentTeacherAudioSettings();
     }
 
     setViewerMode(nextViewerMode);
-  }, [publishCurrentTeacherPosition, resetViewRenderState, viewerMode]);
+  }, [
+    publishCurrentTeacherAudioSettings,
+    publishCurrentTeacherPosition,
+    resetViewRenderState,
+    viewerMode,
+  ]);
 
   function setTeacherPdfUrl(nextPdfUrl) {
     const previousTeacherPdfUrl = teacherPdfObjectUrlRef.current;
@@ -531,6 +575,7 @@ function App() {
     returnToStartOnEndRef.current = false;
     shouldPublishMeasuresRef.current = false;
     syncStateRef.current = emptySessionState.syncState;
+    audioSettingsRef.current = emptySessionState.audioSettings;
     teacherPdfBlobRef.current = null;
 
     dispatchProject({
@@ -617,6 +662,7 @@ function App() {
     dragStateRef.current = null;
     resizeStateRef.current = null;
     measuresRef.current = [];
+    audioSettingsRef.current = { ...DEFAULT_AUDIO_SETTINGS };
     teacherPdfBlobRef.current = file;
     dispatchProject({
       type: PROJECT_ACTIONS.RESET_PROJECT,
@@ -626,6 +672,7 @@ function App() {
       },
     });
     publishMeasures([]);
+    socketRef.current?.emit('audio:update', audioSettingsRef.current);
     setSyncedMeasureIndex(0);
     setSelectedMeasureIndex(-1);
     setDraggedMeasureIndex(-1);
@@ -732,6 +779,7 @@ function App() {
 
     const nextProjectState = preparedProject.projectState;
     const nextMeasures = nextProjectState.measures;
+    const nextAudioSettings = nextProjectState.audioSettings;
     const nextFileName = nextProjectState.pdfMetadata.fileName;
     const nextMimeType = nextProjectState.pdfMetadata.mimeType;
 
@@ -743,6 +791,7 @@ function App() {
     pageNumberRef.current = 1;
     isRepeatEnabledRef.current = false;
     shouldPublishMeasuresRef.current = false;
+    audioSettingsRef.current = nextAudioSettings;
     teacherPdfBlobRef.current = preparedProject.pdfBlob;
     studentPdfSourceRef.current = TEACHER_PDF_SOURCE;
 
@@ -765,6 +814,7 @@ function App() {
 
     publishPdfData(preparedProject.pdfBytes, nextFileName, nextMimeType);
     publishMeasures(nextMeasures);
+    socketRef.current?.emit('audio:update', nextAudioSettings);
     publishSyncState({
       fileName: nextFileName,
       measureIndex: 0,
@@ -987,6 +1037,55 @@ function App() {
     });
   }
 
+  function updateAudioSettings(changes) {
+    if (!canEdit) return;
+
+    const nextAudioSettings = normalizeAudioSettings({
+      ...audioSettingsRef.current,
+      ...changes,
+    });
+
+    audioSettingsRef.current = nextAudioSettings;
+    dispatchProject({
+      type: PROJECT_ACTIONS.SET_AUDIO_SETTINGS,
+      audioSettings: nextAudioSettings,
+    });
+    socketRef.current?.emit('audio:update', nextAudioSettings);
+  }
+
+  function openAudioSettingsLink(settings) {
+    const url = getOpenableAudioUrl(settings.url);
+
+    if (!url) {
+      window.alert('http 또는 https로 시작하는 음원 링크를 입력해주세요.');
+      return;
+    }
+
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  function openAudioLink() {
+    openAudioSettingsLink(audioSettings);
+  }
+
+  function updateStudentLocalAudioSettings(changes) {
+    if (!studentAnnotationDocumentKey) return;
+
+    setStudentAudioSettingsLibrary((previousLibrary) =>
+      setStudentAudioSettings(previousLibrary, studentAnnotationDocumentKey, {
+        ...getStudentAudioSettings(
+          previousLibrary,
+          studentAnnotationDocumentKey,
+        ),
+        ...changes,
+      }),
+    );
+  }
+
+  function openStudentAudioLink() {
+    openAudioSettingsLink(studentDisplayAudioSettings);
+  }
+
   function openLyricEditor() {
     setIsLyricEditorOpen(true);
   }
@@ -1121,6 +1220,7 @@ function App() {
 
         if (viewerModeRef.current === TEACHER_MODE) {
           publishCurrentTeacherPosition(socket);
+          publishCurrentTeacherAudioSettings(socket);
         }
       });
 
@@ -1221,6 +1321,22 @@ function App() {
         });
       });
 
+      socket.on('audio:state', (nextAudioSettings) => {
+        if (viewerModeRef.current === TEACHER_MODE) {
+          console.log('[socket] ignored remote audio:state while in Teacher mode');
+          return;
+        }
+
+        const normalizedAudioSettings = normalizeAudioSettings(nextAudioSettings);
+
+        audioSettingsRef.current = normalizedAudioSettings;
+        dispatchProject({
+          type: PROJECT_ACTIONS.SET_AUDIO_SETTINGS,
+          audioSettings: normalizedAudioSettings,
+        });
+        console.log('[socket] received audio:state', normalizedAudioSettings);
+      });
+
       socket.on('session:reset', () => {
         console.log('[socket] received session:reset');
         applySharedSessionReset();
@@ -1239,7 +1355,7 @@ function App() {
       activeSocket?.disconnect();
       socketRef.current = null;
     };
-  }, [publishCurrentTeacherPosition]);
+  }, [publishCurrentTeacherAudioSettings, publishCurrentTeacherPosition]);
 
   useEffect(() => {
     if (!shouldPublishMeasuresRef.current) return;
@@ -1251,6 +1367,10 @@ function App() {
   useEffect(() => {
     measuresRef.current = measures;
   }, [measures]);
+
+  useEffect(() => {
+    audioSettingsRef.current = audioSettings;
+  }, [audioSettings]);
 
   useEffect(() => {
     measureIndexRef.current = measureIndex;
@@ -1288,6 +1408,7 @@ function App() {
     }
     if (viewerMode !== STUDENT_MODE) {
       setIsStudentAnnotationEnabled(false);
+      setIsStudentAudioPanelOpen(false);
     }
 
     console.log('[debug] viewMode changed');
@@ -1312,6 +1433,17 @@ function App() {
       console.warn('[annotations] local storage save failed');
     }
   }, [studentAnnotationLibrary]);
+
+  useEffect(() => {
+    if (
+      !saveStudentAudioSettingsLibrary(
+        getBrowserStorage(),
+        studentAudioSettingsLibrary,
+      )
+    ) {
+      console.warn('[audio] student local storage save failed');
+    }
+  }, [studentAudioSettingsLibrary]);
 
   useEffect(() => {
     function updateFullscreenState() {
@@ -1469,6 +1601,14 @@ function App() {
             >
               한 페이지 보기
             </button>
+            <button
+              aria-expanded={isStudentAudioPanelOpen}
+              className={isStudentAudioPanelOpen ? 'active' : ''}
+              onClick={() => setIsStudentAudioPanelOpen((isOpen) => !isOpen)}
+              type="button"
+            >
+              음원 설정
+            </button>
             <input
               accept=".pdf"
               className="file-input"
@@ -1477,6 +1617,87 @@ function App() {
               type="file"
             />
           </div>
+          {isStudentAudioPanelOpen && (
+            <section aria-label="학생 음원 설정" className="student-audio-panel">
+              <div className="student-audio-panel-header">
+                <strong>음원 설정</strong>
+                <button
+                  onClick={() => setIsStudentAudioPanelOpen(false)}
+                  type="button"
+                >
+                  닫기
+                </button>
+              </div>
+              <div className="student-audio-source-controls" role="group">
+                <button
+                  aria-pressed={studentAudioSource === TEACHER_AUDIO_SOURCE}
+                  className={
+                    studentAudioSource === TEACHER_AUDIO_SOURCE ? 'active' : ''
+                  }
+                  onClick={() => setStudentAudioSource(TEACHER_AUDIO_SOURCE)}
+                  type="button"
+                >
+                  선생님 음원
+                </button>
+                <button
+                  aria-pressed={studentAudioSource === LOCAL_AUDIO_SOURCE}
+                  className={
+                    studentAudioSource === LOCAL_AUDIO_SOURCE ? 'active' : ''
+                  }
+                  disabled={!studentAnnotationDocumentKey}
+                  onClick={() => setStudentAudioSource(LOCAL_AUDIO_SOURCE)}
+                  type="button"
+                >
+                  내 음원
+                </button>
+              </div>
+              <label>
+                음원 링크
+                <input
+                  disabled={
+                    studentAudioSource === LOCAL_AUDIO_SOURCE &&
+                    !studentAnnotationDocumentKey
+                  }
+                  onChange={(event) =>
+                    updateStudentLocalAudioSettings({ url: event.target.value })
+                  }
+                  placeholder="https://..."
+                  readOnly={studentAudioSource === TEACHER_AUDIO_SOURCE}
+                  type="url"
+                  value={studentDisplayAudioSettings.url}
+                />
+              </label>
+              <label>
+                시작 오프셋(초)
+                <input
+                  disabled={
+                    studentAudioSource === LOCAL_AUDIO_SOURCE &&
+                    !studentAnnotationDocumentKey
+                  }
+                  min="0"
+                  onChange={(event) =>
+                    updateStudentLocalAudioSettings({
+                      startOffsetSeconds: event.target.value,
+                    })
+                  }
+                  readOnly={studentAudioSource === TEACHER_AUDIO_SOURCE}
+                  step="0.1"
+                  type="number"
+                  value={studentDisplayAudioSettings.startOffsetSeconds}
+                />
+              </label>
+              <button
+                disabled={!studentOpenableAudioUrl}
+                onClick={openStudentAudioLink}
+                type="button"
+              >
+                링크 열기
+              </button>
+              {studentAudioSource === TEACHER_AUDIO_SOURCE && (
+                <small>Teacher가 변경하면 자동으로 갱신됩니다.</small>
+              )}
+            </section>
+          )}
           <div className="student-annotation-controls">
             <button
               aria-pressed={isStudentAnnotationEnabled}
@@ -1566,9 +1787,11 @@ function App() {
       <main className="main">
         {canEdit && (
           <Sidebar
+            audioSettings={audioSettings}
             bsvInputRef={bsvInputRef}
             canEdit={canEdit}
             canSaveProject={Boolean(teacherPdfBlobRef.current)}
+            canOpenAudioLink={Boolean(openableAudioUrl)}
             canEndSession={Boolean(teacherPdfBlobRef.current || measures.length)}
             fileInputRef={fileInputRef}
             isAutoPlaying={isAutoPlaying}
@@ -1594,7 +1817,9 @@ function App() {
             onGoToMeasure={goToMeasure}
             onEndClassSession={endClassSession}
             onOpenLyricEditor={openLyricEditor}
+            onOpenAudioLink={openAudioLink}
             onUpdateSelectedMeasureTiming={updateSelectedMeasureTiming}
+            onUpdateAudioSettings={updateAudioSettings}
             pageNumber={pageNumber}
             returnToStartOnEnd={returnToStartOnEnd}
             selectedMeasure={selectedMeasure}
@@ -1722,9 +1947,11 @@ function VocalView({ currentMeasure, nextLyric }) {
 }
 
 function Sidebar({
+  audioSettings,
   bsvInputRef,
   canEdit,
   canEndSession,
+  canOpenAudioLink,
   canSaveProject,
   fileInputRef,
   isAutoPlaying,
@@ -1738,6 +1965,7 @@ function Sidebar({
   onGoToPage,
   onLoadJson,
   onLoadBsvProject,
+  onOpenAudioLink,
   onOpenLyricEditor,
   onOpenBsvProject,
   onOpenJson,
@@ -1750,6 +1978,7 @@ function Sidebar({
   onSetReturnToStartOnEnd,
   onStartAutoplay,
   onStopAutoplay,
+  onUpdateAudioSettings,
   onUpdateSelectedMeasureTiming,
   pageNumber,
   returnToStartOnEnd,
@@ -1795,6 +2024,40 @@ function Sidebar({
           <button onClick={onSaveJson}>💾 JSON 저장</button>
           <button onClick={onOpenJson}>📂 JSON 불러오기</button>
           <button onClick={onOpenLyricEditor}>가사 편집</button>
+          <div className="audio-settings-editor">
+            <label>
+              음원 링크
+              <input
+                onChange={(event) =>
+                  onUpdateAudioSettings({ url: event.target.value })
+                }
+                placeholder="https://..."
+                type="url"
+                value={audioSettings.url}
+              />
+            </label>
+            <label>
+              시작 오프셋(초)
+              <input
+                min="0"
+                onChange={(event) =>
+                  onUpdateAudioSettings({
+                    startOffsetSeconds: event.target.value,
+                  })
+                }
+                step="0.1"
+                type="number"
+                value={audioSettings.startOffsetSeconds}
+              />
+            </label>
+            <button
+              disabled={!canOpenAudioLink}
+              onClick={onOpenAudioLink}
+              type="button"
+            >
+              링크 열기
+            </button>
+          </div>
           <button
             className="session-end-button"
             disabled={!canEndSession}

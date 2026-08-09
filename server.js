@@ -8,6 +8,10 @@ import {
   getLogicalSyncState,
 } from './src/state/sessionState.js';
 import {
+  isValidAudioSettings,
+  normalizeAudioSettings,
+} from './src/utils/audioSettings.js';
+import {
   isValidMeasuresState,
   MAX_PDF_BYTES,
   resolveStaticRequest,
@@ -21,6 +25,7 @@ const initialSharedSessionState = createEmptySharedSessionState();
 let latestSyncState = initialSharedSessionState.syncState;
 let latestPdf = initialSharedSessionState.pdf;
 let latestMeasures = initialSharedSessionState.measures;
+let latestAudioSettings = initialSharedSessionState.audioSettings;
 
 const mimeTypes = {
   '.css': 'text/css',
@@ -103,6 +108,8 @@ io.on('connection', (socket) => {
 
   socket.emit('measures:state', latestMeasures);
   console.log(`[socket] sent measures:state count=${latestMeasures.length} to ${socket.id}`);
+  socket.emit('audio:state', latestAudioSettings);
+  console.log(`[socket] sent audio:state to ${socket.id}`, latestAudioSettings);
   socket.emit('sync:state', latestSyncState);
   console.log(`[socket] sent sync:state to ${socket.id}`, latestSyncState);
 
@@ -145,12 +152,24 @@ io.on('connection', (socket) => {
     socket.broadcast.emit('measures:state', latestMeasures);
   });
 
+  socket.on('audio:update', (nextAudioSettings) => {
+    if (!isValidAudioSettings(nextAudioSettings)) {
+      console.warn(`[socket] rejected invalid audio:update from ${socket.id}`);
+      return;
+    }
+
+    latestAudioSettings = normalizeAudioSettings(nextAudioSettings);
+    console.log(`[socket] received audio:update from ${socket.id}`, latestAudioSettings);
+    socket.broadcast.emit('audio:state', latestAudioSettings);
+  });
+
   socket.on('session:reset', () => {
     const emptySessionState = createEmptySharedSessionState();
 
     latestPdf = emptySessionState.pdf;
     latestMeasures = emptySessionState.measures;
     latestSyncState = emptySessionState.syncState;
+    latestAudioSettings = emptySessionState.audioSettings;
     console.log(`[socket] session reset requested by ${socket.id}`);
     socket.broadcast.emit('session:reset', emptySessionState);
   });
