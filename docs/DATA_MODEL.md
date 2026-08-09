@@ -6,6 +6,7 @@ JSON 파일은 measure 객체 배열이다. 기존 핵심 필드는 유지된다
 
 ```js
 {
+  id: "measure-...",
   page: 1,
   x: 0.12,
   y: 0.18,
@@ -21,6 +22,7 @@ JSON 파일은 measure 객체 배열이다. 기존 핵심 필드는 유지된다
 }
 ```
 
+- `id`: 프로젝트 안에서 고유하며 생성 후 바뀌지 않는 문자열 ID
 - `page`: 1부터 시작하는 PDF 페이지 번호
 - `x`, `y`, `width`, `height`: PDF 페이지 전체를 `1 x 1`로 본 정규화 좌표
 - `bpm`, `beats`: 자동재생 시간 계산 값. 누락되거나 유효하지 않으면 각각 120, 4로 정규화
@@ -29,6 +31,10 @@ JSON 파일은 measure 객체 배열이다. 기존 핵심 필드는 유지된다
 - `coordinateStatus`: 좌표 변환 신뢰 상태
 - `coordinateWidth`, `coordinateHeight`: 기존 JSON 필드 호환을 위해 정규화 기준인 `1`을 유지
 
+기존 JSON에 `id`가 없으면 import 시 새 ID를 한 번 생성한다. 기존의 유효하고 고유한 ID는
+정규화와 편집에서 보존하고, 중복되거나 비어 있는 ID만 유입 경계에서 교체한다. JSON 저장은
+기존 measure 배열 구조를 유지하면서 ID를 함께 기록한다.
+
 기존 `coordinateWidth/coordinateHeight`, `baseWidth/baseHeight`,
 `pageWidth/pageHeight`가 있으면 해당 기준으로 canonical 좌표로 변환한다. 기준 metadata가
 없는 JSON은 현재 DOM을 사용하지 않고 같은 페이지 legacy measure의 최대 범위만 사용하며
@@ -36,9 +42,9 @@ JSON 파일은 measure 객체 배열이다. 기존 핵심 필드는 유지된다
 확정할 수 없으므로 실제 수업 데이터 검증이 필요하다. JSON 저장은 canonical measures
 배열을 기록한다.
 
-런타임의 Project State는 `{ pdfMetadata: { fileName }, measures }`로 구성되지만, 이는 내부
-상태 소유권을 구분하기 위한 구조다. JSON 저장 형식은 project wrapper가 아닌 기존 measure
-배열을 그대로 유지한다.
+런타임의 Project State는 `{ metadata, pdfMetadata, measures }`로 구성된다. `metadata`는
+제목과 생성/수정 시각을, `pdfMetadata`는 PDF 파일명과 MIME type을 가진다. 기존 JSON 저장
+형식은 project wrapper가 아닌 measure 배열을 그대로 유지한다.
 
 ## 현재 syncState
 
@@ -52,6 +58,26 @@ JSON 파일은 measure 객체 배열이다. 기존 핵심 필드는 유지된다
 
 렌더 폭이나 scale은 포함하지 않는다.
 
-## 향후 project 초안
+## .bsv v1
 
-`.bsv`는 아직 구현되지 않았다. 향후에는 버전이 있는 project 컨테이너가 PDF 참조/파일, measures, 곡 메타데이터와 재생 설정을 묶는 구조를 검토한다. 기존 measure 배열 JSON은 계속 불러올 수 있어야 하며, 확정 전까지 이 초안을 저장 형식으로 간주하지 않는다.
+`.bsv`는 다음 versioned JSON document다.
+
+```js
+{
+  format: "band-score-viewer-project",
+  schemaVersion: 1,
+  metadata: { title, createdAt, updatedAt },
+  project: {
+    pdfMetadata: { fileName, mimeType: "application/pdf" },
+    measures
+  },
+  assets: {
+    scorePdf: { encoding: "base64", byteLength, data }
+  }
+}
+```
+
+BPM, Beats, lyric, stable ID와 normalized 좌표는 measures가 유일한 원본이다. `.bsv` v1은
+모든 measure의 유효하고 고유한 ID를 검증한다. 현재 페이지/마디,
+재생·Repeat, 선택/drag 상태, Student 개인 PDF와 보기 방식 같은 Session/Local View 데이터는
+저장하지 않는다. 기존 measure 배열 JSON과 `.bsv` import 경로는 분리되어 있다.

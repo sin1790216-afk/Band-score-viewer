@@ -641,7 +641,7 @@ function MeasureOverlay({
             className={`highlight ${index === selectedMeasureIndex ? 'selected' : ''} ${
               index === draggedMeasureIndex ? 'dragging' : ''
             } ${index === resizedMeasureIndex ? 'resizing' : ''}`}
-            key={index}
+            key={measure.id}
             onClick={(event) => {
               event.stopPropagation();
               if (mode === REGISTER_MODE) {

@@ -45,6 +45,23 @@ test('normalizing an already canonical measure is idempotent', async () => {
   assert.ok(normalizedMeasures.every(isCanonicalMeasure));
 });
 
+test('coordinate normalization preserves an existing stable measure ID', () => {
+  const [measure] = normalizeMeasureCoordinates([
+    {
+      coordinateHeight: 600,
+      coordinateWidth: 400,
+      height: 80,
+      id: 'measure-coordinate-1',
+      page: 1,
+      width: 120,
+      x: 40,
+      y: 60,
+    },
+  ]);
+
+  assert.equal(measure.id, 'measure-coordinate-1');
+});
+
 test('legacy measures use a deterministic data-only basis and stay explicitly unverified', async () => {
   const measures = await readFixture('measures-legacy-no-basis.json');
   const normalizedMeasures = normalizeMeasureCoordinates(measures);

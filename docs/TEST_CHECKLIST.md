@@ -20,7 +20,18 @@
 - [ ] 등록모드에서 마디 생성, 선택, 드래그, 가로/세로 resize, Backspace 삭제가 동작한다.
 - [ ] BPM과 Beats를 수정하고 자동재생 시간이 해당 마디 값에 맞는다.
 - [ ] 여러 줄 lyric을 편집하고 JSON 저장/불러오기 후 그대로 복원된다.
+- [ ] ID가 없는 기존 JSON을 불러오면 각 마디에 고유 ID가 생기고, 편집·저장·재불러오기 후 같은 ID가 유지된다.
 - [ ] 새 PDF를 열면 이전 measures, 선택, 재생 상태가 남지 않는다.
+
+## 프로젝트 파일
+
+- [ ] PDF, BPM/Beats와 여러 줄 lyric이 있는 프로젝트를 `.bsv`로 저장한다.
+- [ ] `.bsv` 저장 전후 모든 measure ID가 동일하고 중복되지 않는다.
+- [ ] 다른 PDF를 연 뒤 `.bsv`를 다시 열어 PDF, 파일명, measures와 highlight가 복원된다.
+- [ ] `.bsv`를 열면 page 1, measure 0, Stop, Repeat OFF로 초기화된다.
+- [ ] 손상되거나 다른 JSON인 `.bsv`를 열었을 때 기존 프로젝트가 그대로 유지되고 오류가 보인다.
+- [ ] `.bsv`를 연 뒤 접속 중인 Student/Vocal과 늦게 접속한 화면이 새 PDF/measures를 받는다.
+- [ ] 기존 measure 배열 JSON 저장/불러오기가 이전과 동일하게 동작한다.
 
 ## 재생과 Vocal
 
@@ -33,3 +44,4 @@
 - [ ] `npm test`
 - [ ] `npm run lint`
 - [ ] `npm run build`
+- [ ] `git diff --check`

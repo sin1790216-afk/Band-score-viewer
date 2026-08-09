@@ -4,13 +4,20 @@ import { io } from 'socket.io-client';
 
 import './App.css';
 import ScoreViewer from './components/ScoreViewer.jsx';
+import { decodeBsvProject, encodeBsvProject } from './project/bsvCodec.js';
+import {
+  BSV_FILE_MIME_TYPE,
+  PDF_MIME_TYPE,
+} from './project/bsvSchema.js';
 import {
   createInitialProjectState,
+  createProjectMeasure,
   DEFAULT_MEASURE,
   exportMeasuresJson,
   getPositiveNumber,
   importMeasuresJson,
   normalizeMeasures,
+  prepareMeasuresForProject,
   PROJECT_ACTIONS,
   projectReducer,
 } from './state/projectState.js';
@@ -51,6 +58,12 @@ function getMeasureFileName(fileName) {
   return fileName ? fileName.replace(/\.pdf$/i, '.json') : 'measures.json';
 }
 
+function getProjectFileName(fileName) {
+  return fileName
+    ? `${fileName.replace(/\.pdf$/i, '')}.bsv`
+    : 'band-score-viewer.bsv';
+}
+
 function getTrimmedLyric(measure) {
   return measure?.lyric?.trim() || '';
 }
@@ -88,6 +101,7 @@ function toPdfBlobPart(data) {
 }
 
 function App() {
+  const bsvInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const jsonInputRef = useRef(null);
   const studentPdfInputRef = useRef(null);
@@ -103,6 +117,7 @@ function App() {
   const pageNumberRef = useRef(1);
   const pdfObjectUrlRef = useRef('');
   const teacherPdfObjectUrlRef = useRef('');
+  const teacherPdfBlobRef = useRef(null);
   const debugSnapshotRef = useRef({});
   const shouldPublishMeasuresRef = useRef(false);
   const syncStateRef = useRef({ ...INITIAL_SYNC_STATE });
@@ -213,11 +228,10 @@ function App() {
     });
   }
 
-  function setLocalPdfUrl(nextPdfUrl, options = {}) {
+  function setLocalPdfUrl(nextPdfUrl) {
     if (
       pdfObjectUrlRef.current &&
-      pdfObjectUrlRef.current !== teacherPdfObjectUrlRef.current &&
-      !options.keepPrevious
+      pdfObjectUrlRef.current !== teacherPdfObjectUrlRef.current
     ) {
       URL.revokeObjectURL(pdfObjectUrlRef.current);
     }
@@ -249,12 +263,8 @@ function App() {
   }, [resetViewRenderState, viewerMode]);
 
   function setTeacherPdfUrl(nextPdfUrl) {
-    if (
-      teacherPdfObjectUrlRef.current &&
-      teacherPdfObjectUrlRef.current !== pdfObjectUrlRef.current
-    ) {
-      URL.revokeObjectURL(teacherPdfObjectUrlRef.current);
-    }
+    const previousTeacherPdfUrl = teacherPdfObjectUrlRef.current;
+    const previousDisplayedPdfUrl = pdfObjectUrlRef.current;
 
     teacherPdfObjectUrlRef.current = nextPdfUrl;
 
@@ -262,7 +272,15 @@ function App() {
       viewerModeRef.current === TEACHER_MODE ||
       studentPdfSourceRef.current === TEACHER_PDF_SOURCE
     ) {
-      setLocalPdfUrl(nextPdfUrl, { keepPrevious: true });
+      setLocalPdfUrl(nextPdfUrl);
+    }
+
+    if (
+      previousTeacherPdfUrl &&
+      previousTeacherPdfUrl !== nextPdfUrl &&
+      previousTeacherPdfUrl !== previousDisplayedPdfUrl
+    ) {
+      URL.revokeObjectURL(previousTeacherPdfUrl);
     }
   }
 
@@ -271,7 +289,7 @@ function App() {
 
     if (teacherPdfObjectUrlRef.current) {
       resetPdfRenderState();
-      setLocalPdfUrl(teacherPdfObjectUrlRef.current, { keepPrevious: true });
+      setLocalPdfUrl(teacherPdfObjectUrlRef.current);
     }
   }
 
@@ -299,14 +317,20 @@ function App() {
     dispatchProject(action);
   }
 
-  async function publishPdf(file) {
-    const data = await file.arrayBuffer();
-
+  function publishPdfData(data, nextFileName, mimeType) {
     socketRef.current?.emit('pdf:update', {
       data,
-      fileName: file.name,
-      type: file.type || 'application/pdf',
+      fileName: nextFileName,
+      type: mimeType || PDF_MIME_TYPE,
     });
+  }
+
+  async function publishPdf(pdfBlob, nextFileName, mimeType) {
+    publishPdfData(
+      await pdfBlob.arrayBuffer(),
+      nextFileName,
+      mimeType || pdfBlob.type || PDF_MIME_TYPE,
+    );
   }
 
   function openPdf() {
@@ -320,10 +344,19 @@ function App() {
 
     stopAutoplay();
 
+    const mimeType = PDF_MIME_TYPE;
+
     dragStateRef.current = null;
     resizeStateRef.current = null;
     measuresRef.current = [];
-    dispatchProject({ type: PROJECT_ACTIONS.RESET_MEASURES });
+    teacherPdfBlobRef.current = file;
+    dispatchProject({
+      type: PROJECT_ACTIONS.RESET_PROJECT,
+      pdfMetadata: {
+        fileName: file.name,
+        mimeType,
+      },
+    });
     publishMeasures([]);
     setSyncedMeasureIndex(0);
     setSelectedMeasureIndex(-1);
@@ -333,7 +366,7 @@ function App() {
     setSyncedPageNumber(1);
     resetPdfRenderState();
     setTeacherPdfUrl(URL.createObjectURL(file));
-    publishPdf(file).catch((error) => console.error(error));
+    publishPdf(file, file.name, mimeType).catch((error) => console.error(error));
   }
 
   function saveJson() {
@@ -370,6 +403,109 @@ function App() {
     reader.readAsText(file);
   }
 
+  function openBsvProject() {
+    bsvInputRef.current?.click();
+  }
+
+  function showBsvError(actionLabel, error) {
+    console.error(`[bsv] ${actionLabel} failed`, error);
+    window.alert(
+      `${actionLabel}할 수 없습니다.\n${error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.'}`,
+    );
+  }
+
+  async function saveBsvProject() {
+    const pdfBlob = teacherPdfBlobRef.current;
+
+    if (!pdfBlob) {
+      window.alert('프로젝트를 저장하려면 먼저 PDF를 열어주세요.');
+      return;
+    }
+
+    try {
+      const encodedProject = await encodeBsvProject({
+        pdfBlob,
+        projectState,
+      });
+      const blob = new Blob([encodedProject.text], { type: BSV_FILE_MIME_TYPE });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+
+      link.href = url;
+      link.download = getProjectFileName(fileName);
+      link.click();
+
+      URL.revokeObjectURL(url);
+      dispatchProject({
+        type: PROJECT_ACTIONS.SET_PROJECT_METADATA,
+        metadata: encodedProject.document.metadata,
+      });
+    } catch (error) {
+      showBsvError('프로젝트를 저장', error);
+    }
+  }
+
+  async function loadBsvProject(event) {
+    const file = event.target.files[0];
+
+    if (!file) return;
+
+    let preparedProject;
+    let nextPdfUrl;
+
+    try {
+      preparedProject = decodeBsvProject(await file.text());
+      nextPdfUrl = URL.createObjectURL(preparedProject.pdfBlob);
+    } catch (error) {
+      event.target.value = '';
+      showBsvError('프로젝트를 열', error);
+      return;
+    }
+
+    const nextProjectState = preparedProject.projectState;
+    const nextMeasures = nextProjectState.measures;
+    const nextFileName = nextProjectState.pdfMetadata.fileName;
+    const nextMimeType = nextProjectState.pdfMetadata.mimeType;
+
+    stopAutoplay();
+    dragStateRef.current = null;
+    resizeStateRef.current = null;
+    measuresRef.current = nextMeasures;
+    measureIndexRef.current = 0;
+    pageNumberRef.current = 1;
+    isRepeatEnabledRef.current = false;
+    shouldPublishMeasuresRef.current = false;
+    teacherPdfBlobRef.current = preparedProject.pdfBlob;
+    studentPdfSourceRef.current = TEACHER_PDF_SOURCE;
+
+    dispatchProject({
+      type: PROJECT_ACTIONS.REPLACE_PROJECT,
+      projectState: nextProjectState,
+    });
+    dispatchSession({ type: SESSION_ACTIONS.RESET_POSITION });
+    dispatchSession({
+      type: SESSION_ACTIONS.SET_REPEAT_ENABLED,
+      isRepeatEnabled: false,
+    });
+    setSelectedMeasureIndex(-1);
+    setDraggedMeasureIndex(-1);
+    setResizedMeasureIndex(-1);
+    setIsLyricEditorOpen(false);
+    setStudentPdfSource(TEACHER_PDF_SOURCE);
+    resetPdfRenderState();
+    setTeacherPdfUrl(nextPdfUrl);
+
+    publishPdfData(preparedProject.pdfBytes, nextFileName, nextMimeType);
+    publishMeasures(nextMeasures);
+    publishSyncState({
+      fileName: nextFileName,
+      measureIndex: 0,
+      pageNumber: 1,
+    });
+
+    event.target.value = '';
+  }
+
   function addMeasure(pageMetrics) {
     if (!canEdit || mode !== REGISTER_MODE || !pageMetrics) return;
 
@@ -380,7 +516,7 @@ function App() {
       scaleX,
       scaleY,
     } = pageMetrics;
-    const nextMeasure = {
+    const nextMeasure = createProjectMeasure({
       page: renderedPageNumber,
       coordinateHeight: coordinateBasis.height,
       coordinateSpace: NORMALIZED_COORDINATE_SPACE,
@@ -391,7 +527,9 @@ function App() {
       ...DEFAULT_MEASURE,
       height: DEFAULT_MEASURE.height / scaleY,
       width: DEFAULT_MEASURE.width / scaleX,
-    };
+    });
+
+    if (!nextMeasure) return;
 
     setSelectedMeasureIndex(measures.length);
     dispatchMeasureUpdate({
@@ -738,9 +876,16 @@ function App() {
           return;
         }
 
+        const mimeType = PDF_MIME_TYPE;
+        const pdfBlob = new Blob([pdfBlobPart], { type: mimeType });
+
+        teacherPdfBlobRef.current = pdfBlob;
         dispatchProject({
-          type: PROJECT_ACTIONS.SET_PDF_FILE_NAME,
-          fileName: nextPdf.fileName,
+          type: PROJECT_ACTIONS.SET_PDF_METADATA,
+          pdfMetadata: {
+            fileName: nextPdf.fileName,
+            mimeType,
+          },
         });
         if (
           viewerModeRef.current === TEACHER_MODE ||
@@ -748,11 +893,7 @@ function App() {
         ) {
           resetPdfRenderState();
         }
-        setTeacherPdfUrl(
-          URL.createObjectURL(
-            new Blob([pdfBlobPart], { type: nextPdf.type || 'application/pdf' }),
-          ),
-        );
+        setTeacherPdfUrl(URL.createObjectURL(pdfBlob));
         console.log('[socket] received pdf:state', nextPdf.fileName);
         console.table({
           ...debugSnapshotRef.current,
@@ -762,7 +903,7 @@ function App() {
       });
 
       socket.on('measures:state', (nextMeasures) => {
-        const normalizedMeasures = normalizeMeasures(nextMeasures);
+        const normalizedMeasures = prepareMeasuresForProject(nextMeasures);
 
         measuresRef.current = normalizedMeasures;
         dispatchProject({
@@ -983,7 +1124,9 @@ function App() {
       <main className="main">
         {canEdit && (
           <Sidebar
+            bsvInputRef={bsvInputRef}
             canEdit={canEdit}
+            canSaveProject={Boolean(teacherPdfBlobRef.current)}
             fileInputRef={fileInputRef}
             isAutoPlaying={isAutoPlaying}
             isRepeatEnabled={isRepeatEnabled}
@@ -994,10 +1137,13 @@ function App() {
             onStartAutoplay={startAutoplay}
             onStopAutoplay={stopAutoplay}
             onLoadJson={loadJson}
+            onLoadBsvProject={loadBsvProject}
+            onOpenBsvProject={openBsvProject}
             onOpenJson={() => jsonInputRef.current?.click()}
             onOpenPdf={openPdf}
             onPdfSelected={selectPdf}
             onSaveJson={saveJson}
+            onSaveBsvProject={saveBsvProject}
             onSetMode={setMode}
             onSetRepeatEnabled={setRepeatEnabled}
             onGoToPage={goToPage}
@@ -1021,7 +1167,7 @@ function App() {
             </div>
             <div className="lyric-measure-list">
               {measures.map((measure, index) => (
-                <label className="lyric-measure-row" key={index}>
+                <label className="lyric-measure-row" key={measure.id}>
                   <span>{index + 1}</span>
                   <textarea
                     onChange={(event) => updateMeasureLyric(index, event.target.value)}
@@ -1109,7 +1255,9 @@ function VocalView({ currentMeasure, nextLyric }) {
 }
 
 function Sidebar({
+  bsvInputRef,
   canEdit,
+  canSaveProject,
   fileInputRef,
   isAutoPlaying,
   isRepeatEnabled,
@@ -1120,11 +1268,14 @@ function Sidebar({
   onGoToMeasure,
   onGoToPage,
   onLoadJson,
+  onLoadBsvProject,
   onOpenLyricEditor,
+  onOpenBsvProject,
   onOpenJson,
   onOpenPdf,
   onPdfSelected,
   onSaveJson,
+  onSaveBsvProject,
   onSetMode,
   onSetRepeatEnabled,
   onStartAutoplay,
@@ -1140,9 +1291,23 @@ function Sidebar({
       {canEdit && (
         <>
           <button onClick={onOpenPdf}>PDF 열기</button>
+          <button disabled={!canSaveProject} onClick={onSaveBsvProject} type="button">
+            프로젝트 저장 (.bsv)
+          </button>
+          <button onClick={onOpenBsvProject} type="button">
+            프로젝트 열기 (.bsv)
+          </button>
           <button onClick={onSaveJson}>💾 JSON 저장</button>
           <button onClick={onOpenJson}>📂 JSON 불러오기</button>
           <button onClick={onOpenLyricEditor}>가사 편집</button>
+
+          <input
+            accept=".bsv"
+            className="file-input"
+            onChange={onLoadBsvProject}
+            ref={bsvInputRef}
+            type="file"
+          />
 
           <input
             type="file"

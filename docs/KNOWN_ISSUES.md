@@ -27,3 +27,11 @@
 - 서버 상태는 메모리에만 있으므로 서버 재시작 시 PDF, measures, syncState가 사라진다.
 - 현재 Room, 접속 코드, Teacher 인증, 다중 수업 분리는 구현되어 있지 않다.
 - Student 개인 PDF는 Teacher 악보와 페이지 크기·줄바꿈·마디 배치가 다르면 하이라이트가 맞지 않을 수 있다.
+
+## .bsv v1 파일 크기
+
+- v1은 PDF를 JSON 안의 base64로 저장하므로 원본보다 약 33% 커지고 encode/decode 중 추가 메모리를 사용한다.
+- `byteLength`, base64 형식과 PDF signature는 검증하지만 v1에는 전체 파일 checksum이 없다.
+- 큰 PDF와 iPad Safari의 파일 저장/열기는 실제 기기에서 확인해야 한다.
+- 향후 schemaVersion migration으로 ZIP 또는 binary asset container를 도입할 수 있지만 아직 구현하지 않았다.
+- v1 확정 전 개발본에서 저장한 ID 없는 `.bsv`는 현재 검증에서 거부된다. 기존 measure 배열 JSON은 ID가 없어도 import할 수 있다.
