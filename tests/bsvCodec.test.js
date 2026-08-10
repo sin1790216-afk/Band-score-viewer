@@ -18,6 +18,7 @@ import {
   NORMALIZED_COORDINATE_STATUS,
 } from '../src/utils/measureCoordinates.js';
 import { DEFAULT_AUDIO_SETTINGS } from '../src/utils/audioSettings.js';
+import { applyLyricCandidates } from '../src/utils/lyricRecognition.js';
 
 const TEST_TIMESTAMP = '2026-08-02T05:00:00.000Z';
 const PDF_BYTES = new TextEncoder().encode(
@@ -138,6 +139,24 @@ test('.bsv preserves normalized coordinates, BPM, Beats, and multiline lyrics', 
   assert.equal(measure.bpm, 90);
   assert.equal(measure.beats, 3);
   assert.equal(measure.lyric, '첫 번째 줄\n두 번째 줄');
+});
+
+test('.bsv preserves a lyric applied from an automatic recognition candidate', async () => {
+  const recognizedMeasures = applyLyricCandidates(
+    [{ ...MEASURE, lyric: '' }],
+    [{ lyric: '자동 인식 가사\n둘째 줄', measureId: MEASURE.id }],
+  ).measures;
+  const encoded = await encodeBsvProject({
+    now: TEST_TIMESTAMP,
+    pdfBlob: new Blob([PDF_BYTES], { type: PDF_MIME_TYPE }),
+    projectState: createInitialProjectState({
+      ...createProjectState(),
+      measures: recognizedMeasures,
+    }),
+  });
+  const decoded = decodeBsvProject(encoded.text);
+
+  assert.equal(decoded.projectState.measures[0].lyric, '자동 인식 가사\n둘째 줄');
 });
 
 test('.bsv preserves BPM after a Teacher global tempo application', async () => {

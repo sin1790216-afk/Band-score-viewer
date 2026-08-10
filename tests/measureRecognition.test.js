@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   detectMeasureCandidates,
+  detectScoreLayout,
   getStaffContentRanges,
   recognizePdfDocumentPages,
   recognizePdfLoadingTaskPages,
@@ -229,6 +230,21 @@ test('같은 system의 모든 measure는 동일한 vertical content band를 사�
   assert.equal(new Set(firstSystemCandidates.map((measure) => measure.height)).size, 1);
   assert.equal(new Set(secondSystemCandidates.map((measure) => measure.y)).size, 1);
   assert.equal(new Set(secondSystemCandidates.map((measure) => measure.height)).size, 1);
+});
+
+test('가사 분석용 score layout은 기존 measure와 정규화된 staff geometry를 함께 제공한다', () => {
+  const layout = detectScoreLayout(createScore());
+
+  assert.deepEqual(layout.measures, detectMeasureCandidates(createScore()));
+  assert.equal(layout.systems.length, 2);
+  assertClose(layout.systems[0].staffTop, 150 / 700);
+  assertClose(layout.systems[0].staffBottom, 190 / 700);
+  assertClose(layout.systems[0].staffSpacing, 10 / 700);
+  assert.equal(layout.systems[0].contentTop, layout.measures[0].y);
+  assertClose(
+    layout.systems[0].contentBottom,
+    layout.measures[0].y + layout.measures[0].height,
+  );
 });
 
 test('PDF 페이지를 순서대로 분석하고 각 후보에 페이지 번호를 붙인다', async () => {

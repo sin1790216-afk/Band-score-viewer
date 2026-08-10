@@ -12,8 +12,8 @@ const DEFAULT_OPTIONS = {
   rowCoverageRatio: 0.28,
 };
 
-const DEFAULT_TARGET_RENDER_WIDTH = 1400;
-const DEFAULT_MAX_RENDER_SCALE = 3;
+export const DEFAULT_TARGET_RENDER_WIDTH = 1400;
+export const DEFAULT_MAX_RENDER_SCALE = 3;
 
 function clamp(value, minimum, maximum) {
   return Math.min(Math.max(value, minimum), maximum);
@@ -413,11 +413,13 @@ export function getStaffContentRanges(staffGroups, pageHeight) {
   });
 }
 
-export function detectMeasureCandidates(imageData, userOptions = {}) {
+export function detectScoreLayout(imageData, userOptions = {}) {
   const width = Number(imageData?.width) || 0;
   const height = Number(imageData?.height) || 0;
 
-  if (!imageData?.data || width <= 0 || height <= 0) return [];
+  if (!imageData?.data || width <= 0 || height <= 0) {
+    return { measures: [], systems: [] };
+  }
 
   const options = { ...DEFAULT_OPTIONS, ...userOptions };
   const mask = createInkMask(imageData, options.inkThreshold);
@@ -425,6 +427,7 @@ export function detectMeasureCandidates(imageData, userOptions = {}) {
   const staffGroups = findStaffGroups(horizontalBands);
   const contentRanges = getStaffContentRanges(staffGroups, height);
   const candidates = [];
+  const systems = [];
 
   staffGroups.forEach((staffGroup, staffIndex) => {
     const staffRange = findStaffHorizontalRange(
@@ -452,6 +455,18 @@ export function detectMeasureCandidates(imageData, userOptions = {}) {
       options,
     );
     const verticalRange = contentRanges[staffIndex];
+    const systemIndex = systems.length;
+
+    systems.push({
+      contentBottom: verticalRange.bottom / height,
+      contentTop: verticalRange.top / height,
+      index: systemIndex,
+      staffBottom: staffGroup.bands.at(-1).center / height,
+      staffSpacing: staffGroup.spacing / height,
+      staffTop: staffGroup.bands[0].center / height,
+      width: (staffRange.end - staffRange.start) / width,
+      x: staffRange.start / width,
+    });
 
     for (let boundaryIndex = 0; boundaryIndex < boundaries.length - 1; boundaryIndex += 1) {
       const left = boundaries[boundaryIndex];
@@ -466,7 +481,11 @@ export function detectMeasureCandidates(imageData, userOptions = {}) {
     }
   });
 
-  return candidates;
+  return { measures: candidates, systems };
+}
+
+export function detectMeasureCandidates(imageData, userOptions = {}) {
+  return detectScoreLayout(imageData, userOptions).measures;
 }
 
 export async function recognizePdfDocumentPages(

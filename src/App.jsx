@@ -44,6 +44,8 @@ import {
 } from './utils/measureCoordinates.js';
 import { resizeCanonicalMeasure } from './utils/measureResize.js';
 import { recognizeMeasuresInPdf } from './utils/pdfMeasureRecognition.js';
+import { applyLyricCandidates } from './utils/lyricRecognition.js';
+import { recognizeLyricsInPdf } from './utils/pdfLyricRecognition.js';
 import {
   getFullscreenElement,
   isFullscreenSupported,
@@ -138,6 +140,14 @@ const MIN_MEASURE_CANONICAL_SIZE = {
   height: 0.015,
   width: 0.02,
 };
+
+function createInitialLyricRecognitionState() {
+  return {
+    candidates: [],
+    message: '',
+    status: 'idle',
+  };
+}
 
 function getMeasureFileName(fileName) {
   return fileName ? fileName.replace(/\.pdf$/i, '.json') : 'measures.json';
@@ -262,6 +272,7 @@ function App() {
   const measuresRef = useRef([]);
   const measureIndexRef = useRef(0);
   const measureRecognitionVersionRef = useRef(0);
+  const lyricRecognitionVersionRef = useRef(0);
   const pageNumberRef = useRef(1);
   const pdfObjectUrlRef = useRef('');
   const teacherPdfObjectUrlRef = useRef('');
@@ -303,6 +314,9 @@ function App() {
     status: 'idle',
     totalPages: 0,
   });
+  const [lyricRecognitionState, setLyricRecognitionState] = useState(
+    createInitialLyricRecognitionState,
+  );
   const [pdfRenderResetVersion, setPdfRenderResetVersion] = useState(0);
   const [studentViewMode, setStudentViewMode] = useState(STUDENT_ZOOM_VIEW);
   const [studentPdfSource, setStudentPdfSource] = useState(TEACHER_PDF_SOURCE);
@@ -909,6 +923,7 @@ function App() {
 
     stopAutoplay();
     measureRecognitionVersionRef.current += 1;
+    lyricRecognitionVersionRef.current += 1;
     dragStateRef.current = null;
     resizeStateRef.current = null;
     measuresRef.current = [];
@@ -954,6 +969,7 @@ function App() {
       status: 'idle',
       totalPages: 0,
     });
+    setLyricRecognitionState(createInitialLyricRecognitionState());
     setIsStudentAnnotationEnabled(false);
     setSharedAudioMetadata(null);
     setSharedAudioPlaybackState(null);
@@ -1024,12 +1040,14 @@ function App() {
 
     stopAutoplay();
     measureRecognitionVersionRef.current += 1;
+    lyricRecognitionVersionRef.current += 1;
     setMeasureRecognitionState({
       currentPage: 0,
       message: '',
       status: 'idle',
       totalPages: 0,
     });
+    setLyricRecognitionState(createInitialLyricRecognitionState());
 
     const mimeType = PDF_MIME_TYPE;
 
@@ -1084,6 +1102,8 @@ function App() {
       const nextMeasures = importMeasuresJson(readerEvent.target.result);
       const nextDefaultBpm = getProjectDefaultBpm(nextMeasures);
 
+      lyricRecognitionVersionRef.current += 1;
+      setLyricRecognitionState(createInitialLyricRecognitionState());
       projectDefaultBpmRef.current = nextDefaultBpm;
       setProjectDefaultBpm(nextDefaultBpm);
       dispatchMeasureUpdate({
@@ -1165,12 +1185,14 @@ function App() {
 
     stopAutoplay();
     measureRecognitionVersionRef.current += 1;
+    lyricRecognitionVersionRef.current += 1;
     setMeasureRecognitionState({
       currentPage: 0,
       message: '',
       status: 'idle',
       totalPages: 0,
     });
+    setLyricRecognitionState(createInitialLyricRecognitionState());
     dragStateRef.current = null;
     resizeStateRef.current = null;
     measuresRef.current = nextMeasures;
@@ -1230,6 +1252,8 @@ function App() {
     }
 
     stopAutoplay();
+    lyricRecognitionVersionRef.current += 1;
+    setLyricRecognitionState(createInitialLyricRecognitionState());
     const recognitionVersion = measureRecognitionVersionRef.current + 1;
 
     measureRecognitionVersionRef.current = recognitionVersion;
@@ -1313,6 +1337,118 @@ function App() {
         `마디 자동인식에 실패했습니다.\n${error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.'}`,
       );
     }
+  }
+
+  async function recognizePdfLyrics() {
+    const pdfBlob = teacherPdfBlobRef.current;
+
+    if (
+      !canEdit ||
+      !pdfBlob ||
+      measures.length === 0 ||
+      lyricRecognitionState.status === 'running' ||
+      measureRecognitionState.status === 'running'
+    ) {
+      return;
+    }
+
+    const recognitionVersion = lyricRecognitionVersionRef.current + 1;
+
+    lyricRecognitionVersionRef.current = recognitionVersion;
+    setLyricRecognitionState({
+      candidates: [],
+      message: 'PDF 가사 텍스트를 분석하고 있습니다.',
+      status: 'running',
+    });
+
+    try {
+      const result = await recognizeLyricsInPdf(pdfBlob, measuresRef.current, {
+        onProgress: ({ currentPage, totalPages: recognitionTotalPages }) => {
+          setLyricRecognitionState({
+            candidates: [],
+            message: `${currentPage} / ${recognitionTotalPages} 페이지 가사 분석 중`,
+            status: 'running',
+          });
+        },
+      });
+
+      if (
+        lyricRecognitionVersionRef.current !== recognitionVersion ||
+        teacherPdfBlobRef.current !== pdfBlob
+      ) {
+        return;
+      }
+
+      if (result.extractedTextItemCount === 0) {
+        setLyricRecognitionState({
+          candidates: [],
+          message:
+            '이 PDF에서 추출 가능한 가사 텍스트를 찾지 못했습니다. 스캔 PDF는 OCR이 필요합니다.',
+          status: 'error',
+        });
+        return;
+      }
+
+      if (result.candidates.length === 0) {
+        setLyricRecognitionState({
+          candidates: [],
+          message: '오선 아래에서 Measure에 연결할 가사 후보를 찾지 못했습니다.',
+          status: 'error',
+        });
+        return;
+      }
+
+      const existingLyricCount = result.candidates.filter((candidate) => {
+        const measure = measuresRef.current.find(
+          (currentMeasure) => currentMeasure.id === candidate.measureId,
+        );
+
+        return Boolean(measure?.lyric?.trim());
+      }).length;
+      const preservationMessage = existingLyricCount
+        ? ` 기존 가사 ${existingLyricCount}개는 적용 시 유지합니다.`
+        : '';
+
+      setLyricRecognitionState({
+        candidates: result.candidates,
+        message: `${measuresRef.current.length}개 마디 중 ${result.candidates.length}개 마디에서 가사 후보를 찾았습니다.${preservationMessage}`,
+        status: 'ready',
+      });
+    } catch (error) {
+      console.error('[lyric-recognition] failed', error);
+      setLyricRecognitionState({
+        candidates: [],
+        message: `가사 자동인식에 실패했습니다. ${error instanceof Error ? error.message : ''}`.trim(),
+        status: 'error',
+      });
+    }
+  }
+
+  function applyRecognizedLyrics() {
+    if (!canEdit || lyricRecognitionState.status !== 'ready') return;
+
+    const result = applyLyricCandidates(
+      measuresRef.current,
+      lyricRecognitionState.candidates,
+    );
+
+    measuresRef.current = result.measures;
+    dispatchMeasureUpdate({
+      type: PROJECT_ACTIONS.REPLACE_MEASURES,
+      measures: result.measures,
+    });
+    setLyricRecognitionState({
+      candidates: [],
+      message: `${result.appliedCount}개 가사 적용 완료${
+        result.preservedCount ? `, 기존 가사 ${result.preservedCount}개 유지` : ''
+      }`,
+      status: 'complete',
+    });
+  }
+
+  function cancelRecognizedLyrics() {
+    lyricRecognitionVersionRef.current += 1;
+    setLyricRecognitionState(createInitialLyricRecognitionState());
   }
 
   function addMeasure(pageMetrics) {
@@ -3296,6 +3432,9 @@ function App() {
             canEdit={canEdit}
             canSaveProject={Boolean(teacherPdfBlobRef.current)}
             canRecognizeMeasures={Boolean(teacherPdfBlobRef.current)}
+            canRecognizeLyrics={Boolean(
+              teacherPdfBlobRef.current && measures.length
+            )}
             canOpenAudioLink={Boolean(openableAudioUrl)}
             canEndSession={Boolean(
               teacherPdfBlobRef.current || measures.length || sharedAudioMetadata
@@ -3304,6 +3443,7 @@ function App() {
             isAutoPlaying={isAutoPlaying}
             isRepeatEnabled={isRepeatEnabled}
             measureRecognitionState={measureRecognitionState}
+            lyricRecognitionState={lyricRecognitionState}
             jsonInputRef={jsonInputRef}
             measureIndex={measureIndex}
             measureTotal={measures.length}
@@ -3316,6 +3456,9 @@ function App() {
             onOpenJson={() => jsonInputRef.current?.click()}
             onOpenPdf={openPdf}
             onRecognizeMeasures={recognizePdfMeasures}
+            onRecognizeLyrics={recognizePdfLyrics}
+            onApplyRecognizedLyrics={applyRecognizedLyrics}
+            onCancelRecognizedLyrics={cancelRecognizedLyrics}
             onPdfSelected={selectPdf}
             onSaveJson={saveJson}
             onSaveBsvProject={saveBsvProject}
@@ -3480,6 +3623,7 @@ function Sidebar({
   canEndSession,
   canOpenAudioLink,
   canRecognizeMeasures,
+  canRecognizeLyrics,
   canSaveProject,
   fileInputRef,
   isAutoPlaying,
@@ -3487,9 +3631,12 @@ function Sidebar({
   jsonInputRef,
   measureIndex,
   measureRecognitionState,
+  lyricRecognitionState,
   measureTotal,
   mode,
   onApplyGlobalBpm,
+  onApplyRecognizedLyrics,
+  onCancelRecognizedLyrics,
   onEndClassSession,
   onGoToMeasure,
   onGoToPage,
@@ -3502,6 +3649,7 @@ function Sidebar({
   onOpenJson,
   onOpenPdf,
   onRecognizeMeasures,
+  onRecognizeLyrics,
   onRemoveSharedAudio,
   onPdfSelected,
   onSaveJson,
@@ -3584,6 +3732,39 @@ function Sidebar({
               >
                 {measureRecognitionState.message}
               </span>
+            )}
+          </div>
+          <div className="lyric-recognition-controls">
+            <button
+              disabled={
+                !canRecognizeLyrics ||
+                lyricRecognitionState.status === 'running' ||
+                measureRecognitionState.status === 'running'
+              }
+              onClick={onRecognizeLyrics}
+              type="button"
+            >
+              {lyricRecognitionState.status === 'running'
+                ? '가사 분석 중'
+                : '가사 자동인식'}
+            </button>
+            {lyricRecognitionState.message && (
+              <span
+                aria-live="polite"
+                className={`lyric-recognition-status ${lyricRecognitionState.status}`}
+              >
+                {lyricRecognitionState.message}
+              </span>
+            )}
+            {lyricRecognitionState.status === 'ready' && (
+              <div className="lyric-recognition-actions">
+                <button onClick={onApplyRecognizedLyrics} type="button">
+                  적용
+                </button>
+                <button onClick={onCancelRecognizedLyrics} type="button">
+                  취소
+                </button>
+              </div>
             )}
           </div>
           <button disabled={!canSaveProject} onClick={onSaveBsvProject} type="button">
