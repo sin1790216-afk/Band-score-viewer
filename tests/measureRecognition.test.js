@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   detectMeasureCandidates,
+  getStaffContentRanges,
   recognizePdfDocumentPages,
   recognizePdfLoadingTaskPages,
 } from '../src/utils/measureRecognition.js';
@@ -85,6 +86,17 @@ function assertClose(actual, expected, tolerance = 0.005) {
   );
 }
 
+function createStaffGroup(firstLine, spacing = 10) {
+  return {
+    bands: Array.from({ length: 5 }, (_, index) => {
+      const center = firstLine + index * spacing;
+
+      return { center, end: center, start: center, thickness: 1 };
+    }),
+    spacing,
+  };
+}
+
 test('오선의 마디선을 읽기 순서의 정규화 박스로 변환한다', () => {
   const candidates = detectMeasureCandidates(createScore());
 
@@ -94,6 +106,51 @@ test('오선의 마디선을 읽기 순서의 정규화 박스로 변환한다',
   assertClose(candidates[1].x, 0.3);
   assertClose(candidates[1].width, 0.3);
   assert.ok(candidates[0].y < candidates[3].y);
+});
+
+test('옆가지가 없는 순수 vertical barline은 그대로 검출한다', () => {
+  const candidates = detectMeasureCandidates(createScore());
+
+  assert.equal(candidates.length, 6);
+  assertClose(candidates[1].x, 0.3);
+});
+
+test('notehead가 직접 붙은 vertical stem은 barline으로 검출하지 않는다', () => {
+  const image = createScore();
+
+  drawVerticalLine(image, 450, 150, 190, 2);
+  drawHorizontalLine(image, 430, 449, 174, 6);
+
+  const candidates = detectMeasureCandidates(image);
+
+  assert.equal(candidates.length, 6);
+  assertClose(candidates[1].x, 0.3);
+  assertClose(candidates[1].width, 0.3);
+});
+
+test('beam이 직접 붙은 vertical stem은 barline으로 검출하지 않는다', () => {
+  const image = createScore();
+
+  drawVerticalLine(image, 450, 144, 190, 2);
+  drawHorizontalLine(image, 410, 449, 144, 4);
+
+  const candidates = detectMeasureCandidates(image);
+
+  assert.equal(candidates.length, 6);
+  assertClose(candidates[1].x, 0.3);
+  assertClose(candidates[1].width, 0.3);
+});
+
+test('barline 가까이에 있지만 직접 연결되지 않은 음표는 barline을 제거하지 않는다', () => {
+  const image = createScore();
+
+  drawHorizontalLine(image, 278, 292, 174, 6);
+
+  const candidates = detectMeasureCandidates(image);
+
+  assert.equal(candidates.length, 6);
+  assertClose(candidates[0].width, 0.22);
+  assertClose(candidates[1].x, 0.3);
 });
 
 test('서로 다른 렌더 크기에서도 같은 정규화 좌표를 만든다', () => {
@@ -134,6 +191,44 @@ test('오선 시작부의 음표 기둥으로 지나치게 좁은 첫 박스를 
 
   assert.equal(candidates.length, 6);
   assertClose(candidates[0].width, 0.22);
+});
+
+test('system content band는 인접 system 사이의 중간 경계를 공유한다', () => {
+  const ranges = getStaffContentRanges(
+    [createStaffGroup(100), createStaffGroup(300), createStaffGroup(460)],
+    600,
+  );
+
+  assert.deepEqual(ranges, [
+    { bottom: 220, top: 20 },
+    { bottom: 400, top: 220 },
+    { bottom: 560, top: 400 },
+  ]);
+});
+
+test('첫 system과 마지막 system content band는 page boundary 안에 머문다', () => {
+  const firstNearPageTop = getStaffContentRanges(
+    [createStaffGroup(30), createStaffGroup(180)],
+    300,
+  );
+  const lastNearPageBottom = getStaffContentRanges(
+    [createStaffGroup(100), createStaffGroup(250)],
+    300,
+  );
+
+  assert.equal(firstNearPageTop[0].top, 0);
+  assert.equal(lastNearPageBottom[1].bottom, 300);
+});
+
+test('같은 system의 모든 measure는 동일한 vertical content band를 사용한다', () => {
+  const candidates = detectMeasureCandidates(createScore());
+  const firstSystemCandidates = candidates.slice(0, 3);
+  const secondSystemCandidates = candidates.slice(3);
+
+  assert.equal(new Set(firstSystemCandidates.map((measure) => measure.y)).size, 1);
+  assert.equal(new Set(firstSystemCandidates.map((measure) => measure.height)).size, 1);
+  assert.equal(new Set(secondSystemCandidates.map((measure) => measure.y)).size, 1);
+  assert.equal(new Set(secondSystemCandidates.map((measure) => measure.height)).size, 1);
 });
 
 test('PDF 페이지를 순서대로 분석하고 각 후보에 페이지 번호를 붙인다', async () => {

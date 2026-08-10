@@ -1,4 +1,8 @@
 const DEFAULT_OPTIONS = {
+  attachedBranchMinimumLengthInStaffSpaces: 0.55,
+  attachedBranchMinimumThicknessInStaffSpaces: 0.4,
+  attachedBranchReachInStaffSpaces: 1.5,
+  attachedBranchStaffLineExclusionInStaffSpaces: 0.2,
   barlineContinuityRatio: 0.99,
   barlineOutsideInkRatio: 0.3,
   inkThreshold: 190,
@@ -184,6 +188,93 @@ function getGapInkRatio(mask, width, height, x, startY, endY) {
   return inkCount / sampleCount;
 }
 
+function getAttachedInkRun(mask, width, y, startX, direction, maximumLength) {
+  let runLength = 0;
+
+  for (let step = 0; step < maximumLength; step += 1) {
+    const x = startX + step * direction;
+
+    if (x < 0 || x >= width || !mask[y * width + x]) break;
+    runLength += 1;
+  }
+
+  return runLength;
+}
+
+function hasAttachedSideBranch(
+  mask,
+  width,
+  height,
+  staffGroup,
+  strokeGroup,
+  options,
+) {
+  const firstLine = staffGroup.bands[0].center;
+  const lastLine = staffGroup.bands.at(-1).center;
+  const maximumBranchLength = Math.ceil(
+    staffGroup.spacing * options.attachedBranchReachInStaffSpaces,
+  );
+  const minimumBranchLength = Math.ceil(
+    staffGroup.spacing * options.attachedBranchMinimumLengthInStaffSpaces,
+  );
+  const minimumBranchThickness = Math.ceil(
+    staffGroup.spacing * options.attachedBranchMinimumThicknessInStaffSpaces,
+  );
+  const staffLineExclusion =
+    staffGroup.spacing * options.attachedBranchStaffLineExclusionInStaffSpaces;
+  const verticalReach = staffGroup.spacing * options.attachedBranchReachInStaffSpaces;
+  const minimumY = clamp(Math.floor(firstLine - verticalReach), 0, height - 1);
+  const maximumY = clamp(Math.ceil(lastLine + verticalReach), 0, height - 1);
+  const branchRows = [];
+
+  for (let y = minimumY; y <= maximumY; y += 1) {
+    const isStaffLine = staffGroup.bands.some(
+      (band) =>
+        y >= band.start - staffLineExclusion &&
+        y <= band.end + staffLineExclusion,
+    );
+
+    if (isStaffLine) continue;
+
+    let hasStrokeInk = false;
+
+    for (let x = strokeGroup.start; x <= strokeGroup.end; x += 1) {
+      if (mask[y * width + x]) {
+        hasStrokeInk = true;
+        break;
+      }
+    }
+
+    if (!hasStrokeInk) continue;
+
+    const leftRun = getAttachedInkRun(
+      mask,
+      width,
+      y,
+      strokeGroup.start - 1,
+      -1,
+      maximumBranchLength,
+    );
+    const rightRun = getAttachedInkRun(
+      mask,
+      width,
+      y,
+      strokeGroup.end + 1,
+      1,
+      maximumBranchLength,
+    );
+
+    if (Math.max(leftRun, rightRun) >= minimumBranchLength) {
+      branchRows.push(y);
+    }
+  }
+
+  return mergeConsecutiveValues(
+    branchRows,
+    Math.floor(staffGroup.spacing * 0.1),
+  ).some(({ end, start }) => end - start + 1 >= minimumBranchThickness);
+}
+
 function findBarlineCenters(mask, width, height, staffGroup, staffRange, options) {
   const candidateColumns = [];
   const firstLine = staffGroup.bands[0].center;
@@ -226,9 +317,19 @@ function findBarlineCenters(mask, width, height, staffGroup, staffRange, options
     }
   }
 
-  return mergeConsecutiveValues(candidateColumns, 1).map(
-    ({ end, start }) => (start + end) / 2,
-  );
+  return mergeConsecutiveValues(candidateColumns, 1)
+    .filter(
+      (strokeGroup) =>
+        !hasAttachedSideBranch(
+          mask,
+          width,
+          height,
+          staffGroup,
+          strokeGroup,
+          options,
+        ),
+    )
+    .map(({ end, start }) => (start + end) / 2);
 }
 
 function getMeasureBoundaries(staffRange, barlineCenters, staffSpacing, options) {
@@ -284,25 +385,32 @@ function getMeasureBoundaries(staffRange, barlineCenters, staffSpacing, options)
   return filtered;
 }
 
-function getStaffVerticalRange(staffGroups, staffIndex, pageHeight) {
-  const staffGroup = staffGroups[staffIndex];
-  const firstLine = staffGroup.bands[0].center;
-  const lastLine = staffGroup.bands[4].center;
-  const proposedTop = firstLine - staffGroup.spacing * 2.5;
-  const proposedBottom = lastLine + staffGroup.spacing * 3.5;
-  const previousStaff = staffGroups[staffIndex - 1];
-  const nextStaff = staffGroups[staffIndex + 1];
-  const minimumTop = previousStaff
-    ? (previousStaff.bands[4].center + firstLine) / 2
-    : 0;
-  const maximumBottom = nextStaff
-    ? (lastLine + nextStaff.bands[0].center) / 2
-    : pageHeight;
+export function getStaffContentRanges(staffGroups, pageHeight) {
+  if (!Array.isArray(staffGroups) || staffGroups.length === 0 || pageHeight <= 0) {
+    return [];
+  }
 
-  return {
-    bottom: clamp(proposedBottom, 0, maximumBottom),
-    top: clamp(proposedTop, minimumTop, pageHeight),
-  };
+  return staffGroups.map((staffGroup, staffIndex) => {
+    const firstLine = staffGroup.bands[0].center;
+    const lastLine = staffGroup.bands.at(-1).center;
+    const previousStaff = staffGroups[staffIndex - 1];
+    const nextStaff = staffGroups[staffIndex + 1];
+    const previousBoundary = previousStaff
+      ? (previousStaff.bands.at(-1).center + firstLine) / 2
+      : nextStaff
+        ? firstLine - (nextStaff.bands[0].center - lastLine) / 2
+        : firstLine - staffGroup.spacing * 4;
+    const nextBoundary = nextStaff
+      ? (lastLine + nextStaff.bands[0].center) / 2
+      : previousStaff
+        ? lastLine + (firstLine - previousStaff.bands.at(-1).center) / 2
+        : lastLine + staffGroup.spacing * 6;
+
+    return {
+      bottom: clamp(nextBoundary, firstLine, pageHeight),
+      top: clamp(previousBoundary, 0, lastLine),
+    };
+  });
 }
 
 export function detectMeasureCandidates(imageData, userOptions = {}) {
@@ -315,6 +423,7 @@ export function detectMeasureCandidates(imageData, userOptions = {}) {
   const mask = createInkMask(imageData, options.inkThreshold);
   const horizontalBands = findHorizontalBands(mask, width, height, options);
   const staffGroups = findStaffGroups(horizontalBands);
+  const contentRanges = getStaffContentRanges(staffGroups, height);
   const candidates = [];
 
   staffGroups.forEach((staffGroup, staffIndex) => {
@@ -342,7 +451,7 @@ export function detectMeasureCandidates(imageData, userOptions = {}) {
       staffGroup.spacing,
       options,
     );
-    const verticalRange = getStaffVerticalRange(staffGroups, staffIndex, height);
+    const verticalRange = contentRanges[staffIndex];
 
     for (let boundaryIndex = 0; boundaryIndex < boundaries.length - 1; boundaryIndex += 1) {
       const left = boundaries[boundaryIndex];

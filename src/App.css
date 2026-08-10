@@ -933,36 +933,81 @@ html:-webkit-full-screen #root{
 
 .resize-handle{
     position:absolute;
-    border:2px solid #fff;
-    background:red;
+    align-items:center;
+    background:transparent;
+    border:0;
     box-sizing:border-box;
+    display:flex;
+    height:1.5rem;
+    justify-content:center;
     pointer-events:auto;
     touch-action:none;
+    width:1.5rem;
+    z-index:2;
 }
 
-.resize-handle.horizontal{
-    right:-5px;
-    top:50%;
-    width:10px;
-    height:28px;
-    transform:translateY(-50%);
-    cursor:ew-resize;
+.resize-handle::after{
+    background:red;
+    border:0.125rem solid #fff;
+    box-sizing:border-box;
+    content:"";
+    height:0.75rem;
+    width:0.75rem;
 }
 
-.resize-handle.vertical{
+.resize-handle.top{
     left:50%;
-    bottom:-5px;
-    width:28px;
-    height:10px;
-    transform:translateX(-50%);
+    top:0;
+    transform:translate(-50%,-50%);
     cursor:ns-resize;
 }
 
-.resize-handle.corner{
-    right:-5px;
-    bottom:-5px;
-    width:12px;
-    height:12px;
+.resize-handle.bottom{
+    bottom:0;
+    left:50%;
+    transform:translate(-50%,50%);
+    cursor:ns-resize;
+}
+
+.resize-handle.left{
+    left:0;
+    top:50%;
+    transform:translate(-50%,-50%);
+    cursor:ew-resize;
+}
+
+.resize-handle.right{
+    right:0;
+    top:50%;
+    transform:translate(50%,-50%);
+    cursor:ew-resize;
+}
+
+.resize-handle.top-left{
+    left:0;
+    top:0;
+    transform:translate(-50%,-50%);
+    cursor:nwse-resize;
+}
+
+.resize-handle.top-right{
+    right:0;
+    top:0;
+    transform:translate(50%,-50%);
+    cursor:nesw-resize;
+}
+
+.resize-handle.bottom-left{
+    bottom:0;
+    left:0;
+    transform:translate(-50%,50%);
+    cursor:nesw-resize;
+}
+
+.resize-handle.bottom-right{
+    bottom:0;
+    right:0;
+    transform:translate(50%,50%);
     cursor:nwse-resize;
 }
   

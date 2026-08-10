@@ -42,6 +42,7 @@ import {
   NORMALIZED_COORDINATE_SPACE,
   NORMALIZED_COORDINATE_STATUS,
 } from './utils/measureCoordinates.js';
+import { resizeCanonicalMeasure } from './utils/measureResize.js';
 import { recognizeMeasuresInPdf } from './utils/pdfMeasureRecognition.js';
 import {
   getFullscreenElement,
@@ -109,9 +110,9 @@ const SOCKET_SERVER_URL =
   `${window.location.protocol}//${formatSocketHost(window.location.hostname)}:${SOCKET_PORT}`;
 const SAME_ORIGIN_SOCKET_URL = window.location.origin;
 
-const MIN_MEASURE_SIZE = {
-  width: 40,
-  height: 30,
+const MIN_MEASURE_CANONICAL_SIZE = {
+  height: 0.015,
+  width: 0.02,
 };
 
 function getMeasureFileName(fileName) {
@@ -1221,7 +1222,7 @@ function App() {
     setDraggedMeasureIndex(-1);
   }
 
-  function startMeasureResize(index, axis, event, highlightRect) {
+  function startMeasureResize(index, direction, event, highlightRect) {
     if (!canEdit || mode !== REGISTER_MODE) return;
 
     const measure = measures[index];
@@ -1243,9 +1244,13 @@ function App() {
       scaleY: highlightRect?.scaleY || 1,
       startClientX: event.clientX,
       startClientY: event.clientY,
-      startWidth: measure.width,
-      startHeight: measure.height,
-      axis,
+      startMeasure: {
+        height: measure.height,
+        width: measure.width,
+        x: measure.x,
+        y: measure.y,
+      },
+      direction,
     };
 
     setSelectedMeasureIndex(index);
@@ -1260,14 +1265,14 @@ function App() {
     event.preventDefault();
     event.stopPropagation();
 
-    const resizedWidth = Math.max(
-      MIN_MEASURE_SIZE.width / resizeState.scaleX,
-      resizeState.startWidth + (event.clientX - resizeState.startClientX) / resizeState.scaleX,
-    );
-    const resizedHeight = Math.max(
-      MIN_MEASURE_SIZE.height / resizeState.scaleY,
-      resizeState.startHeight + (event.clientY - resizeState.startClientY) / resizeState.scaleY,
-    );
+    const resizedMeasure = resizeCanonicalMeasure({
+      deltaX: (event.clientX - resizeState.startClientX) / resizeState.scaleX,
+      deltaY: (event.clientY - resizeState.startClientY) / resizeState.scaleY,
+      direction: resizeState.direction,
+      measure: resizeState.startMeasure,
+      minimumHeight: MIN_MEASURE_CANONICAL_SIZE.height,
+      minimumWidth: MIN_MEASURE_CANONICAL_SIZE.width,
+    });
 
     dispatchMeasureUpdate({
       type: PROJECT_ACTIONS.UPDATE_MEASURE,
@@ -1275,14 +1280,7 @@ function App() {
       changes: {
         coordinateHeight: resizeState.coordinateHeight,
         coordinateWidth: resizeState.coordinateWidth,
-        width:
-          resizeState.axis === 'horizontal' || resizeState.axis === 'both'
-            ? resizedWidth
-            : resizeState.startWidth,
-        height:
-          resizeState.axis === 'vertical' || resizeState.axis === 'both'
-            ? resizedHeight
-            : resizeState.startHeight,
+        ...resizedMeasure,
       },
     });
   }

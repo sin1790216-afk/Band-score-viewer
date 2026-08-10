@@ -9,6 +9,7 @@ import {
   NORMALIZED_COORDINATE_BASIS,
   renderPointToCanonical,
 } from '../utils/measureCoordinates.js';
+import { MEASURE_RESIZE_DIRECTIONS } from '../utils/measureResize.js';
 import {
   getPageLoadIdentity,
   getSurfaceIdentity,
@@ -29,19 +30,44 @@ const DEFAULT_PAGE_ASPECT_RATIO = 0.707;
 
 const RESIZE_HANDLES = [
   {
-    axis: 'horizontal',
-    className: 'resize-handle horizontal',
-    label: '가로 크기 조절',
+    className: 'resize-handle top-left',
+    direction: MEASURE_RESIZE_DIRECTIONS.TOP_LEFT,
+    label: '왼쪽 위 크기 조절',
   },
   {
-    axis: 'vertical',
-    className: 'resize-handle vertical',
-    label: '세로 크기 조절',
+    className: 'resize-handle top',
+    direction: MEASURE_RESIZE_DIRECTIONS.TOP,
+    label: '위쪽 크기 조절',
   },
   {
-    axis: 'both',
-    className: 'resize-handle corner',
-    label: '가로 세로 크기 조절',
+    className: 'resize-handle top-right',
+    direction: MEASURE_RESIZE_DIRECTIONS.TOP_RIGHT,
+    label: '오른쪽 위 크기 조절',
+  },
+  {
+    className: 'resize-handle left',
+    direction: MEASURE_RESIZE_DIRECTIONS.LEFT,
+    label: '왼쪽 크기 조절',
+  },
+  {
+    className: 'resize-handle right',
+    direction: MEASURE_RESIZE_DIRECTIONS.RIGHT,
+    label: '오른쪽 크기 조절',
+  },
+  {
+    className: 'resize-handle bottom-left',
+    direction: MEASURE_RESIZE_DIRECTIONS.BOTTOM_LEFT,
+    label: '왼쪽 아래 크기 조절',
+  },
+  {
+    className: 'resize-handle bottom',
+    direction: MEASURE_RESIZE_DIRECTIONS.BOTTOM,
+    label: '아래쪽 크기 조절',
+  },
+  {
+    className: 'resize-handle bottom-right',
+    direction: MEASURE_RESIZE_DIRECTIONS.BOTTOM_RIGHT,
+    label: '오른쪽 아래 크기 조절',
   },
 ];
 
@@ -886,15 +912,20 @@ function MeasureOverlay({
             style={highlightStyle}
             aria-label={`measure ${index + 1}`}
           >
-            {mode === REGISTER_MODE && (
+            {mode === REGISTER_MODE && index === selectedMeasureIndex && (
               <>
                 {RESIZE_HANDLES.map((handle) => (
                   <span
                     aria-label={handle.label}
                     className={handle.className}
-                    key={handle.axis}
+                    key={handle.direction}
                     onPointerDown={(event) =>
-                      onStartMeasureResize(index, handle.axis, event, highlightRect)
+                      onStartMeasureResize(
+                        index,
+                        handle.direction,
+                        event,
+                        highlightRect,
+                      )
                     }
                     onPointerMove={onResizeMeasure}
                     onPointerUp={onEndMeasureResize}
