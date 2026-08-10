@@ -35,6 +35,7 @@ export default function LocalAudioPlayer({
   targetMeasureId,
   targetMeasureNumber,
   timelineFollowEnabled,
+  showPracticeTools = true,
 }) {
   const audioRef = useRef(null);
   const audioContextRef = useRef(null);
@@ -292,6 +293,14 @@ export default function LocalAudioPlayer({
     audio.playbackRate = playbackRate;
   }, [playbackRate, sourceUrl]);
 
+  useEffect(() => {
+    cancelCountIn();
+    setCurrentTime(0);
+    setDuration(0);
+    setIsPlaying(false);
+    setPlaybackError('');
+  }, [sourceUrl]);
+
   useEffect(
     () => () => {
       cancelCountIn(false);
@@ -359,6 +368,11 @@ export default function LocalAudioPlayer({
           notifyTimelineMeasure(event.currentTarget.currentTime);
         }}
         onPlay={(event) => {
+          if (!showPracticeTools) {
+            setIsPlaying(true);
+            return;
+          }
+
           if (isCountInPlaybackRef.current) {
             isCountInPlaybackRef.current = false;
             setIsPlaying(true);
@@ -385,6 +399,8 @@ export default function LocalAudioPlayer({
         이 브라우저는 오디오 재생을 지원하지 않습니다.
       </audio>
       <div className="local-audio-editor" hidden={!isEditorVisible}>
+        {showPracticeTools && (
+          <>
       <div className={`audio-count-in ${isCountInActive ? 'active' : ''}`}>
         <label className="audio-count-in-toggle">
           <input
@@ -412,6 +428,8 @@ export default function LocalAudioPlayer({
         />
         <span>음원 따라가기</span>
       </label>
+          </>
+        )}
       <AudioWaveform
         audioFile={audioFile}
         currentTime={currentTime}
@@ -436,10 +454,14 @@ export default function LocalAudioPlayer({
             ))}
           </select>
         </label>
-        <button onClick={seekToStartOffset} type="button">
-          오프셋으로 이동
-        </button>
+        {showPracticeTools && (
+          <button onClick={seekToStartOffset} type="button">
+            오프셋으로 이동
+          </button>
+        )}
       </div>
+        {showPracticeTools && (
+          <>
       <button
         disabled={!duration}
         onClick={() => onStartOffsetChange?.(Number(currentTime.toFixed(3)))}
@@ -540,6 +562,8 @@ export default function LocalAudioPlayer({
         </button>
         <small>이 기기의 현재 PDF와 음원 조합에만 저장됩니다.</small>
       </section>
+          </>
+        )}
       </div>
       {playbackError && <small className="audio-error">{playbackError}</small>}
     </div>

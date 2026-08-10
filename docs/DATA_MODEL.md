@@ -64,6 +64,11 @@ Student가 직접 선택한 로컬 음원 파일은 데이터 모델에 저장�
 파일 경로, 재생속도와 분석한 파형 peak는 JSON, `.bsv`, `localStorage`, Socket에 포함되지 않는다.
 파형에서 지정한 시작 위치만 기존 `startOffsetSeconds`로 저장한다.
 
+Teacher Shared Audio도 Project State나 `.bsv`가 아닌 현재 서버 세션 자산이다. Socket metadata는
+`{ assetId, fileName, mimeType, byteLength, revision, assetPath }`이며 binary는 HTTP endpoint가
+제공한다. 서버 재시작·수업 종료·Teacher 제거 시 자산이 사라지고, 재생 위치와 재생속도는 각
+기기의 로컬 플레이어 상태로만 존재한다.
+
 Student 개인 마디 타임라인은 프로젝트 measure를 수정하지 않고 별도 로컬 데이터로 저장한다.
 
 ```json

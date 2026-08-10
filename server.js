@@ -8,9 +8,19 @@ import {
   getLogicalSyncState,
 } from './src/state/sessionState.js';
 import {
+  createSharedAudioSession,
+  handleSharedAudioHttpRequest,
+  registerSharedAudioSocketHandlers,
+  sendSharedAudioState,
+} from './src/server/sharedAudioSession.js';
+import {
   isValidAudioSettings,
   normalizeAudioSettings,
 } from './src/utils/audioSettings.js';
+import {
+  MAX_SHARED_AUDIO_BYTES,
+  SHARED_AUDIO_EVENTS,
+} from './src/utils/sharedAudio.js';
 import {
   isValidMeasuresState,
   MAX_PDF_BYTES,
@@ -26,6 +36,7 @@ let latestSyncState = initialSharedSessionState.syncState;
 let latestPdf = initialSharedSessionState.pdf;
 let latestMeasures = initialSharedSessionState.measures;
 let latestAudioSettings = initialSharedSessionState.audioSettings;
+const sharedAudioSession = createSharedAudioSession();
 
 const mimeTypes = {
   '.css': 'text/css',
@@ -39,6 +50,10 @@ const mimeTypes = {
 };
 
 const httpServer = createServer((request, response) => {
+  if (handleSharedAudioHttpRequest(request, response, sharedAudioSession)) {
+    return;
+  }
+
   if (!['GET', 'HEAD'].includes(request.method)) {
     response.writeHead(405, {
       Allow: 'GET, HEAD',
@@ -92,7 +107,8 @@ const io = new Server(httpServer, {
   cors: {
     origin: '*',
   },
-  maxHttpBufferSize: MAX_PDF_BYTES,
+  maxHttpBufferSize:
+    Math.max(MAX_PDF_BYTES, MAX_SHARED_AUDIO_BYTES) + 1024 * 1024,
 });
 
 io.on('connection', (socket) => {
@@ -110,8 +126,19 @@ io.on('connection', (socket) => {
   console.log(`[socket] sent measures:state count=${latestMeasures.length} to ${socket.id}`);
   socket.emit('audio:state', latestAudioSettings);
   console.log(`[socket] sent audio:state to ${socket.id}`, latestAudioSettings);
+  sendSharedAudioState(socket, sharedAudioSession);
+  console.log(
+    `[socket] sent ${SHARED_AUDIO_EVENTS.STATE} to ${socket.id}`,
+    sharedAudioSession.getMetadata(),
+  );
   socket.emit('sync:state', latestSyncState);
   console.log(`[socket] sent sync:state to ${socket.id}`, latestSyncState);
+
+  registerSharedAudioSocketHandlers({
+    io,
+    session: sharedAudioSession,
+    socket,
+  });
 
   socket.on('sync:update', (nextSyncState) => {
     latestSyncState = getLogicalSyncState({
@@ -170,7 +197,9 @@ io.on('connection', (socket) => {
     latestMeasures = emptySessionState.measures;
     latestSyncState = emptySessionState.syncState;
     latestAudioSettings = emptySessionState.audioSettings;
+    sharedAudioSession.clear();
     console.log(`[socket] session reset requested by ${socket.id}`);
+    io.emit(SHARED_AUDIO_EVENTS.STATE, null);
     socket.broadcast.emit('session:reset', emptySessionState);
   });
 });

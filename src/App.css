@@ -215,6 +215,41 @@ html:-webkit-full-screen #root{
     padding:6px;
 }
 
+.teacher-shared-audio-panel{
+    background:#f6f7f9;
+    border:1px solid #8d929d;
+    border-radius:6px;
+    box-shadow:0 4px 18px rgba(0,0,0,0.3);
+    box-sizing:border-box;
+    color:#24212a;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    max-height:calc(100vh - 140px);
+    overflow-y:auto;
+    padding:10px;
+    position:fixed;
+    right:8px;
+    top:122px;
+    width:min(440px, calc(100vw - 16px));
+    z-index:230;
+}
+
+.teacher-shared-audio-panel.compact{
+    padding:7px;
+    width:min(320px, calc(100vw - 16px));
+}
+
+.teacher-shared-audio-panel-header{
+    align-items:center;
+    display:flex;
+    justify-content:space-between;
+}
+
+.teacher-shared-audio-panel .local-audio-options{
+    grid-template-columns:minmax(0, 1fr);
+}
+
 .student-audio-panel-header,
 .student-audio-source-controls{
     align-items:center;
@@ -724,6 +759,35 @@ html:-webkit-full-screen #root{
     box-sizing:border-box;
     min-width:0;
     width:100%;
+}
+
+.shared-audio-editor{
+    border-bottom:1px solid rgba(0, 0, 0, 0.45);
+    display:flex;
+    flex-direction:column;
+    gap:4px;
+    padding:7px 4px;
+}
+
+.shared-audio-editor strong,
+.shared-audio-editor span,
+.shared-audio-editor small{
+    font-size:11px;
+}
+
+.shared-audio-editor span{
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+}
+
+.shared-audio-editor small.error,
+.teacher-shared-audio-panel .audio-error{
+    color:#9b111e;
+}
+
+.shared-audio-editor small.success{
+    color:#145c35;
 }
 
 .measure-jump-form{

@@ -20,7 +20,7 @@ Teacher가 논리 상태의 기준이다. `syncState`는 현재 코드에서 다
 }
 ```
 
-Teacher 변경은 `sync:update`, `pdf:update`, `measures:update`, `audio:update`로 서버에 전달된다. 서버는 최신 PDF, measures, Teacher 음원 설정과 syncState를 메모리에 보관하고 새 연결에 PDF -> measures -> audio -> syncState 순서로 전송한다. Room, 인증, 영속 저장소는 아직 없다.
+Teacher 변경은 `sync:update`, `pdf:update`, `measures:update`, `audio:update`로 서버에 전달된다. 서버는 최신 PDF, measures, Teacher 음원 설정과 syncState를 메모리에 보관하고 새 연결에 현재 상태를 전송한다. 공용 로컬 음원은 Socket으로 한 번 등록한 뒤 서버 메모리에 별도 asset으로 보관하며, Socket에는 `assetId`, 파일 정보와 revision만 전달한다. 각 기기는 `/shared-audio/:assetId` HTTP endpoint에서 파일을 받고 Range 요청으로 탐색한다. Room, 인증, 영속 저장소는 아직 없다.
 사용자가 Teacher 역할을 선택하면 현재 Teacher 로컬 페이지와 마디를 다시 발행해 서버에 남아
 있던 과거 위치를 교체한다. Teacher 화면이 활성화된 동안 수신한 과거 sync 위치는 로컬
 Teacher 위치를 덮지 않는다.
@@ -94,6 +94,8 @@ BPM/Beats 또는 Teacher measure 값을 이용해 메모리에서 계산하며, 
 음원 따라가기가 켜진 동안 플레이어는 현재 시간 이전의 가장 최근 유효 marker가 바뀔 때만 App에 measure
 ID를 전달하고, Student의 로컬 표시 페이지/하이라이트만 바꾼다.
 Teacher의 논리적 `pageNumber`/`measureIndex`와 Socket 상태는 수정하지 않는다.
+선생님 공유 음원과 학생 개인 음원은 작은 AudioSource 경계에서 분리된다. 공유 음원의 서버 metadata와 개인 음원의 File/Object URL은 서로 덮어쓰지 않으며, source별 타임라인과 오프셋은 학생 브라우저에만 저장된다. 공용 asset은 `.bsv`에 포함되지 않고 서버 재시작 또는 수업 종료 시 사라진다. 현재 공유되는 것은 파일과 metadata뿐이며 Teacher의 play/pause/seek 위치는 Student에 동기화하지 않는다. 향후 YouTube 같은 URL source와 재생 동기화는 별도 단계다.
+
 로컬 재생은 HTML media element를 유지하되 Web Audio oscillator로 한 마디 예비박을 예약한다. 처음 재생,
 일시정지 후 재개, marker 마디 클릭 모두 예비박을 거치며 첫 박은 다른 주파수로 accent한다. 개인 BPM/Beats가
 있으면 예비박에 우선 사용하고, 없으면 Teacher measure 값을 사용한다.

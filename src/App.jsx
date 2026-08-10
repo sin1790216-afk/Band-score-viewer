@@ -65,11 +65,9 @@ import {
   getOpenableAudioUrl,
   getStudentAudioSettings,
   loadStudentAudioSettingsLibrary,
-  LOCAL_AUDIO_SOURCE,
   normalizeAudioSettings,
   saveStudentAudioSettingsLibrary,
   setStudentAudioSettings,
-  TEACHER_AUDIO_SOURCE,
 } from './utils/audioSettings.js';
 import {
   clearStudentAudioPickerRecovery,
@@ -93,6 +91,15 @@ import {
   setStudentAudioTimelineMarker,
   setStudentAudioTimelineTiming,
 } from './utils/audioTimeline.js';
+import {
+  AUDIO_SOURCE_TYPES,
+  createSharedAudioIdentity,
+  getSelectedAudioAsset,
+  getSharedAudioAssetUrl,
+  isSupportedSharedAudioFile,
+  normalizeSharedAudioMetadata,
+  SHARED_AUDIO_EVENTS,
+} from './utils/sharedAudio.js';
 
 const REGISTER_MODE = 'register';
 const PLAY_MODE = 'play';
@@ -104,6 +111,8 @@ const TEACHER_PDF_SOURCE = 'teacher';
 const LOCAL_PDF_SOURCE = 'local';
 const STUDENT_ZOOM_VIEW = 'zoom';
 const STUDENT_PAGE_VIEW = 'page';
+const TEACHER_AUDIO_SOURCE = AUDIO_SOURCE_TYPES.TEACHER_SHARED_LOCAL;
+const LOCAL_AUDIO_SOURCE = AUDIO_SOURCE_TYPES.STUDENT_PERSONAL_LOCAL;
 const SOCKET_PORT = import.meta.env.VITE_SOCKET_PORT || '4000';
 const SOCKET_SERVER_URL =
   import.meta.env.VITE_SOCKET_SERVER_URL ||
@@ -182,6 +191,7 @@ function App() {
   const fileInputRef = useRef(null);
   const jsonInputRef = useRef(null);
   const studentAudioInputRef = useRef(null);
+  const teacherSharedAudioInputRef = useRef(null);
   const studentPdfInputRef = useRef(null);
   const dragStateRef = useRef(null);
   const resizeStateRef = useRef(null);
@@ -270,6 +280,18 @@ function App() {
   const [studentLocalAudioFileName, setStudentLocalAudioFileName] = useState('');
   const [studentLocalAudioFile, setStudentLocalAudioFile] = useState(null);
   const [studentLocalAudioUrl, setStudentLocalAudioUrl] = useState('');
+  const [sharedAudioMetadata, setSharedAudioMetadata] = useState(null);
+  const [sharedAudioServerUrl, setSharedAudioServerUrl] = useState(
+    SOCKET_SERVER_URL,
+  );
+  const [sharedAudioWaveformFile, setSharedAudioWaveformFile] = useState(null);
+  const [sharedAudioLoadError, setSharedAudioLoadError] = useState('');
+  const [sharedAudioMutationState, setSharedAudioMutationState] = useState({
+    message: '',
+    status: 'idle',
+  });
+  const [isTeacherSharedAudioPanelOpen, setIsTeacherSharedAudioPanelOpen] =
+    useState(false);
   const [viewerMode, setViewerMode] = useState(
     recoverStudentAudioPicker ? STUDENT_MODE : ROLE_SELECT_MODE,
   );
@@ -313,6 +335,15 @@ function App() {
     studentAudioSettingsLibrary,
     studentAnnotationDocumentKey,
   );
+  const sharedAudioIdentity = createSharedAudioIdentity(sharedAudioMetadata);
+  const sharedAudioSettingsKey =
+    studentAnnotationDocumentKey && sharedAudioIdentity
+      ? `${studentAnnotationDocumentKey}|${sharedAudioIdentity}`
+      : '';
+  const studentSharedAudioSettings = getStudentAudioSettings(
+    studentAudioSettingsLibrary,
+    sharedAudioSettingsKey,
+  );
   const studentDisplayAudioSettings =
     studentAudioSource === LOCAL_AUDIO_SOURCE
       ? studentLocalAudioSettings
@@ -321,9 +352,27 @@ function App() {
     studentDisplayAudioSettings.url,
   );
   const studentLocalAudioIdentity = createLocalAudioIdentity(studentLocalAudioFile);
+  const sharedAudioUrl = getSharedAudioAssetUrl(
+    sharedAudioMetadata,
+    sharedAudioServerUrl,
+  );
+  const selectedStudentAudioAsset = getSelectedAudioAsset({
+    personalAudioFile: studentLocalAudioFile,
+    personalAudioFileName: studentLocalAudioFileName,
+    personalAudioIdentity: studentLocalAudioIdentity,
+    personalAudioUrl: studentLocalAudioUrl,
+    selectedSource: studentAudioSource,
+    sharedAudioFile: sharedAudioWaveformFile,
+    sharedAudioMetadata,
+    sharedAudioUrl,
+  });
+  const studentPlaybackAudioSettings =
+    studentAudioSource === TEACHER_AUDIO_SOURCE
+      ? studentSharedAudioSettings
+      : studentLocalAudioSettings;
   const studentAudioTimelineKey = createStudentAudioTimelineKey(
     studentAnnotationDocumentKey,
-    studentLocalAudioIdentity,
+    selectedStudentAudioAsset?.identity || '',
   );
   const studentAudioTimelineMarkers = useMemo(
     () =>
@@ -372,8 +421,7 @@ function App() {
     measures[studentAudioPlaybackMeasureIndex] || null;
   const canUseStudentMeasureAudio =
     viewerMode === STUDENT_MODE &&
-    studentAudioSource === LOCAL_AUDIO_SOURCE &&
-    Boolean(studentLocalAudioUrl && studentAudioTimelineKey);
+    Boolean(selectedStudentAudioAsset?.sourceUrl && studentAudioTimelineKey);
   const isStudentAudioFollowing = Boolean(
     canUseStudentMeasureAudio &&
       isStudentAudioFollowEnabled &&
@@ -770,6 +818,11 @@ function App() {
       totalPages: 0,
     });
     setIsStudentAnnotationEnabled(false);
+    setSharedAudioMetadata(null);
+    setSharedAudioWaveformFile(null);
+    setSharedAudioLoadError('');
+    setSharedAudioMutationState({ message: '', status: 'idle' });
+    setIsTeacherSharedAudioPanelOpen(false);
     setMode(REGISTER_MODE);
     setTeacherPdfUrl('');
 
@@ -1347,6 +1400,114 @@ function App() {
     openAudioSettingsLink(audioSettings);
   }
 
+  function openTeacherSharedAudioPicker() {
+    teacherSharedAudioInputRef.current?.click();
+  }
+
+  async function selectTeacherSharedAudio(event) {
+    const file = event.target.files[0];
+
+    event.target.value = '';
+    if (!file) return;
+    if (!isSupportedSharedAudioFile(file)) {
+      window.alert(
+        '브라우저가 audio MIME 형식으로 인식하는 100MB 이하 음원 파일을 선택해주세요.',
+      );
+      return;
+    }
+
+    const socket = socketRef.current;
+
+    if (!socket?.connected) {
+      window.alert('공용 음원을 등록하려면 실시간 서버 연결이 필요합니다.');
+      return;
+    }
+
+    setSharedAudioMutationState({
+      message: '공용 음원을 서버에 등록하고 있습니다.',
+      status: 'working',
+    });
+
+    try {
+      const data = await file.arrayBuffer();
+
+      socket.timeout(60_000).emit(
+        SHARED_AUDIO_EVENTS.UPDATE,
+        {
+          data,
+          fileName: file.name,
+          mimeType: file.type,
+        },
+        (error, response) => {
+          if (error || !response?.ok) {
+            const message =
+              response?.message ||
+              '공용 음원을 등록하지 못했습니다. 서버 연결을 확인해주세요.';
+
+            setSharedAudioMutationState({ message, status: 'error' });
+            window.alert(message);
+            return;
+          }
+
+          setSharedAudioMetadata(
+            normalizeSharedAudioMetadata(response.metadata),
+          );
+          setSharedAudioMutationState({
+            message: '공용 음원이 등록되었습니다.',
+            status: 'success',
+          });
+          setIsTeacherSharedAudioPanelOpen(true);
+        },
+      );
+    } catch (error) {
+      console.error('[shared-audio] file read failed', error);
+      setSharedAudioMutationState({
+        message: '음원 파일을 읽지 못했습니다.',
+        status: 'error',
+      });
+    }
+  }
+
+  function removeTeacherSharedAudio() {
+    if (
+      !sharedAudioMetadata ||
+      !window.confirm('현재 선생님 공유 음원을 제거할까요?')
+    ) {
+      return;
+    }
+
+    const socket = socketRef.current;
+
+    if (!socket?.connected) {
+      window.alert('공용 음원을 제거하려면 실시간 서버 연결이 필요합니다.');
+      return;
+    }
+
+    setSharedAudioMutationState({
+      message: '공용 음원을 제거하고 있습니다.',
+      status: 'working',
+    });
+    socket.timeout(10_000).emit(
+      SHARED_AUDIO_EVENTS.REMOVE,
+      (error, response) => {
+        if (error || !response?.ok) {
+          const message = '공용 음원을 제거하지 못했습니다.';
+
+          setSharedAudioMutationState({ message, status: 'error' });
+          window.alert(message);
+          return;
+        }
+
+        setSharedAudioMetadata(null);
+        setSharedAudioMutationState({
+          message: '공용 음원이 제거되었습니다.',
+          status: 'success',
+        });
+        setIsTeacherSharedAudioPanelOpen(false);
+      },
+    );
+  }
+
   function updateStudentLocalAudioSettings(changes) {
     if (!studentAnnotationDocumentKey) return;
 
@@ -1356,6 +1517,22 @@ function App() {
           previousLibrary,
           studentAnnotationDocumentKey,
         ),
+        ...changes,
+      }),
+    );
+  }
+
+  function updateStudentPlaybackAudioSettings(changes) {
+    const settingsKey =
+      studentAudioSource === TEACHER_AUDIO_SOURCE
+        ? sharedAudioSettingsKey
+        : studentAnnotationDocumentKey;
+
+    if (!settingsKey) return;
+
+    setStudentAudioSettingsLibrary((previousLibrary) =>
+      setStudentAudioSettings(previousLibrary, settingsKey, {
+        ...getStudentAudioSettings(previousLibrary, settingsKey),
         ...changes,
       }),
     );
@@ -1419,6 +1596,16 @@ function App() {
       setStudentAudioTargetMeasureIndex(displayMeasureIndex);
     }
     setIsStudentAudioPanelOpen(shouldOpen);
+  }
+
+  function selectStudentAudioSource(nextSource) {
+    if (nextSource === studentAudioSource) return;
+
+    studentAudioPlaybackMeasureIdRef.current = '';
+    setStudentAudioPlaybackMeasureId('');
+    setStudentAudioSeekRequest(null);
+    setStudentAudioTargetMeasureIndex(displayMeasureIndex);
+    setStudentAudioSource(nextSource);
   }
 
   function activateStudentAudioMeasure(nextMeasureIndex) {
@@ -1668,9 +1855,10 @@ function App() {
     let fallbackStarted = false;
     let activeSocket = null;
 
-    function attachSocket(socket, label) {
+    function attachSocket(socket, label, serverUrl) {
       activeSocket = socket;
       socketRef.current = socket;
+      setSharedAudioServerUrl(serverUrl);
       console.log(`[socket] connecting to ${label}`, socket.io.uri);
 
       socket.on('connect', () => {
@@ -1695,7 +1883,7 @@ function App() {
           timeout: 5000,
         });
 
-        attachSocket(fallbackSocket, 'same-origin');
+        attachSocket(fallbackSocket, 'same-origin', SAME_ORIGIN_SOCKET_URL);
       });
 
       socket.on('sync:state', (nextSyncState) => {
@@ -1795,6 +1983,19 @@ function App() {
         console.log('[socket] received audio:state', normalizedAudioSettings);
       });
 
+      socket.on(SHARED_AUDIO_EVENTS.STATE, (nextMetadata) => {
+        const normalizedMetadata = normalizeSharedAudioMetadata(nextMetadata);
+
+        setSharedAudioMetadata(normalizedMetadata);
+        setSharedAudioLoadError('');
+        setSharedAudioMutationState((previousState) =>
+          previousState.status === 'working'
+            ? { message: '', status: 'idle' }
+            : previousState,
+        );
+        console.log('[socket] received shared-audio:state', normalizedMetadata);
+      });
+
       socket.on('session:reset', () => {
         console.log('[socket] received session:reset');
         applySharedSessionReset();
@@ -1807,6 +2008,7 @@ function App() {
         timeout: 5000,
       }),
       'host-port',
+      SOCKET_SERVER_URL,
     );
 
     return () => {
@@ -1814,6 +2016,43 @@ function App() {
       socketRef.current = null;
     };
   }, [publishCurrentTeacherAudioSettings, publishCurrentTeacherPosition]);
+
+  useEffect(() => {
+    const shouldLoadWaveform = Boolean(
+      sharedAudioUrl &&
+        (viewerMode === TEACHER_MODE ||
+          (viewerMode === STUDENT_MODE &&
+            studentAudioSource === TEACHER_AUDIO_SOURCE)),
+    );
+
+    setSharedAudioWaveformFile(null);
+    setSharedAudioLoadError('');
+    if (!shouldLoadWaveform) return undefined;
+
+    const controller = new AbortController();
+
+    fetch(sharedAudioUrl, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Shared audio request failed: ${response.status}`);
+        }
+
+        return response.blob();
+      })
+      .then((blob) => {
+        if (!controller.signal.aborted) setSharedAudioWaveformFile(blob);
+      })
+      .catch((error) => {
+        if (error.name === 'AbortError') return;
+
+        console.error('[shared-audio] waveform asset load failed', error);
+        setSharedAudioLoadError(
+          '공용 음원은 재생할 수 있지만 파형 데이터를 불러오지 못했습니다.',
+        );
+      });
+
+    return () => controller.abort();
+  }, [sharedAudioUrl, studentAudioSource, viewerMode]);
 
   useEffect(() => {
     if (!shouldPublishMeasuresRef.current) return;
@@ -2106,165 +2345,170 @@ function App() {
                 className={`student-audio-panel ${
                   isStudentAudioPanelOpen ? '' : 'compact'
                 }`}
-                hidden={
-                  !isStudentAudioPanelOpen &&
-                  !(
-                    studentAudioSource === LOCAL_AUDIO_SOURCE &&
-                    studentLocalAudioUrl
-                  )
-                }
+                hidden={!isStudentAudioPanelOpen && !selectedStudentAudioAsset}
               >
                 {isStudentAudioPanelOpen && (
                   <>
-                  <div className="student-audio-panel-header">
-                    <strong>음원 설정</strong>
+                    <div className="student-audio-panel-header">
+                      <strong>음원 설정</strong>
+                      <button
+                        onClick={() => setIsStudentAudioPanelOpen(false)}
+                        type="button"
+                      >
+                        닫기
+                      </button>
+                    </div>
+                    <div className="student-audio-source-controls" role="group">
+                      <button
+                        aria-pressed={studentAudioSource === TEACHER_AUDIO_SOURCE}
+                        className={
+                          studentAudioSource === TEACHER_AUDIO_SOURCE
+                            ? 'active'
+                            : ''
+                        }
+                        onClick={() =>
+                          selectStudentAudioSource(TEACHER_AUDIO_SOURCE)
+                        }
+                        type="button"
+                      >
+                        선생님 공유 음원
+                      </button>
+                      <button
+                        aria-pressed={studentAudioSource === LOCAL_AUDIO_SOURCE}
+                        className={
+                          studentAudioSource === LOCAL_AUDIO_SOURCE ? 'active' : ''
+                        }
+                        disabled={!studentAnnotationDocumentKey}
+                        onClick={() =>
+                          selectStudentAudioSource(LOCAL_AUDIO_SOURCE)
+                        }
+                        type="button"
+                      >
+                        내 음원
+                      </button>
+                    </div>
+                    <label>
+                      음원 링크
+                      <input
+                        disabled={
+                          studentAudioSource === LOCAL_AUDIO_SOURCE &&
+                          !studentAnnotationDocumentKey
+                        }
+                        onChange={(event) =>
+                          updateStudentLocalAudioSettings({
+                            url: event.target.value,
+                          })
+                        }
+                        placeholder="https://..."
+                        readOnly={studentAudioSource === TEACHER_AUDIO_SOURCE}
+                        type="url"
+                        value={studentDisplayAudioSettings.url}
+                      />
+                    </label>
+                    <label>
+                      링크 시작 오프셋(초)
+                      <input
+                        disabled={
+                          studentAudioSource === LOCAL_AUDIO_SOURCE &&
+                          !studentAnnotationDocumentKey
+                        }
+                        min="0"
+                        onChange={(event) =>
+                          updateStudentLocalAudioSettings({
+                            startOffsetSeconds: event.target.value,
+                          })
+                        }
+                        readOnly={studentAudioSource === TEACHER_AUDIO_SOURCE}
+                        step="0.1"
+                        type="number"
+                        value={studentDisplayAudioSettings.startOffsetSeconds}
+                      />
+                    </label>
                     <button
-                      onClick={() => setIsStudentAudioPanelOpen(false)}
+                      disabled={!studentOpenableAudioUrl}
+                      onClick={openStudentAudioLink}
                       type="button"
                     >
-                      닫기
+                      링크 열기
                     </button>
-                  </div>
-                  <div className="student-audio-source-controls" role="group">
-                    <button
-                      aria-pressed={studentAudioSource === TEACHER_AUDIO_SOURCE}
-                      className={
-                        studentAudioSource === TEACHER_AUDIO_SOURCE ? 'active' : ''
-                      }
-                      onClick={() => {
-                        setStudentAudioSource(TEACHER_AUDIO_SOURCE);
-                        studentAudioPlaybackMeasureIdRef.current = '';
-                        setStudentAudioPlaybackMeasureId('');
-                      }}
-                      type="button"
-                    >
-                      선생님 음원
-                    </button>
-                    <button
-                      aria-pressed={studentAudioSource === LOCAL_AUDIO_SOURCE}
-                      className={
-                        studentAudioSource === LOCAL_AUDIO_SOURCE ? 'active' : ''
-                      }
-                      disabled={!studentAnnotationDocumentKey}
-                      onClick={() => setStudentAudioSource(LOCAL_AUDIO_SOURCE)}
-                      type="button"
-                    >
-                      내 음원
-                    </button>
-                  </div>
-                  <label>
-                    음원 링크
-                    <input
-                      disabled={
-                        studentAudioSource === LOCAL_AUDIO_SOURCE &&
-                        !studentAnnotationDocumentKey
-                      }
-                      onChange={(event) =>
-                        updateStudentLocalAudioSettings({ url: event.target.value })
-                      }
-                      placeholder="https://..."
-                      readOnly={studentAudioSource === TEACHER_AUDIO_SOURCE}
-                      type="url"
-                      value={studentDisplayAudioSettings.url}
-                    />
-                  </label>
-                  <label>
-                    시작 오프셋(초)
-                    <input
-                      disabled={
-                        studentAudioSource === LOCAL_AUDIO_SOURCE &&
-                        !studentAnnotationDocumentKey
-                      }
-                      min="0"
-                      onChange={(event) =>
-                        updateStudentLocalAudioSettings({
-                          startOffsetSeconds: event.target.value,
-                        })
-                      }
-                      readOnly={studentAudioSource === TEACHER_AUDIO_SOURCE}
-                      step="0.1"
-                      type="number"
-                      value={studentDisplayAudioSettings.startOffsetSeconds}
-                    />
-                  </label>
-                  <button
-                    disabled={!studentOpenableAudioUrl}
-                    onClick={openStudentAudioLink}
-                    type="button"
-                  >
-                    링크 열기
-                  </button>
                   </>
                 )}
-                  {studentAudioSource === LOCAL_AUDIO_SOURCE && (
-                    <div className="student-local-audio">
-                      {isStudentAudioPanelOpen && (
-                        <label className="student-local-audio-file">
-                          내 음원 파일
-                          <input
-                            accept={LOCAL_AUDIO_FILE_ACCEPT}
-                            disabled={!studentAnnotationDocumentKey}
-                            onCancel={cancelStudentLocalAudioSelection}
-                            onChange={selectStudentLocalAudio}
-                            onClick={beginStudentLocalAudioSelection}
-                            ref={studentAudioInputRef}
-                            type="file"
-                          />
-                        </label>
-                      )}
-                      {studentLocalAudioUrl ? (
-                        <LocalAudioPlayer
-                          audioFile={studentLocalAudioFile}
-                          countInBeats={audioTargetBeats}
-                          countInBpm={audioTargetBpm}
-                          fileName={studentLocalAudioFileName}
-                          hasPersonalMeasureTiming={Boolean(
-                            audioTargetPersonalTiming,
-                          )}
-                          isEditorVisible={isStudentAudioPanelOpen}
-                          measureMarkerTimeSeconds={audioTargetMeasureTime}
-                          measureTimelineTimeSeconds={audioTargetTimelineTime}
-                          measureMarkers={studentAudioWaveformMarkers}
-                          onMeasureMarkerChange={setStudentMeasureAudioTime}
-                          onMeasureMarkerRemove={removeStudentMeasureAudioTime}
-                          onMeasureTimingChange={updateStudentMeasureAudioTiming}
-                          onMeasureTimingReset={resetStudentMeasureAudioTiming}
-                          onStartOffsetChange={(startOffsetSeconds) =>
-                            updateStudentLocalAudioSettings({ startOffsetSeconds })
-                          }
-                          onTimelineFollowEnabledChange={
-                            updateStudentAudioFollowEnabled
-                          }
-                          onTimelineMeasureChange={
-                            updateStudentAudioTimelineMeasure
-                          }
-                          sourceUrl={studentLocalAudioUrl}
-                          seekRequest={studentAudioSeekRequest}
-                          startOffsetSeconds={
-                            studentLocalAudioSettings.startOffsetSeconds
-                          }
-                          targetMeasureId={audioTargetMeasure?.id || ''}
-                          targetMeasureNumber={
-                            audioTargetMeasure ? audioTargetMeasureIndex + 1 : 0
-                          }
-                          timelineFollowEnabled={isStudentAudioFollowEnabled}
-                        />
-                      ) : isStudentAudioPanelOpen ? (
-                        <small>이 기기에 저장된 음원 파일을 선택할 수 있습니다.</small>
-                      ) : null}
-                      {isStudentAudioPanelOpen && (
-                        <small>
-                          파일은 서버로 전송되지 않으며 화면을 나가거나 새로고침하면
-                          다시 선택해야 합니다.
-                        </small>
-                      )}
-                    </div>
+                {studentAudioSource === LOCAL_AUDIO_SOURCE &&
+                  isStudentAudioPanelOpen && (
+                    <label className="student-local-audio-file">
+                      내 음원 파일
+                      <input
+                        accept={LOCAL_AUDIO_FILE_ACCEPT}
+                        disabled={!studentAnnotationDocumentKey}
+                        onCancel={cancelStudentLocalAudioSelection}
+                        onChange={selectStudentLocalAudio}
+                        onClick={beginStudentLocalAudioSelection}
+                        ref={studentAudioInputRef}
+                        type="file"
+                      />
+                    </label>
                   )}
+                <div className="student-local-audio">
+                  {selectedStudentAudioAsset ? (
+                    <LocalAudioPlayer
+                      audioFile={selectedStudentAudioAsset.audioFile}
+                      countInBeats={audioTargetBeats}
+                      countInBpm={audioTargetBpm}
+                      fileName={selectedStudentAudioAsset.fileName}
+                      hasPersonalMeasureTiming={Boolean(audioTargetPersonalTiming)}
+                      isEditorVisible={isStudentAudioPanelOpen}
+                      measureMarkerTimeSeconds={audioTargetMeasureTime}
+                      measureTimelineTimeSeconds={audioTargetTimelineTime}
+                      measureMarkers={studentAudioWaveformMarkers}
+                      onMeasureMarkerChange={setStudentMeasureAudioTime}
+                      onMeasureMarkerRemove={removeStudentMeasureAudioTime}
+                      onMeasureTimingChange={updateStudentMeasureAudioTiming}
+                      onMeasureTimingReset={resetStudentMeasureAudioTiming}
+                      onStartOffsetChange={(startOffsetSeconds) =>
+                        updateStudentPlaybackAudioSettings({ startOffsetSeconds })
+                      }
+                      onTimelineFollowEnabledChange={
+                        updateStudentAudioFollowEnabled
+                      }
+                      onTimelineMeasureChange={updateStudentAudioTimelineMeasure}
+                      seekRequest={studentAudioSeekRequest}
+                      sourceUrl={selectedStudentAudioAsset.sourceUrl}
+                      startOffsetSeconds={
+                        studentPlaybackAudioSettings.startOffsetSeconds
+                      }
+                      targetMeasureId={audioTargetMeasure?.id || ''}
+                      targetMeasureNumber={
+                        audioTargetMeasure ? audioTargetMeasureIndex + 1 : 0
+                      }
+                      timelineFollowEnabled={isStudentAudioFollowEnabled}
+                    />
+                  ) : isStudentAudioPanelOpen ? (
+                    <small>
+                      {studentAudioSource === TEACHER_AUDIO_SOURCE
+                        ? '선생님 공유 음원이 없습니다.'
+                        : '이 기기에 저장된 음원 파일을 선택할 수 있습니다.'}
+                    </small>
+                  ) : null}
+                  {sharedAudioLoadError &&
+                    studentAudioSource === TEACHER_AUDIO_SOURCE && (
+                      <small className="audio-error">{sharedAudioLoadError}</small>
+                    )}
                   {isStudentAudioPanelOpen &&
                     studentAudioSource === TEACHER_AUDIO_SOURCE && (
-                    <small>Teacher가 변경하면 자동으로 갱신됩니다.</small>
-                  )}
-                </section>
+                      <small>
+                        공용 음원 파일은 Teacher가 교체하면 자동으로 갱신되며,
+                        재생 위치와 속도는 이 기기에서만 동작합니다.
+                      </small>
+                    )}
+                  {isStudentAudioPanelOpen &&
+                    studentAudioSource === LOCAL_AUDIO_SOURCE && (
+                      <small>
+                        파일은 서버로 전송되지 않으며 화면을 나가거나 새로고침하면
+                        다시 선택해야 합니다.
+                      </small>
+                    )}
+                </div>
+              </section>
             </div>
             <input
               accept=".pdf"
@@ -2357,6 +2601,38 @@ function App() {
         </>
       )}
 
+      {canEdit && sharedAudioMetadata && sharedAudioUrl && (
+        <section
+          aria-label="선생님 공유 음원 재생"
+          className={`teacher-shared-audio-panel ${
+            isTeacherSharedAudioPanelOpen ? '' : 'compact'
+          }`}
+        >
+          <div className="teacher-shared-audio-panel-header">
+            <strong>공용 음원</strong>
+            <button
+              onClick={() =>
+                setIsTeacherSharedAudioPanelOpen((isOpen) => !isOpen)
+              }
+              type="button"
+            >
+              {isTeacherSharedAudioPanelOpen ? '접기' : '파형 열기'}
+            </button>
+          </div>
+          <LocalAudioPlayer
+            audioFile={sharedAudioWaveformFile}
+            fileName={sharedAudioMetadata.fileName}
+            isEditorVisible={isTeacherSharedAudioPanelOpen}
+            showPracticeTools={false}
+            sourceUrl={sharedAudioUrl}
+            startOffsetSeconds={0}
+          />
+          {sharedAudioLoadError && (
+            <small className="audio-error">{sharedAudioLoadError}</small>
+          )}
+        </section>
+      )}
+
       {viewerMode === ROLE_SELECT_MODE ? null : viewerMode === VOCAL_MODE ? (
         <VocalView currentMeasure={currentMeasure} nextLyric={nextDifferentLyric} />
       ) : (
@@ -2369,7 +2645,9 @@ function App() {
             canSaveProject={Boolean(teacherPdfBlobRef.current)}
             canRecognizeMeasures={Boolean(teacherPdfBlobRef.current)}
             canOpenAudioLink={Boolean(openableAudioUrl)}
-            canEndSession={Boolean(teacherPdfBlobRef.current || measures.length)}
+            canEndSession={Boolean(
+              teacherPdfBlobRef.current || measures.length || sharedAudioMetadata
+            )}
             fileInputRef={fileInputRef}
             isAutoPlaying={isAutoPlaying}
             isRepeatEnabled={isRepeatEnabled}
@@ -2397,10 +2675,16 @@ function App() {
             onEndClassSession={endClassSession}
             onOpenLyricEditor={openLyricEditor}
             onOpenAudioLink={openAudioLink}
+            onOpenSharedAudioPicker={openTeacherSharedAudioPicker}
+            onRemoveSharedAudio={removeTeacherSharedAudio}
             onUpdateSelectedMeasureTiming={updateSelectedMeasureTiming}
             onUpdateAudioSettings={updateAudioSettings}
             pageNumber={pageNumber}
             returnToStartOnEnd={returnToStartOnEnd}
+            sharedAudioInputRef={teacherSharedAudioInputRef}
+            sharedAudioMetadata={sharedAudioMetadata}
+            sharedAudioMutationState={sharedAudioMutationState}
+            onSharedAudioSelected={selectTeacherSharedAudio}
             selectedMeasure={selectedMeasure}
             selectedMeasureIndex={selectedMeasureIndex}
             totalPages={totalPages}
@@ -2557,11 +2841,13 @@ function Sidebar({
   onLoadJson,
   onLoadBsvProject,
   onOpenAudioLink,
+  onOpenSharedAudioPicker,
   onOpenLyricEditor,
   onOpenBsvProject,
   onOpenJson,
   onOpenPdf,
   onRecognizeMeasures,
+  onRemoveSharedAudio,
   onPdfSelected,
   onSaveJson,
   onSaveBsvProject,
@@ -2574,6 +2860,10 @@ function Sidebar({
   onUpdateSelectedMeasureTiming,
   pageNumber,
   returnToStartOnEnd,
+  sharedAudioInputRef,
+  sharedAudioMetadata,
+  sharedAudioMutationState,
+  onSharedAudioSelected,
   selectedMeasure,
   selectedMeasureIndex,
   totalPages,
@@ -2670,6 +2960,41 @@ function Sidebar({
             >
               링크 열기
             </button>
+          </div>
+          <div className="shared-audio-editor">
+            <strong>공용 로컬 음원</strong>
+            <span title={sharedAudioMetadata?.fileName || ''}>
+              {sharedAudioMetadata?.fileName || '등록된 음원 없음'}
+            </span>
+            <button
+              disabled={sharedAudioMutationState.status === 'working'}
+              onClick={onOpenSharedAudioPicker}
+              type="button"
+            >
+              {sharedAudioMetadata ? '음원 교체' : '음원 추가'}
+            </button>
+            <button
+              disabled={
+                !sharedAudioMetadata ||
+                sharedAudioMutationState.status === 'working'
+              }
+              onClick={onRemoveSharedAudio}
+              type="button"
+            >
+              음원 제거
+            </button>
+            {sharedAudioMutationState.message && (
+              <small className={sharedAudioMutationState.status}>
+                {sharedAudioMutationState.message}
+              </small>
+            )}
+            <input
+              accept={LOCAL_AUDIO_FILE_ACCEPT}
+              className="file-input"
+              onChange={onSharedAudioSelected}
+              ref={sharedAudioInputRef}
+              type="file"
+            />
           </div>
           <button
             className="session-end-button"
