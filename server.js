@@ -131,6 +131,10 @@ io.on('connection', (socket) => {
     `[socket] sent ${SHARED_AUDIO_EVENTS.STATE} to ${socket.id}`,
     sharedAudioSession.getMetadata(),
   );
+  console.log(
+    `[socket] sent ${SHARED_AUDIO_EVENTS.PLAYBACK_STATE} to ${socket.id}`,
+    sharedAudioSession.getPlaybackState(),
+  );
   socket.emit('sync:state', latestSyncState);
   console.log(`[socket] sent sync:state to ${socket.id}`, latestSyncState);
 
@@ -200,6 +204,7 @@ io.on('connection', (socket) => {
     sharedAudioSession.clear();
     console.log(`[socket] session reset requested by ${socket.id}`);
     io.emit(SHARED_AUDIO_EVENTS.STATE, null);
+    io.emit(SHARED_AUDIO_EVENTS.PLAYBACK_STATE, null);
     socket.broadcast.emit('session:reset', emptySessionState);
   });
 });

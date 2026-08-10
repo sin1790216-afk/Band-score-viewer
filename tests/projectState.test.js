@@ -148,6 +148,50 @@ test('project state stores BPM, Beats, and multiline lyrics without changing coo
   assert.equal(lyricState.measures[0].y, canonicalMeasure.y);
 });
 
+test('global BPM applies to every measure and keeps coordinates and per-measure editing', () => {
+  const measures = Array.from({ length: 10 }, (_, index) => ({
+    ...canonicalMeasure,
+    bpm: 90 + index,
+    id: `measure-global-${index + 1}`,
+    x: 0.02 * index,
+  }));
+  const initialState = createInitialProjectState({ measures });
+  const globalState = projectReducer(initialState, {
+    type: PROJECT_ACTIONS.APPLY_BPM_TO_ALL_MEASURES,
+    bpm: 126,
+  });
+  const overriddenState = projectReducer(globalState, {
+    type: PROJECT_ACTIONS.UPDATE_MEASURE,
+    changes: { bpm: 140 },
+    index: 4,
+  });
+  const restoredMeasures = importMeasuresJson(
+    exportMeasuresJson(overriddenState.measures),
+  );
+
+  assert.deepEqual(
+    globalState.measures.map((measure) => measure.bpm),
+    Array(10).fill(126),
+  );
+  assert.equal(overriddenState.measures[4].bpm, 140);
+  assert.equal(overriddenState.measures[3].bpm, 126);
+  assert.deepEqual(
+    globalState.measures.map(({ height, width, x, y }) => ({
+      height,
+      width,
+      x,
+      y,
+    })),
+    initialState.measures.map(({ height, width, x, y }) => ({
+      height,
+      width,
+      x,
+      y,
+    })),
+  );
+  assert.deepEqual(restoredMeasures, overriddenState.measures);
+});
+
 test('JSON import keeps the legacy array format and applies existing defaults', () => {
   const importedMeasures = importMeasuresJson(
     JSON.stringify([

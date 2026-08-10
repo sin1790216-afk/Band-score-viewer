@@ -174,16 +174,19 @@ test('shared audio socket metadata reaches current and late clients', () => {
   );
 
   assert.equal(updateResult.ok, true);
-  assert.deepEqual(broadcasts.at(-1), [
+  assert.deepEqual(broadcasts.at(-2), [
     SHARED_AUDIO_EVENTS.STATE,
     updateResult.metadata,
   ]);
+  assert.equal(broadcasts.at(-1)[0], SHARED_AUDIO_EVENTS.PLAYBACK_STATE);
+  assert.equal(broadcasts.at(-1)[1].command, 'reset');
 
   const lateStudentSocket = createFakeSocket('late-student');
 
   sendSharedAudioState(lateStudentSocket, session);
   assert.deepEqual(lateStudentSocket.emitted, [
     [SHARED_AUDIO_EVENTS.STATE, updateResult.metadata],
+    [SHARED_AUDIO_EVENTS.PLAYBACK_STATE, session.getPlaybackState()],
   ]);
 
   updateHandler(
@@ -194,11 +197,177 @@ test('shared audio socket metadata reaches current and late clients', () => {
     },
     () => {},
   );
-  assert.equal(broadcasts.at(-1)[1].revision, 2);
+  assert.equal(broadcasts.at(-2)[1].revision, 2);
+  assert.equal(broadcasts.at(-1)[1].command, 'reset');
 
   const removeHandler = teacherSocket.handlers.get(SHARED_AUDIO_EVENTS.REMOVE);
 
   removeHandler(() => {});
-  assert.deepEqual(broadcasts.at(-1), [SHARED_AUDIO_EVENTS.STATE, null]);
+  assert.deepEqual(broadcasts.slice(-2), [
+    [SHARED_AUDIO_EVENTS.STATE, null],
+    [SHARED_AUDIO_EVENTS.PLAYBACK_STATE, null],
+  ]);
   assert.equal(session.getMetadata(), null);
+});
+
+test('shared audio playback commands are server-owned and reconnectable', () => {
+  const session = createSharedAudioSession();
+  const metadata = registerTestAudio(session);
+  const teacherSocket = createFakeSocket('teacher');
+  const broadcasts = [];
+  const io = {
+    emit(eventName, payload) {
+      broadcasts.push([eventName, payload]);
+    },
+  };
+
+  registerSharedAudioSocketHandlers({ io, session, socket: teacherSocket });
+  const playbackHandler = teacherSocket.handlers.get(
+    SHARED_AUDIO_EVENTS.PLAYBACK_UPDATE,
+  );
+  let result;
+
+  playbackHandler(
+    {
+      anchorPositionSeconds: 92,
+      assetId: metadata.assetId,
+      command: 'play',
+      isPlaying: true,
+      playbackRate: 0.9,
+      revision: metadata.revision,
+    },
+    (nextResult) => {
+      result = nextResult;
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.playbackState.anchorPositionSeconds, 92);
+  assert.equal(result.playbackState.isPlaying, true);
+  assert.equal(result.playbackState.playbackRate, 0.9);
+  assert.deepEqual(broadcasts.at(-1), [
+    SHARED_AUDIO_EVENTS.PLAYBACK_STATE,
+    result.playbackState,
+  ]);
+
+  const reconnectedStudent = createFakeSocket('reconnected-student');
+
+  sendSharedAudioState(reconnectedStudent, session);
+  assert.deepEqual(reconnectedStudent.emitted.at(-1), [
+    SHARED_AUDIO_EVENTS.PLAYBACK_STATE,
+    result.playbackState,
+  ]);
+
+  const clockHandler = teacherSocket.handlers.get(SHARED_AUDIO_EVENTS.CLOCK);
+  let serverTimeMs = 0;
+
+  clockHandler((clock) => {
+    serverTimeMs = clock.serverTimeMs;
+  });
+  assert.equal(Number.isFinite(serverTimeMs), true);
+});
+
+test('Teacher timeline anchor is acknowledged, stored, and sent to late or reconnecting clients', () => {
+  const session = createSharedAudioSession();
+  const metadata = registerTestAudio(session);
+  const teacherSocket = createFakeSocket('teacher');
+  const broadcasts = [];
+  const io = {
+    emit(eventName, payload) {
+      broadcasts.push([eventName, payload]);
+    },
+  };
+
+  registerSharedAudioSocketHandlers({ io, session, socket: teacherSocket });
+  const anchorHandler = teacherSocket.handlers.get(
+    SHARED_AUDIO_EVENTS.TIMELINE_ANCHOR_UPDATE,
+  );
+  let result;
+
+  anchorHandler(
+    {
+      assetId: metadata.assetId,
+      revision: metadata.revision,
+      timelineAnchor: {
+        measureId: 'measure-3',
+        measureIndex: 2,
+        positionSeconds: 12.3496,
+      },
+    },
+    (nextResult) => {
+      result = nextResult;
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.metadata.timelineAnchor, {
+    measureId: 'measure-3',
+    measureIndex: 2,
+    positionSeconds: 12.35,
+  });
+  assert.deepEqual(
+    session.getMetadata().timelineAnchor,
+    result.metadata.timelineAnchor,
+  );
+  assert.deepEqual(broadcasts.at(-1), [
+    SHARED_AUDIO_EVENTS.STATE,
+    result.metadata,
+  ]);
+
+  const lateStudentSocket = createFakeSocket('late-student');
+  const reconnectStudentSocket = createFakeSocket('reconnect-student');
+
+  sendSharedAudioState(lateStudentSocket, session);
+  sendSharedAudioState(reconnectStudentSocket, session);
+  assert.deepEqual(
+    lateStudentSocket.emitted[0][1].timelineAnchor,
+    result.metadata.timelineAnchor,
+  );
+  assert.deepEqual(
+    reconnectStudentSocket.emitted[0][1].timelineAnchor,
+    result.metadata.timelineAnchor,
+  );
+
+  anchorHandler(
+    {
+      assetId: metadata.assetId,
+      revision: metadata.revision,
+      timelineAnchor: null,
+    },
+    (nextResult) => {
+      result = nextResult;
+    },
+  );
+  assert.equal(result.metadata.timelineAnchor, null);
+});
+
+test('legacy first-measure anchor event adapts to the general timeline anchor', () => {
+  const session = createSharedAudioSession();
+  const metadata = registerTestAudio(session);
+  const teacherSocket = createFakeSocket('teacher');
+  const io = { emit() {} };
+
+  registerSharedAudioSocketHandlers({ io, session, socket: teacherSocket });
+  const legacyAnchorHandler = teacherSocket.handlers.get(
+    SHARED_AUDIO_EVENTS.FIRST_MEASURE_ANCHOR_UPDATE,
+  );
+  let result;
+
+  legacyAnchorHandler(
+    {
+      assetId: metadata.assetId,
+      firstMeasureAnchorSeconds: 3.5,
+      revision: metadata.revision,
+    },
+    (nextResult) => {
+      result = nextResult;
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.metadata.timelineAnchor, {
+    measureId: null,
+    measureIndex: 0,
+    positionSeconds: 3.5,
+  });
 });

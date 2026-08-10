@@ -18,6 +18,7 @@ export const DEFAULT_MEASURE = {
 
 export const PROJECT_ACTIONS = {
   ADD_MEASURE: 'project/add-measure',
+  APPLY_BPM_TO_ALL_MEASURES: 'project/apply-bpm-to-all-measures',
   DELETE_MEASURE: 'project/delete-measure',
   IMPORT_MEASURES: 'project/import-measures',
   REPLACE_PROJECT: 'project/replace-project',
@@ -183,6 +184,18 @@ export function projectReducer(state, action) {
                 }
               : measure,
           ),
+        );
+      }
+
+    case PROJECT_ACTIONS.APPLY_BPM_TO_ALL_MEASURES:
+      {
+        const bpm = getPositiveNumber(action.bpm, 0);
+
+        if (!bpm || state.measures.length === 0) return state;
+
+        return replaceMeasures(
+          state,
+          state.measures.map((measure) => ({ ...measure, bpm })),
         );
       }
 

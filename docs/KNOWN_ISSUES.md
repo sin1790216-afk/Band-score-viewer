@@ -67,7 +67,14 @@
 - 예비박 자체는 Web Audio 시간으로 예약하지만 Bluetooth 출력 지연과 iOS의 media element 재생 시작 지연은 기기마다 다를 수 있으므로 실제 연습 장비에서 확인해야 한다.
 - Teacher Shared Audio는 현재 수업 서버 메모리에만 존재해 서버 재시작 또는 수업 종료 시 사라지고 `.bsv`에 포함되지 않는다.
 - 공용 음원 HTTP endpoint는 단일 byte Range를 지원하지만 실제 codec 재생 가능 여부와 Safari 파형 디코딩은 기기 지원 범위에 따른다.
-- 공용 음원은 asset만 공유한다. Teacher의 play/pause/seek, 재생 시각과 속도는 아직 Student와 동기화하지 않으며 YouTube source도 구현하지 않았다.
+- 공용 음원 Follow는 서버 시각 offset과 저빈도 drift 보정을 사용하므로 완전한 sample 단위 동기화는 아니다. Wi-Fi 지연, Bluetooth 출력 지연과 기기별 디코더 시작 지연은 남는다.
+- iPad/Safari는 최초 자동재생을 차단할 수 있다. Student가 `수업 따라가기`를 직접 눌러 media element를 준비해야 하며, 음원 교체 후에는 다시 사용자 동작이 필요할 수 있다.
+- 현재 역할 인증이 없어 서버는 playback 명령을 실제 Teacher 기기에서 보냈는지 검증하지 못한다. 공개 배포 전 Teacher 인증과 Room 격리가 필요하다.
+- Project 기본 BPM은 별도 schema로 저장하지 않고 import한 measures의 최빈 BPM으로 추론한다. 동일 빈도의 여러 BPM이 있는 프로젝트에서는 첫 마디 BPM이 기본값이 된다.
+- Teacher 공용 음원의 선택 마디 timeline anchor는 현재 서버 메모리 세션에만 저장되어 서버 재시작·수업 종료·공용 음원 교체 시 초기화된다.
+- 현재 공용 음원 타임라인은 각 measure의 BPM/Beats를 실제 duration으로 가정한다. 못갖춘마디, fermata, 자유 tempo처럼 길이가 다른 예외는 아직 별도 모델이 없으며 향후 measure별 duration/timing override가 필요하다.
+- Student의 `선생님 템포 사용`과 `선생님 마디 기준 사용` 선택은 계정에 저장하지 않으며 현재 앱 세션 동안만 유지한다. Student 개인 음원에는 Teacher anchor를 자동 적용하지 않는다.
+- YouTube source는 구현하지 않았다.
 
 ## Student 로컬 필기
 

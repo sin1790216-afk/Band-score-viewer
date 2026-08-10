@@ -2,8 +2,13 @@ export const MAX_SHARED_AUDIO_BYTES = 100 * 1024 * 1024;
 export const MAX_SHARED_AUDIO_FILE_NAME_LENGTH = 256;
 
 export const SHARED_AUDIO_EVENTS = Object.freeze({
+  CLOCK: 'shared-audio:clock',
+  FIRST_MEASURE_ANCHOR_UPDATE: 'shared-audio:first-measure-anchor:update',
+  PLAYBACK_STATE: 'shared-audio-playback:state',
+  PLAYBACK_UPDATE: 'shared-audio-playback:update',
   REMOVE: 'shared-audio:remove',
   STATE: 'shared-audio:state',
+  TIMELINE_ANCHOR_UPDATE: 'shared-audio:timeline-anchor:update',
   UPDATE: 'shared-audio:update',
 });
 
@@ -14,6 +19,54 @@ export const AUDIO_SOURCE_TYPES = Object.freeze({
 
 const ASSET_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const AUDIO_MIME_TYPE_PATTERN = /^audio\/[A-Za-z0-9][A-Za-z0-9.+-]*$/i;
+const MAX_SHARED_AUDIO_MEASURE_INDEX = 10_000;
+const MAX_SHARED_AUDIO_TIME_SECONDS = 172_800;
+
+export function normalizeSharedAudioFirstMeasureAnchor(value) {
+  if (value === null || value === undefined || value === '') return null;
+
+  const numericValue = Number(value);
+
+  return Number.isFinite(numericValue) &&
+    numericValue >= 0 &&
+    numericValue <= MAX_SHARED_AUDIO_TIME_SECONDS
+    ? Number(numericValue.toFixed(3))
+    : null;
+}
+
+export function normalizeSharedAudioTimelineAnchor(value) {
+  if (value === null) return null;
+
+  const measureId =
+    typeof value?.measureId === 'string' ? value.measureId.trim() : '';
+  const hasMeasureIndexValue =
+    value?.measureIndex !== null &&
+    value?.measureIndex !== undefined &&
+    value?.measureIndex !== '';
+  const measureIndex = Number(value?.measureIndex);
+  const positionSeconds = normalizeSharedAudioFirstMeasureAnchor(
+    value?.positionSeconds,
+  );
+  const hasValidMeasureIndex =
+    hasMeasureIndexValue &&
+    Number.isInteger(measureIndex) &&
+    measureIndex >= 0 &&
+    measureIndex < MAX_SHARED_AUDIO_MEASURE_INDEX;
+
+  if (
+    (!measureId && !hasValidMeasureIndex) ||
+    measureId.length > 128 ||
+    positionSeconds === null
+  ) {
+    return null;
+  }
+
+  return {
+    measureId: measureId || null,
+    measureIndex: hasValidMeasureIndex ? measureIndex : null,
+    positionSeconds,
+  };
+}
 
 export function isAudioMimeType(mimeType) {
   return (
@@ -49,6 +102,17 @@ export function normalizeSharedAudioMetadata(metadata) {
     typeof metadata?.fileName === 'string' ? metadata.fileName.trim() : '';
   const byteLength = Number(metadata?.byteLength);
   const revision = Number(metadata?.revision);
+  const legacyFirstMeasureAnchorSeconds =
+    normalizeSharedAudioFirstMeasureAnchor(metadata?.firstMeasureAnchorSeconds);
+  const timelineAnchor =
+    normalizeSharedAudioTimelineAnchor(metadata?.timelineAnchor) ||
+    (legacyFirstMeasureAnchorSeconds === null
+      ? null
+      : {
+          measureId: null,
+          measureIndex: 0,
+          positionSeconds: legacyFirstMeasureAnchorSeconds,
+        });
 
   if (
     !ASSET_ID_PATTERN.test(assetId) ||
@@ -71,6 +135,7 @@ export function normalizeSharedAudioMetadata(metadata) {
     fileName,
     mimeType: metadata.mimeType,
     revision,
+    timelineAnchor,
   };
 }
 

@@ -167,6 +167,55 @@ export function getMeasureTimelineTime(markers, measureId) {
   return marker?.timeSeconds ?? null;
 }
 
+export function setFirstMeasureTimelineAnchor(
+  markers,
+  firstMeasureId,
+  timeSeconds,
+) {
+  const normalizedFirstMeasureId =
+    typeof firstMeasureId === 'string' ? firstMeasureId.trim() : '';
+  const normalizedMarkers = Array.isArray(markers)
+    ? markers.map(normalizeMarker).filter(Boolean)
+    : [];
+
+  if (!normalizedFirstMeasureId) return normalizedMarkers;
+
+  const markersWithoutFirstMeasure = normalizedMarkers.filter(
+    (marker) => marker.measureId !== normalizedFirstMeasureId,
+  );
+  if (timeSeconds === null || timeSeconds === undefined || timeSeconds === '') {
+    return markersWithoutFirstMeasure;
+  }
+
+  const firstMeasureMarker = normalizeMarker({
+    measureId: normalizedFirstMeasureId,
+    timeSeconds,
+  });
+
+  return firstMeasureMarker
+    ? [firstMeasureMarker, ...markersWithoutFirstMeasure]
+    : markersWithoutFirstMeasure;
+}
+
+export function getAudioTimelinePlaybackMarkers({
+  firstMeasureId,
+  markers,
+  teacherFirstMeasureAnchorSeconds,
+  useTeacherFirstMeasureAnchor,
+}) {
+  const normalizedMarkers = Array.isArray(markers)
+    ? markers.map(normalizeMarker).filter(Boolean)
+    : [];
+
+  return useTeacherFirstMeasureAnchor
+    ? setFirstMeasureTimelineAnchor(
+        normalizedMarkers,
+        firstMeasureId,
+        teacherFirstMeasureAnchorSeconds,
+      )
+    : normalizedMarkers;
+}
+
 function getTimelineTimingValue(value, fallbackValue) {
   const numberValue = Number(value);
 
@@ -188,6 +237,164 @@ function getMeasureDurationSeconds(measure, personalTiming) {
   );
 
   return (60 / bpm) * beats;
+}
+
+export function createAudioTimelineAnchor({
+  measureNumber,
+  measures,
+  positionSeconds,
+}) {
+  const normalizedMeasureNumber = Number(measureNumber);
+  const normalizedPositionSeconds = Number(positionSeconds);
+
+  if (
+    !Array.isArray(measures) ||
+    !Number.isInteger(normalizedMeasureNumber) ||
+    normalizedMeasureNumber < 1 ||
+    normalizedMeasureNumber > measures.length ||
+    !Number.isFinite(normalizedPositionSeconds) ||
+    normalizedPositionSeconds < 0 ||
+    normalizedPositionSeconds > MAX_AUDIO_TIME_SECONDS
+  ) {
+    return null;
+  }
+
+  const measureIndex = normalizedMeasureNumber - 1;
+  const measureId =
+    typeof measures[measureIndex]?.id === 'string'
+      ? measures[measureIndex].id.trim()
+      : '';
+
+  return {
+    measureId: measureId || null,
+    measureIndex,
+    positionSeconds: Number(normalizedPositionSeconds.toFixed(3)),
+  };
+}
+
+export function getAudioTimelineAnchorMeasureIndex(anchor, measures) {
+  if (!anchor || !Array.isArray(measures) || measures.length === 0) return -1;
+
+  const measureId =
+    typeof anchor.measureId === 'string' ? anchor.measureId.trim() : '';
+  const measureIdIndex = measureId
+    ? measures.findIndex((measure) => measure?.id === measureId)
+    : -1;
+
+  if (measureId) return measureIdIndex;
+
+  const measureIndex = Number(anchor.measureIndex);
+
+  return Number.isInteger(measureIndex) &&
+    measureIndex >= 0 &&
+    measureIndex < measures.length
+    ? measureIndex
+    : -1;
+}
+
+function calculateAudioTimelineStartTimes({
+  anchor,
+  measures,
+  timings,
+}) {
+  const anchorMeasureIndex = getAudioTimelineAnchorMeasureIndex(
+    anchor,
+    measures,
+  );
+  const anchorPositionSeconds = Number(anchor?.positionSeconds);
+
+  if (
+    anchorMeasureIndex < 0 ||
+    !Number.isFinite(anchorPositionSeconds) ||
+    anchorPositionSeconds < 0 ||
+    anchorPositionSeconds > MAX_AUDIO_TIME_SECONDS
+  ) {
+    return null;
+  }
+
+  const timingsByMeasureId = new Map();
+
+  if (Array.isArray(timings)) {
+    timings.forEach((timing) => {
+      const normalizedTiming = normalizeMeasureTiming(timing);
+
+      if (normalizedTiming) {
+        timingsByMeasureId.set(normalizedTiming.measureId, normalizedTiming);
+      }
+    });
+  }
+
+  const startTimes = new Array(
+    Math.min(measures.length, MAX_TIMELINE_MARKERS),
+  );
+
+  if (anchorMeasureIndex >= startTimes.length) return null;
+
+  startTimes[anchorMeasureIndex] = anchorPositionSeconds;
+
+  for (let index = anchorMeasureIndex - 1; index >= 0; index -= 1) {
+    const measure = measures[index];
+
+    startTimes[index] =
+      startTimes[index + 1] -
+      getMeasureDurationSeconds(
+        measure,
+        timingsByMeasureId.get(measure?.id),
+      );
+  }
+
+  for (
+    let index = anchorMeasureIndex + 1;
+    index < startTimes.length;
+    index += 1
+  ) {
+    const previousMeasure = measures[index - 1];
+
+    startTimes[index] =
+      startTimes[index - 1] +
+      getMeasureDurationSeconds(
+        previousMeasure,
+        timingsByMeasureId.get(previousMeasure?.id),
+      );
+  }
+
+  return { anchorMeasureIndex, startTimes };
+}
+
+export function getAudioTimelineFirstMeasureStartSeconds(options) {
+  const calculation = calculateAudioTimelineStartTimes(options);
+  const firstMeasureStartSeconds = calculation?.startTimes[0];
+
+  return Number.isFinite(firstMeasureStartSeconds)
+    ? Number(firstMeasureStartSeconds.toFixed(3))
+    : null;
+}
+
+export function getAudioTimelineMarkersFromAnchor(options) {
+  const calculation = calculateAudioTimelineStartTimes(options);
+
+  if (!calculation) return [];
+
+  const { anchorMeasureIndex, startTimes } = calculation;
+  const { measures } = options;
+
+  return startTimes
+    .map((timeSeconds, index) => {
+      const measureId =
+        typeof measures[index]?.id === 'string' ? measures[index].id.trim() : '';
+
+      return measureId &&
+        Number.isFinite(timeSeconds) &&
+        timeSeconds >= 0 &&
+        timeSeconds <= MAX_AUDIO_TIME_SECONDS
+        ? {
+            measureId,
+            source: index === anchorMeasureIndex ? 'anchor' : 'calculated',
+            timeSeconds: Number(timeSeconds.toFixed(3)),
+          }
+        : null;
+    })
+    .filter(Boolean);
 }
 
 export function getEffectiveAudioTimelineMarkers({
@@ -308,6 +515,17 @@ export function getStudentAudioTimelineTimings(library, timelineKey) {
   return normalizedLibrary.timelines[timelineKey]?.timings || [];
 }
 
+export function getAudioTimelinePlaybackTimings(
+  personalTimings,
+  useTeacherTempo,
+) {
+  if (useTeacherTempo) return [];
+
+  return Array.isArray(personalTimings)
+    ? personalTimings.map(normalizeMeasureTiming).filter(Boolean)
+    : [];
+}
+
 export function getMeasureTimelineTiming(timings, measureId) {
   const timing = Array.isArray(timings)
     ? timings.find((candidate) => candidate.measureId === measureId)
@@ -395,6 +613,57 @@ export function setStudentAudioTimelineTiming(
           index === timingIndex ? normalizedTiming : timing,
         )
       : [...previousTimings, normalizedTiming].slice(-MAX_TIMELINE_MARKERS);
+
+  return {
+    ...normalizedLibrary,
+    timelines: {
+      ...normalizedLibrary.timelines,
+      [timelineKey]: {
+        ...normalizedLibrary.timelines[timelineKey],
+        markers: normalizedLibrary.timelines[timelineKey]?.markers || [],
+        timings,
+      },
+    },
+  };
+}
+
+export function applyStudentAudioTimelineBpm(
+  library,
+  timelineKey,
+  measures,
+  nextBpm,
+) {
+  const normalizedLibrary = normalizeStudentAudioTimelineLibrary(library);
+  const bpm = getTimelineTimingValue(nextBpm, 0);
+
+  if (!timelineKey || !bpm || !Array.isArray(measures)) {
+    return normalizedLibrary;
+  }
+
+  const previousTimings = new Map(
+    (normalizedLibrary.timelines[timelineKey]?.timings || []).map((timing) => [
+      timing.measureId,
+      timing,
+    ]),
+  );
+  const timings = measures
+    .slice(0, MAX_TIMELINE_MARKERS)
+    .map((measure) => {
+      const measureId =
+        typeof measure?.id === 'string' ? measure.id.trim() : '';
+
+      if (!measureId) return null;
+
+      return {
+        beats: getTimelineTimingValue(
+          previousTimings.get(measureId)?.beats,
+          getTimelineTimingValue(measure.beats, DEFAULT_TIMELINE_BEATS),
+        ),
+        bpm,
+        measureId,
+      };
+    })
+    .filter(Boolean);
 
   return {
     ...normalizedLibrary,

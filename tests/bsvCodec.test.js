@@ -140,6 +140,33 @@ test('.bsv preserves normalized coordinates, BPM, Beats, and multiline lyrics', 
   assert.equal(measure.lyric, '첫 번째 줄\n두 번째 줄');
 });
 
+test('.bsv preserves BPM after a Teacher global tempo application', async () => {
+  const projectState = projectReducer(
+    createInitialProjectState({
+      ...createProjectState(),
+      measures: [
+        MEASURE,
+        { ...MEASURE, bpm: 110, id: 'measure-bsv-2', x: 0.5 },
+      ],
+    }),
+    {
+      type: PROJECT_ACTIONS.APPLY_BPM_TO_ALL_MEASURES,
+      bpm: 126,
+    },
+  );
+  const encoded = await encodeBsvProject({
+    now: TEST_TIMESTAMP,
+    pdfBlob: new Blob([PDF_BYTES], { type: PDF_MIME_TYPE }),
+    projectState,
+  });
+  const decoded = decodeBsvProject(encoded.text);
+
+  assert.deepEqual(
+    decoded.projectState.measures.map((measure) => measure.bpm),
+    [126, 126],
+  );
+});
+
 test('.bsv preserves the audio link and start offset', async () => {
   const decoded = decodeBsvProject((await createEncodedProject()).text);
 

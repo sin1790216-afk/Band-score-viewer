@@ -242,8 +242,15 @@ html:-webkit-full-screen #root{
 
 .teacher-shared-audio-panel-header{
     align-items:center;
+    cursor:grab;
     display:flex;
     justify-content:space-between;
+    touch-action:none;
+    user-select:none;
+}
+
+.teacher-shared-audio-panel.dragging .teacher-shared-audio-panel-header{
+    cursor:grabbing;
 }
 
 .teacher-shared-audio-panel .local-audio-options{
@@ -251,7 +258,8 @@ html:-webkit-full-screen #root{
 }
 
 .student-audio-panel-header,
-.student-audio-source-controls{
+.student-audio-source-controls,
+.student-shared-audio-mode-controls{
     align-items:center;
     display:flex;
     gap:6px;
@@ -261,12 +269,19 @@ html:-webkit-full-screen #root{
     justify-content:space-between;
 }
 
-.student-audio-source-controls button{
+.student-audio-source-controls button,
+.student-shared-audio-mode-controls button{
     flex:1;
 }
 
-.student-audio-source-controls .active{
+.student-audio-source-controls .active,
+.student-shared-audio-mode-controls .active{
     border:2px solid #111;
+}
+
+.student-shared-audio-mode-controls{
+    display:grid;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
 }
 
 .student-audio-panel label{
@@ -336,6 +351,13 @@ html:-webkit-full-screen #root{
     white-space:nowrap;
 }
 
+.shared-audio-follow-status{
+    background:#e7f3ea;
+    border:1px solid #9ab9a2;
+    border-radius:4px;
+    padding:6px 7px;
+}
+
 .audio-count-in{
     align-items:center;
     background:#e7e9ed;
@@ -354,7 +376,8 @@ html:-webkit-full-screen #root{
 }
 
 .student-audio-panel .audio-count-in-toggle,
-.student-audio-panel .audio-timeline-follow-toggle{
+.student-audio-panel .audio-timeline-follow-toggle,
+.student-audio-panel .audio-timeline-preference-toggle{
     align-items:center;
     display:flex;
     flex-direction:row;
@@ -362,7 +385,8 @@ html:-webkit-full-screen #root{
 }
 
 .student-audio-panel .audio-count-in-toggle input,
-.student-audio-panel .audio-timeline-follow-toggle input{
+.student-audio-panel .audio-timeline-follow-toggle input,
+.student-audio-panel .audio-timeline-preference-toggle input{
     margin:0;
     width:auto;
 }
@@ -386,6 +410,22 @@ html:-webkit-full-screen #root{
 }
 
 .audio-timeline-follow-toggle span{
+    font-size:12px;
+    font-weight:700;
+}
+
+.audio-timeline-preference-toggle{
+    align-items:center;
+    background:#f0f1f4;
+    border:1px solid #c7c9ce;
+    border-radius:4px;
+    display:flex;
+    gap:6px;
+    min-height:32px;
+    padding:5px 7px;
+}
+
+.audio-timeline-preference-toggle span{
     font-size:12px;
     font-weight:700;
 }
@@ -417,6 +457,49 @@ html:-webkit-full-screen #root{
     padding-top:8px;
 }
 
+.audio-first-measure-anchor-editor,
+.audio-timeline-anchor-editor{
+    border-top:1px solid #c7c9ce;
+    display:flex;
+    flex-direction:column;
+    gap:7px;
+    padding-top:8px;
+}
+
+.audio-timeline-anchor-summary{
+    display:flex;
+    flex-direction:column;
+    font-size:12px;
+    gap:3px;
+}
+
+.audio-timeline-anchor-input{
+    align-items:center;
+    display:grid;
+    font-size:12px;
+    gap:6px;
+    grid-template-columns:auto minmax(6ch, 1fr) auto;
+}
+
+.audio-timeline-anchor-input input{
+    box-sizing:border-box;
+    font-variant-numeric:tabular-nums;
+    min-width:0;
+    width:100%;
+}
+
+.audio-timeline-anchor-error{
+    color:#9b111e;
+}
+
+.audio-timeline-anchor-editor .audio-measure-marker-actions{
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+}
+
+.audio-timeline-anchor-editor .audio-measure-marker-actions button:first-child{
+    grid-column:1 / -1;
+}
+
 .audio-measure-marker-header{
     align-items:baseline;
     display:flex;
@@ -446,6 +529,24 @@ html:-webkit-full-screen #root{
     flex-direction:column;
     gap:7px;
     padding-top:8px;
+}
+
+.audio-global-tempo-editor{
+    border-top:1px solid #c7c9ce;
+    display:flex;
+    flex-direction:column;
+    gap:7px;
+    padding-top:8px;
+}
+
+.audio-global-tempo-actions{
+    display:grid;
+    gap:6px;
+    grid-template-columns:minmax(0, 1fr) auto;
+}
+
+.audio-global-tempo-actions input{
+    min-width:0;
 }
 
 .audio-measure-timing-inputs{
@@ -614,7 +715,7 @@ html:-webkit-full-screen #root{
 }
 
 .sidebar{
-    width:100px;
+    flex:0 0 clamp(9rem, 14vw, 11rem);
     background:red;
     display:flex;
     flex-direction:column;
@@ -736,6 +837,45 @@ html:-webkit-full-screen #root{
     display:flex;
     flex-direction:column;
     gap:6px;
+}
+
+.global-tempo-editor{
+    border-block:1px solid rgba(0, 0, 0, 0.45);
+    display:flex;
+    flex-direction:column;
+    gap:4px;
+    margin:4px 0;
+    padding:7px 4px;
+}
+
+.global-tempo-editor label{
+    font-size:12px;
+    font-weight:700;
+}
+
+.global-tempo-actions{
+    align-items:center;
+    display:grid;
+    gap:4px;
+    grid-template-columns:minmax(5ch, 1fr) auto auto;
+}
+
+.global-tempo-editor input{
+    box-sizing:border-box;
+    min-width:0;
+    width:100%;
+}
+
+.global-tempo-actions span{
+    font-size:11px;
+}
+
+.global-tempo-actions button{
+    white-space:nowrap;
+}
+
+.global-tempo-editor small{
+    font-size:10px;
 }
 
 .audio-settings-editor{

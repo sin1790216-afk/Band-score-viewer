@@ -49,6 +49,7 @@ import {
   isFullscreenSupported,
   toggleDocumentFullscreen,
 } from './utils/fullscreen.js';
+import { clampFloatingPanelPosition } from './utils/floatingPanel.js';
 import {
   clampStudentAnnotationPageNumber,
   createStudentAnnotationDocumentKey,
@@ -78,13 +79,19 @@ import {
 } from './utils/audioPlayback.js';
 import {
   createLocalAudioIdentity,
+  createAudioTimelineAnchor,
   createStudentAudioTimelineKey,
+  getAudioTimelineAnchorMeasureIndex,
+  getAudioTimelineFirstMeasureStartSeconds,
+  getAudioTimelineMarkersFromAnchor,
+  getAudioTimelinePlaybackTimings,
   getEffectiveAudioTimelineMarkers,
   getMeasureTimelineTiming,
   getMeasureTimelineTime,
   getStudentAudioTimelineMarkers,
   getStudentAudioTimelineTimings,
   loadStudentAudioTimelineLibrary,
+  applyStudentAudioTimelineBpm,
   removeStudentAudioTimelineMarker,
   removeStudentAudioTimelineTiming,
   saveStudentAudioTimelineLibrary,
@@ -100,6 +107,14 @@ import {
   normalizeSharedAudioMetadata,
   SHARED_AUDIO_EVENTS,
 } from './utils/sharedAudio.js';
+import {
+  estimateServerClockOffsetMs,
+  isPlaybackSnapshotForMetadata,
+  normalizeSharedAudioPlaybackSnapshot,
+  shouldAcceptPlaybackSnapshot,
+  shouldFollowTeacherSharedAudio,
+  STUDENT_SHARED_AUDIO_MODES,
+} from './utils/sharedAudioPlayback.js';
 
 const REGISTER_MODE = 'register';
 const PLAY_MODE = 'play';
@@ -146,6 +161,26 @@ function getMeasureDurationMs(measure) {
   return (60 / bpm) * beats * 1000;
 }
 
+function getProjectDefaultBpm(measures) {
+  if (!Array.isArray(measures) || measures.length === 0) {
+    return DEFAULT_MEASURE.bpm;
+  }
+
+  const bpmCounts = new Map();
+
+  measures.forEach((measure) => {
+    const bpm = getPositiveNumber(measure?.bpm, DEFAULT_MEASURE.bpm);
+
+    bpmCounts.set(bpm, (bpmCounts.get(bpm) || 0) + 1);
+  });
+
+  return Array.from(bpmCounts.entries()).reduce(
+    (mostCommon, candidate) =>
+      candidate[1] > mostCommon[1] ? candidate : mostCommon,
+    [getPositiveNumber(measures[0]?.bpm, DEFAULT_MEASURE.bpm), 0],
+  )[0];
+}
+
 function formatSocketHost(hostname) {
   return hostname.includes(':') ? `[${hostname}]` : hostname;
 }
@@ -186,12 +221,32 @@ function toPdfBlobPart(data) {
   return null;
 }
 
+function getViewportGeometry() {
+  const visualViewport = window.visualViewport;
+
+  return {
+    height:
+      visualViewport?.height ||
+      document.documentElement.clientHeight ||
+      window.innerHeight,
+    left: visualViewport?.offsetLeft || 0,
+    top: visualViewport?.offsetTop || 0,
+    width:
+      visualViewport?.width ||
+      document.documentElement.clientWidth ||
+      window.innerWidth,
+  };
+}
+
 function App() {
   const bsvInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const jsonInputRef = useRef(null);
   const studentAudioInputRef = useRef(null);
+  const studentSharedAudioPlayerRef = useRef(null);
   const teacherSharedAudioInputRef = useRef(null);
+  const teacherSharedAudioPanelRef = useRef(null);
+  const teacherSharedAudioPanelDragRef = useRef(null);
   const studentPdfInputRef = useRef(null);
   const dragStateRef = useRef(null);
   const resizeStateRef = useRef(null);
@@ -201,6 +256,7 @@ function App() {
   const autoplayTimerRef = useRef(null);
   const autoplayTimerVersionRef = useRef(0);
   const audioSettingsRef = useRef({ ...DEFAULT_AUDIO_SETTINGS });
+  const projectDefaultBpmRef = useRef(DEFAULT_MEASURE.bpm);
   const isRepeatEnabledRef = useRef(false);
   const returnToStartOnEndRef = useRef(false);
   const measuresRef = useRef([]);
@@ -217,6 +273,9 @@ function App() {
   const debugSnapshotRef = useRef({});
   const shouldPublishMeasuresRef = useRef(false);
   const syncStateRef = useRef({ ...INITIAL_SYNC_STATE });
+  const sharedAudioMetadataRef = useRef(null);
+  const sharedAudioPlaybackStateRef = useRef(null);
+  const serverClockOffsetMsRef = useRef(0);
 
   const [projectState, dispatchProject] = useReducer(
     projectReducer,
@@ -266,6 +325,11 @@ function App() {
   const [studentAudioSource, setStudentAudioSource] = useState(
     recoverStudentAudioPicker ? LOCAL_AUDIO_SOURCE : TEACHER_AUDIO_SOURCE,
   );
+  const [studentSharedAudioMode, setStudentSharedAudioMode] = useState(
+    STUDENT_SHARED_AUDIO_MODES.PRACTICE,
+  );
+  const [studentSharedAudioFollowMessage, setStudentSharedAudioFollowMessage] =
+    useState('');
   const [studentAudioSettingsLibrary, setStudentAudioSettingsLibrary] =
     useState(() => loadStudentAudioSettingsLibrary(getBrowserStorage()));
   const [studentAudioTimelineLibrary, setStudentAudioTimelineLibrary] =
@@ -276,11 +340,18 @@ function App() {
     useState('');
   const [isStudentAudioFollowEnabled, setIsStudentAudioFollowEnabled] =
     useState(true);
+  const [studentUseTeacherTempo, setStudentUseTeacherTempo] = useState(true);
+  const [studentUseTeacherTimelineAnchor, setStudentUseTeacherTimelineAnchor] =
+    useState(true);
   const [studentAudioSeekRequest, setStudentAudioSeekRequest] = useState(null);
   const [studentLocalAudioFileName, setStudentLocalAudioFileName] = useState('');
   const [studentLocalAudioFile, setStudentLocalAudioFile] = useState(null);
   const [studentLocalAudioUrl, setStudentLocalAudioUrl] = useState('');
   const [sharedAudioMetadata, setSharedAudioMetadata] = useState(null);
+  const [sharedAudioPlaybackState, setSharedAudioPlaybackState] = useState(null);
+  const [sharedAudioPlaybackSyncVersion, setSharedAudioPlaybackSyncVersion] =
+    useState(0);
+  const [serverClockOffsetMs, setServerClockOffsetMs] = useState(0);
   const [sharedAudioServerUrl, setSharedAudioServerUrl] = useState(
     SOCKET_SERVER_URL,
   );
@@ -292,6 +363,13 @@ function App() {
   });
   const [isTeacherSharedAudioPanelOpen, setIsTeacherSharedAudioPanelOpen] =
     useState(false);
+  const [isTeacherSharedAudioPanelDragging, setIsTeacherSharedAudioPanelDragging] =
+    useState(false);
+  const [teacherSharedAudioPanelPosition, setTeacherSharedAudioPanelPosition] =
+    useState(null);
+  const [projectDefaultBpm, setProjectDefaultBpm] = useState(
+    DEFAULT_MEASURE.bpm,
+  );
   const [viewerMode, setViewerMode] = useState(
     recoverStudentAudioPicker ? STUDENT_MODE : ROLE_SELECT_MODE,
   );
@@ -390,14 +468,47 @@ function App() {
       ),
     [studentAudioTimelineKey, studentAudioTimelineLibrary],
   );
+  const isStudentSharedAudioFollowMode = shouldFollowTeacherSharedAudio({
+    mode: studentSharedAudioMode,
+    sourceType: selectedStudentAudioAsset?.type,
+  });
+  const studentAudioTimelinePlaybackTimings = useMemo(
+    () =>
+      getAudioTimelinePlaybackTimings(
+        studentAudioTimelineTimings,
+        studentUseTeacherTempo,
+      ),
+    [studentAudioTimelineTimings, studentUseTeacherTempo],
+  );
+  const firstMeasureId = measures[0]?.id || '';
+  const studentPersonalFirstMeasureAnchorSeconds = getMeasureTimelineTime(
+    studentAudioTimelineMarkers,
+    firstMeasureId,
+  );
+  const canUseTeacherTimelineAnchor =
+    selectedStudentAudioAsset?.type === TEACHER_AUDIO_SOURCE;
+  const isUsingTeacherTimelineAnchor =
+    canUseTeacherTimelineAnchor && studentUseTeacherTimelineAnchor;
   const studentAudioEffectiveMarkers = useMemo(
     () =>
-      getEffectiveAudioTimelineMarkers({
-        markers: studentAudioTimelineMarkers,
-        measures,
-        timings: studentAudioTimelineTimings,
-      }),
-    [measures, studentAudioTimelineMarkers, studentAudioTimelineTimings],
+      isUsingTeacherTimelineAnchor
+        ? getAudioTimelineMarkersFromAnchor({
+            anchor: sharedAudioMetadata?.timelineAnchor,
+            measures,
+            timings: studentAudioTimelinePlaybackTimings,
+          })
+        : getEffectiveAudioTimelineMarkers({
+            markers: studentAudioTimelineMarkers,
+            measures,
+            timings: studentAudioTimelinePlaybackTimings,
+          }),
+    [
+      isUsingTeacherTimelineAnchor,
+      measures,
+      sharedAudioMetadata?.timelineAnchor,
+      studentAudioTimelineMarkers,
+      studentAudioTimelinePlaybackTimings,
+    ],
   );
   const studentAudioWaveformMarkers = useMemo(() => {
     const measureIndexById = new Map(
@@ -422,9 +533,13 @@ function App() {
   const canUseStudentMeasureAudio =
     viewerMode === STUDENT_MODE &&
     Boolean(selectedStudentAudioAsset?.sourceUrl && studentAudioTimelineKey);
+  const isStudentAudioTimelineFollowEnabled =
+    isStudentSharedAudioFollowMode || isStudentAudioFollowEnabled;
+  const canEditStudentAudioTimeline =
+    canUseStudentMeasureAudio && !isStudentSharedAudioFollowMode;
   const isStudentAudioFollowing = Boolean(
     canUseStudentMeasureAudio &&
-      isStudentAudioFollowEnabled &&
+      isStudentAudioTimelineFollowEnabled &&
       studentAudioPlaybackMeasure,
   );
   const displayPageNumber = isStudentAnnotating
@@ -447,6 +562,17 @@ function App() {
       .map(getTrimmedLyric)
       .find((lyric) => lyric && lyric !== getTrimmedLyric(currentMeasure)) || '';
   const selectedMeasure = measures[selectedMeasureIndex] || null;
+  const teacherSharedAudioAnchorMeasureIndex =
+    getAudioTimelineAnchorMeasureIndex(
+      sharedAudioMetadata?.timelineAnchor,
+      measures,
+    );
+  const teacherSharedAudioFirstMeasureTime =
+    getAudioTimelineFirstMeasureStartSeconds({
+      anchor: sharedAudioMetadata?.timelineAnchor,
+      measures,
+      timings: [],
+    });
   const overlayMode = canEdit ? mode : PLAY_MODE;
   const configuredAudioTargetMeasure = measures[studentAudioTargetMeasureIndex];
   const audioTargetMeasureIndex =
@@ -463,9 +589,17 @@ function App() {
     audioTargetMeasure?.id,
   );
   const audioTargetPersonalTiming = getMeasureTimelineTiming(
+    studentAudioTimelinePlaybackTimings,
+    audioTargetMeasure?.id,
+  );
+  const audioTargetStoredPersonalTiming = getMeasureTimelineTiming(
     studentAudioTimelineTimings,
     audioTargetMeasure?.id,
   );
+  const studentPersonalGlobalBpm =
+    studentAudioTimelineTimings.length >= measures.length && measures.length > 0
+      ? getProjectDefaultBpm(studentAudioTimelineTimings)
+      : getProjectDefaultBpm(measures);
   const audioTargetBpm =
     audioTargetPersonalTiming?.bpm ||
     audioTargetMeasure?.bpm ||
@@ -785,6 +919,9 @@ function App() {
     shouldPublishMeasuresRef.current = false;
     syncStateRef.current = emptySessionState.syncState;
     audioSettingsRef.current = emptySessionState.audioSettings;
+    projectDefaultBpmRef.current = DEFAULT_MEASURE.bpm;
+    sharedAudioMetadataRef.current = null;
+    sharedAudioPlaybackStateRef.current = null;
     teacherPdfBlobRef.current = null;
 
     dispatchProject({
@@ -819,10 +956,20 @@ function App() {
     });
     setIsStudentAnnotationEnabled(false);
     setSharedAudioMetadata(null);
+    setSharedAudioPlaybackState(null);
+    setSharedAudioPlaybackSyncVersion((version) => version + 1);
+    setStudentSharedAudioMode(STUDENT_SHARED_AUDIO_MODES.PRACTICE);
+    setStudentUseTeacherTempo(true);
+    setStudentUseTeacherTimelineAnchor(true);
+    setStudentSharedAudioFollowMessage('');
     setSharedAudioWaveformFile(null);
     setSharedAudioLoadError('');
     setSharedAudioMutationState({ message: '', status: 'idle' });
     setIsTeacherSharedAudioPanelOpen(false);
+    teacherSharedAudioPanelDragRef.current = null;
+    setIsTeacherSharedAudioPanelDragging(false);
+    setTeacherSharedAudioPanelPosition(null);
+    setProjectDefaultBpm(DEFAULT_MEASURE.bpm);
     setMode(REGISTER_MODE);
     setTeacherPdfUrl('');
 
@@ -890,6 +1037,7 @@ function App() {
     resizeStateRef.current = null;
     measuresRef.current = [];
     audioSettingsRef.current = { ...DEFAULT_AUDIO_SETTINGS };
+    projectDefaultBpmRef.current = DEFAULT_MEASURE.bpm;
     teacherPdfBlobRef.current = file;
     dispatchProject({
       type: PROJECT_ACTIONS.RESET_PROJECT,
@@ -901,6 +1049,7 @@ function App() {
     publishMeasures([]);
     socketRef.current?.emit('audio:update', audioSettingsRef.current);
     setSyncedMeasureIndex(0);
+    setProjectDefaultBpm(DEFAULT_MEASURE.bpm);
     setSelectedMeasureIndex(-1);
     setDraggedMeasureIndex(-1);
     setResizedMeasureIndex(-1);
@@ -933,7 +1082,10 @@ function App() {
 
     reader.onload = (readerEvent) => {
       const nextMeasures = importMeasuresJson(readerEvent.target.result);
+      const nextDefaultBpm = getProjectDefaultBpm(nextMeasures);
 
+      projectDefaultBpmRef.current = nextDefaultBpm;
+      setProjectDefaultBpm(nextDefaultBpm);
       dispatchMeasureUpdate({
         type: PROJECT_ACTIONS.IMPORT_MEASURES,
         measures: nextMeasures,
@@ -1009,6 +1161,7 @@ function App() {
     const nextAudioSettings = nextProjectState.audioSettings;
     const nextFileName = nextProjectState.pdfMetadata.fileName;
     const nextMimeType = nextProjectState.pdfMetadata.mimeType;
+    const nextDefaultBpm = getProjectDefaultBpm(nextMeasures);
 
     stopAutoplay();
     measureRecognitionVersionRef.current += 1;
@@ -1026,6 +1179,7 @@ function App() {
     isRepeatEnabledRef.current = false;
     shouldPublishMeasuresRef.current = false;
     audioSettingsRef.current = nextAudioSettings;
+    projectDefaultBpmRef.current = nextDefaultBpm;
     teacherPdfBlobRef.current = preparedProject.pdfBlob;
     studentPdfSourceRef.current = TEACHER_PDF_SOURCE;
 
@@ -1042,6 +1196,7 @@ function App() {
     setDraggedMeasureIndex(-1);
     setResizedMeasureIndex(-1);
     setIsLyricEditorOpen(false);
+    setProjectDefaultBpm(nextDefaultBpm);
     setStudentPdfSource(TEACHER_PDF_SOURCE);
     resetPdfRenderState();
     setTeacherPdfUrl(nextPdfUrl);
@@ -1117,6 +1272,7 @@ function App() {
       const nextMeasures = prepareMeasuresForProject(
         candidates.map((candidate) => ({
           ...DEFAULT_MEASURE,
+          bpm: projectDefaultBpmRef.current,
           ...candidate,
           coordinateHeight: 1,
           coordinateSpace: NORMALIZED_COORDINATE_SPACE,
@@ -1178,6 +1334,7 @@ function App() {
       x: point.x - DEFAULT_MEASURE.width / scaleX / 2,
       y: point.y - DEFAULT_MEASURE.height / scaleY / 2,
       ...DEFAULT_MEASURE,
+      bpm: projectDefaultBpmRef.current,
       height: DEFAULT_MEASURE.height / scaleY,
       width: DEFAULT_MEASURE.width / scaleX,
     });
@@ -1369,6 +1526,24 @@ function App() {
     });
   }
 
+  function applyTeacherGlobalBpm(value) {
+    if (!canEdit || measures.length === 0) return;
+
+    const nextBpm = getPositiveNumber(value, 0);
+
+    if (!nextBpm) {
+      window.alert('전체 템포는 0보다 큰 숫자로 입력해주세요.');
+      return;
+    }
+
+    projectDefaultBpmRef.current = nextBpm;
+    setProjectDefaultBpm(nextBpm);
+    dispatchMeasureUpdate({
+      type: PROJECT_ACTIONS.APPLY_BPM_TO_ALL_MEASURES,
+      bpm: nextBpm,
+    });
+  }
+
   function updateAudioSettings(changes) {
     if (!canEdit) return;
 
@@ -1402,6 +1577,159 @@ function App() {
 
   function openTeacherSharedAudioPicker() {
     teacherSharedAudioInputRef.current?.click();
+  }
+
+  function getClampedTeacherSharedAudioPanelPosition(left, top) {
+    const panel = teacherSharedAudioPanelRef.current;
+
+    if (!panel) return null;
+
+    const panelRect = panel.getBoundingClientRect();
+    const viewport = getViewportGeometry();
+
+    return clampFloatingPanelPosition({
+      left,
+      panelHeight: panelRect.height,
+      panelWidth: panelRect.width,
+      top,
+      viewportHeight: viewport.height,
+      viewportLeft: viewport.left,
+      viewportTop: viewport.top,
+      viewportWidth: viewport.width,
+    });
+  }
+
+  function startTeacherSharedAudioPanelDrag(event) {
+    if (
+      (event.pointerType === 'mouse' && event.button !== 0) ||
+      event.target.closest('button, input, select, textarea, a, label')
+    ) {
+      return;
+    }
+
+    const panel = teacherSharedAudioPanelRef.current;
+
+    if (!panel) return;
+
+    const panelRect = panel.getBoundingClientRect();
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    teacherSharedAudioPanelDragRef.current = {
+      grabOffsetX: event.clientX - panelRect.left,
+      grabOffsetY: event.clientY - panelRect.top,
+      pointerId: event.pointerId,
+    };
+    setIsTeacherSharedAudioPanelDragging(true);
+  }
+
+  function moveTeacherSharedAudioPanel(event) {
+    const dragState = teacherSharedAudioPanelDragRef.current;
+
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+    event.preventDefault();
+    const nextPosition = getClampedTeacherSharedAudioPanelPosition(
+      event.clientX - dragState.grabOffsetX,
+      event.clientY - dragState.grabOffsetY,
+    );
+
+    if (nextPosition) setTeacherSharedAudioPanelPosition(nextPosition);
+  }
+
+  function endTeacherSharedAudioPanelDrag(event) {
+    const dragState = teacherSharedAudioPanelDragRef.current;
+
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    teacherSharedAudioPanelDragRef.current = null;
+    setIsTeacherSharedAudioPanelDragging(false);
+  }
+
+  function publishTeacherSharedAudioPlayback(playbackState, sourceMetadata) {
+    const metadata = sharedAudioMetadataRef.current;
+
+    if (
+      !metadata ||
+      sourceMetadata?.assetId !== metadata.assetId ||
+      sourceMetadata?.revision !== metadata.revision ||
+      !socketRef.current?.connected
+    ) {
+      return;
+    }
+
+    socketRef.current.emit(SHARED_AUDIO_EVENTS.PLAYBACK_UPDATE, {
+      ...playbackState,
+      assetId: metadata.assetId,
+      revision: metadata.revision,
+    });
+  }
+
+  function updateTeacherSharedAudioTimelineAnchor(timelineAnchor) {
+    const metadata = sharedAudioMetadataRef.current;
+    const socket = socketRef.current;
+
+    if (!metadata || !socket?.connected) {
+      window.alert('마디 시작 위치를 저장하려면 실시간 서버 연결이 필요합니다.');
+      return;
+    }
+
+    setSharedAudioMutationState({
+      message: '공용 음원의 마디 시작 위치를 저장하고 있습니다.',
+      status: 'working',
+    });
+    socket.timeout(10_000).emit(
+      SHARED_AUDIO_EVENTS.TIMELINE_ANCHOR_UPDATE,
+      {
+        assetId: metadata.assetId,
+        revision: metadata.revision,
+        timelineAnchor,
+      },
+      (error, response) => {
+        if (error || !response?.ok) {
+          const message =
+            response?.message ||
+            (error
+              ? '마디 시작 위치 저장 서버가 응답하지 않습니다. Socket 서버를 재시작해주세요.'
+              : '마디 시작 위치를 저장하지 못했습니다.');
+
+          setSharedAudioMutationState({ message, status: 'error' });
+          window.alert(message);
+          return;
+        }
+
+        setSharedAudioMutationState({
+          message:
+            timelineAnchor === null
+              ? '공용 음원의 마디 시작 위치를 해제했습니다.'
+              : '공용 음원의 마디 시작 위치를 저장했습니다.',
+          status: 'success',
+        });
+      },
+    );
+  }
+
+  function setTeacherSharedAudioTimelineAnchor({
+    measureNumber,
+    positionSeconds,
+  }) {
+    const timelineAnchor = createAudioTimelineAnchor({
+      measureNumber,
+      measures: measuresRef.current,
+      positionSeconds,
+    });
+
+    if (!timelineAnchor) {
+      window.alert(
+        `기준 마디는 1부터 ${measuresRef.current.length} 사이의 정수로 입력해주세요.`,
+      );
+      return;
+    }
+
+    updateTeacherSharedAudioTimelineAnchor(timelineAnchor);
   }
 
   async function selectTeacherSharedAudio(event) {
@@ -1449,9 +1777,12 @@ function App() {
             return;
           }
 
-          setSharedAudioMetadata(
-            normalizeSharedAudioMetadata(response.metadata),
+          const normalizedMetadata = normalizeSharedAudioMetadata(
+            response.metadata,
           );
+
+          sharedAudioMetadataRef.current = normalizedMetadata;
+          setSharedAudioMetadata(normalizedMetadata);
           setSharedAudioMutationState({
             message: '공용 음원이 등록되었습니다.',
             status: 'success',
@@ -1499,6 +1830,10 @@ function App() {
         }
 
         setSharedAudioMetadata(null);
+        sharedAudioMetadataRef.current = null;
+        sharedAudioPlaybackStateRef.current = null;
+        setSharedAudioPlaybackState(null);
+        setSharedAudioPlaybackSyncVersion((version) => version + 1);
         setSharedAudioMutationState({
           message: '공용 음원이 제거되었습니다.',
           status: 'success',
@@ -1605,7 +1940,46 @@ function App() {
     setStudentAudioPlaybackMeasureId('');
     setStudentAudioSeekRequest(null);
     setStudentAudioTargetMeasureIndex(displayMeasureIndex);
+    setStudentSharedAudioMode(STUDENT_SHARED_AUDIO_MODES.PRACTICE);
+    setStudentSharedAudioFollowMessage('');
     setStudentAudioSource(nextSource);
+  }
+
+  async function startStudentSharedAudioFollow() {
+    setStudentSharedAudioMode(STUDENT_SHARED_AUDIO_MODES.FOLLOW);
+    setStudentSharedAudioFollowMessage('');
+
+    const playbackSnapshot = sharedAudioPlaybackStateRef.current;
+
+    if (!playbackSnapshot) {
+      setStudentSharedAudioFollowMessage(
+        'Teacher의 공용 음원 재생 상태를 기다리는 중입니다.',
+      );
+      return;
+    }
+
+    const result = await studentSharedAudioPlayerRef.current?.applyExternalPlayback(
+      playbackSnapshot,
+      {
+        allowPlay: true,
+        clockOffsetMs: serverClockOffsetMsRef.current,
+        forceSeek: true,
+        prepareWhenPaused: true,
+      },
+    );
+
+    if (result?.ok) {
+      setStudentSharedAudioFollowMessage('Teacher의 현재 재생 위치에 합류했습니다.');
+    }
+  }
+
+  function startStudentSharedAudioPractice() {
+    setStudentSharedAudioMode(STUDENT_SHARED_AUDIO_MODES.PRACTICE);
+    setStudentSharedAudioFollowMessage('개인 연습에서는 재생을 직접 조작할 수 있습니다.');
+  }
+
+  function handleStudentSharedAudioPlaybackBlocked(message) {
+    setStudentSharedAudioFollowMessage(message);
   }
 
   function activateStudentAudioMeasure(nextMeasureIndex) {
@@ -1643,6 +2017,23 @@ function App() {
         timeSeconds,
       }),
     );
+  }
+
+  function updateStudentFirstMeasureAnchor(timeSeconds) {
+    if (
+      !firstMeasureId ||
+      isStudentSharedAudioFollowMode ||
+      isUsingTeacherTimelineAnchor
+    ) {
+      return;
+    }
+
+    if (timeSeconds === null) {
+      removeStudentMeasureAudioTime(firstMeasureId);
+      return;
+    }
+
+    setStudentMeasureAudioTime(firstMeasureId, timeSeconds);
   }
 
   function removeStudentMeasureAudioTime(measureId) {
@@ -1692,7 +2083,14 @@ function App() {
   }
 
   function updateStudentMeasureAudioTiming(measureId, timing) {
-    if (!studentAudioTimelineKey || !measureId) return;
+    if (
+      !studentAudioTimelineKey ||
+      !measureId ||
+      isStudentSharedAudioFollowMode ||
+      studentUseTeacherTempo
+    ) {
+      return;
+    }
 
     const measure = measures.find((candidate) => candidate.id === measureId);
 
@@ -1723,6 +2121,32 @@ function App() {
         previousLibrary,
         studentAudioTimelineKey,
         measureId,
+      ),
+    );
+  }
+
+  function applyStudentGlobalAudioBpm(value) {
+    if (
+      !studentAudioTimelineKey ||
+      isStudentSharedAudioFollowMode ||
+      studentUseTeacherTempo
+    ) {
+      return;
+    }
+
+    const nextBpm = getPositiveNumber(value, 0);
+
+    if (!nextBpm) {
+      window.alert('개인 전체 템포는 0보다 큰 숫자로 입력해주세요.');
+      return;
+    }
+
+    setStudentAudioTimelineLibrary((previousLibrary) =>
+      applyStudentAudioTimelineBpm(
+        previousLibrary,
+        studentAudioTimelineKey,
+        measures,
+        nextBpm,
       ),
     );
   }
@@ -1864,6 +2288,20 @@ function App() {
       socket.on('connect', () => {
         console.log(`[socket] connected to ${label}`, socket.id);
 
+        const requestSentAtMs = Date.now();
+
+        socket.emit(SHARED_AUDIO_EVENTS.CLOCK, (response) => {
+          const nextOffset = estimateServerClockOffsetMs({
+            requestSentAtMs,
+            responseReceivedAtMs: Date.now(),
+            serverTimeMs: response?.serverTimeMs,
+          });
+
+          serverClockOffsetMsRef.current = nextOffset;
+          setServerClockOffsetMs(nextOffset);
+          setSharedAudioPlaybackSyncVersion((version) => version + 1);
+        });
+
         if (viewerModeRef.current === TEACHER_MODE) {
           publishCurrentTeacherPosition(socket);
           publishCurrentTeacherAudioSettings(socket);
@@ -1985,15 +2423,63 @@ function App() {
 
       socket.on(SHARED_AUDIO_EVENTS.STATE, (nextMetadata) => {
         const normalizedMetadata = normalizeSharedAudioMetadata(nextMetadata);
+        const previousMetadata = sharedAudioMetadataRef.current;
+        const didAssetChange =
+          previousMetadata?.assetId !== normalizedMetadata?.assetId ||
+          previousMetadata?.revision !== normalizedMetadata?.revision;
 
+        sharedAudioMetadataRef.current = normalizedMetadata;
         setSharedAudioMetadata(normalizedMetadata);
         setSharedAudioLoadError('');
+        if (didAssetChange) {
+          sharedAudioPlaybackStateRef.current = null;
+          setSharedAudioPlaybackState(null);
+          setSharedAudioPlaybackSyncVersion((version) => version + 1);
+          setStudentSharedAudioFollowMessage(
+            normalizedMetadata
+              ? '공용 음원이 교체되었습니다. 재생 상태를 기다리는 중입니다.'
+              : '',
+          );
+        }
         setSharedAudioMutationState((previousState) =>
           previousState.status === 'working'
             ? { message: '', status: 'idle' }
             : previousState,
         );
         console.log('[socket] received shared-audio:state', normalizedMetadata);
+      });
+
+      socket.on(SHARED_AUDIO_EVENTS.PLAYBACK_STATE, (nextPlaybackState) => {
+        if (nextPlaybackState === null) {
+          sharedAudioPlaybackStateRef.current = null;
+          setSharedAudioPlaybackState(null);
+          setSharedAudioPlaybackSyncVersion((version) => version + 1);
+          return;
+        }
+
+        const normalizedPlaybackState =
+          normalizeSharedAudioPlaybackSnapshot(nextPlaybackState);
+
+        if (
+          !isPlaybackSnapshotForMetadata(
+            normalizedPlaybackState,
+            sharedAudioMetadataRef.current,
+          ) ||
+          !shouldAcceptPlaybackSnapshot(
+            normalizedPlaybackState,
+            sharedAudioPlaybackStateRef.current,
+          )
+        ) {
+          console.warn(
+            '[shared-audio] ignored stale or mismatched playback snapshot',
+            nextPlaybackState,
+          );
+          return;
+        }
+
+        sharedAudioPlaybackStateRef.current = normalizedPlaybackState;
+        setSharedAudioPlaybackState(normalizedPlaybackState);
+        setSharedAudioPlaybackSyncVersion((version) => version + 1);
       });
 
       socket.on('session:reset', () => {
@@ -2053,6 +2539,49 @@ function App() {
 
     return () => controller.abort();
   }, [sharedAudioUrl, studentAudioSource, viewerMode]);
+
+  useEffect(() => {
+    const panel = teacherSharedAudioPanelRef.current;
+
+    if (!canEdit || !sharedAudioMetadata || !panel) return undefined;
+
+    function keepPanelAccessible() {
+      const panelRect = panel.getBoundingClientRect();
+      const nextPosition = getClampedTeacherSharedAudioPanelPosition(
+        panelRect.left,
+        panelRect.top,
+      );
+
+      if (!nextPosition) return;
+
+      setTeacherSharedAudioPanelPosition((previousPosition) =>
+        previousPosition?.left === nextPosition.left &&
+        previousPosition?.top === nextPosition.top
+          ? previousPosition
+          : nextPosition,
+      );
+    }
+
+    keepPanelAccessible();
+    window.addEventListener('resize', keepPanelAccessible);
+    window.visualViewport?.addEventListener('resize', keepPanelAccessible);
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(keepPanelAccessible);
+
+    resizeObserver?.observe(panel);
+
+    return () => {
+      window.removeEventListener('resize', keepPanelAccessible);
+      window.visualViewport?.removeEventListener('resize', keepPanelAccessible);
+      resizeObserver?.disconnect();
+    };
+  }, [
+    canEdit,
+    isTeacherSharedAudioPanelOpen,
+    sharedAudioMetadata,
+  ]);
 
   useEffect(() => {
     if (!shouldPublishMeasuresRef.current) return;
@@ -2387,6 +2916,52 @@ function App() {
                         내 음원
                       </button>
                     </div>
+                    {studentAudioSource === TEACHER_AUDIO_SOURCE && (
+                      <div
+                        aria-label="공용 음원 재생 모드"
+                        className="student-shared-audio-mode-controls"
+                        role="group"
+                      >
+                        <button
+                          aria-pressed={
+                            studentSharedAudioMode ===
+                            STUDENT_SHARED_AUDIO_MODES.FOLLOW
+                          }
+                          className={
+                            studentSharedAudioMode ===
+                            STUDENT_SHARED_AUDIO_MODES.FOLLOW
+                              ? 'active'
+                              : ''
+                          }
+                          onClick={startStudentSharedAudioFollow}
+                          type="button"
+                        >
+                          수업 따라가기
+                        </button>
+                        <button
+                          aria-pressed={
+                            studentSharedAudioMode ===
+                            STUDENT_SHARED_AUDIO_MODES.PRACTICE
+                          }
+                          className={
+                            studentSharedAudioMode ===
+                            STUDENT_SHARED_AUDIO_MODES.PRACTICE
+                              ? 'active'
+                              : ''
+                          }
+                          onClick={startStudentSharedAudioPractice}
+                          type="button"
+                        >
+                          개인 연습
+                        </button>
+                      </div>
+                    )}
+                    {studentAudioSource === TEACHER_AUDIO_SOURCE &&
+                      studentSharedAudioFollowMessage && (
+                        <small aria-live="polite">
+                          {studentSharedAudioFollowMessage}
+                        </small>
+                      )}
                     <label>
                       음원 링크
                       <input
@@ -2454,8 +3029,22 @@ function App() {
                       audioFile={selectedStudentAudioAsset.audioFile}
                       countInBeats={audioTargetBeats}
                       countInBpm={audioTargetBpm}
+                      externalPlaybackLocked={isStudentSharedAudioFollowMode}
+                      externalPlaybackSnapshot={sharedAudioPlaybackState}
+                      externalPlaybackSyncVersion={
+                        sharedAudioPlaybackSyncVersion
+                      }
                       fileName={selectedStudentAudioAsset.fileName}
-                      hasPersonalMeasureTiming={Boolean(audioTargetPersonalTiming)}
+                      firstMeasureAnchorSeconds={
+                        getMeasureTimelineTime(
+                          studentAudioEffectiveMarkers,
+                          firstMeasureId,
+                        )
+                      }
+                      globalBpm={studentPersonalGlobalBpm}
+                      hasPersonalMeasureTiming={Boolean(
+                        audioTargetStoredPersonalTiming,
+                      )}
                       isEditorVisible={isStudentAudioPanelOpen}
                       measureMarkerTimeSeconds={audioTargetMeasureTime}
                       measureTimelineTimeSeconds={audioTargetTimelineTime}
@@ -2464,6 +3053,13 @@ function App() {
                       onMeasureMarkerRemove={removeStudentMeasureAudioTime}
                       onMeasureTimingChange={updateStudentMeasureAudioTiming}
                       onMeasureTimingReset={resetStudentMeasureAudioTiming}
+                      onExternalPlaybackBlocked={
+                        handleStudentSharedAudioPlaybackBlocked
+                      }
+                      onGlobalBpmApply={applyStudentGlobalAudioBpm}
+                      onFirstMeasureAnchorChange={
+                        updateStudentFirstMeasureAnchor
+                      }
                       onStartOffsetChange={(startOffsetSeconds) =>
                         updateStudentPlaybackAudioSettings({ startOffsetSeconds })
                       }
@@ -2471,7 +3067,15 @@ function App() {
                         updateStudentAudioFollowEnabled
                       }
                       onTimelineMeasureChange={updateStudentAudioTimelineMeasure}
+                      onUseTeacherTimelineAnchorChange={
+                        setStudentUseTeacherTimelineAnchor
+                      }
+                      onUseTeacherTempoChange={setStudentUseTeacherTempo}
+                      personalFirstMeasureAnchorSeconds={
+                        studentPersonalFirstMeasureAnchorSeconds
+                      }
                       seekRequest={studentAudioSeekRequest}
+                      serverClockOffsetMs={serverClockOffsetMs}
                       sourceUrl={selectedStudentAudioAsset.sourceUrl}
                       startOffsetSeconds={
                         studentPlaybackAudioSettings.startOffsetSeconds
@@ -2480,7 +3084,17 @@ function App() {
                       targetMeasureNumber={
                         audioTargetMeasure ? audioTargetMeasureIndex + 1 : 0
                       }
-                      timelineFollowEnabled={isStudentAudioFollowEnabled}
+                      timelineFollowEnabled={
+                        isStudentAudioTimelineFollowEnabled
+                      }
+                      useTeacherTimelineAnchor={
+                        isUsingTeacherTimelineAnchor
+                      }
+                      useTeacherTempo={studentUseTeacherTempo}
+                      canUseTeacherTimelineAnchor={
+                        canUseTeacherTimelineAnchor
+                      }
+                      ref={studentSharedAudioPlayerRef}
                     />
                   ) : isStudentAudioPanelOpen ? (
                     <small>
@@ -2497,7 +3111,7 @@ function App() {
                     studentAudioSource === TEACHER_AUDIO_SOURCE && (
                       <small>
                         공용 음원 파일은 Teacher가 교체하면 자동으로 갱신되며,
-                        재생 위치와 속도는 이 기기에서만 동작합니다.
+                        수업 따라가기에서는 Teacher의 위치와 속도를 사용합니다.
                       </small>
                     )}
                   {isStudentAudioPanelOpen &&
@@ -2606,9 +3220,26 @@ function App() {
           aria-label="선생님 공유 음원 재생"
           className={`teacher-shared-audio-panel ${
             isTeacherSharedAudioPanelOpen ? '' : 'compact'
-          }`}
+          } ${isTeacherSharedAudioPanelDragging ? 'dragging' : ''}`}
+          ref={teacherSharedAudioPanelRef}
+          style={
+            teacherSharedAudioPanelPosition
+              ? {
+                  left: teacherSharedAudioPanelPosition.left,
+                  right: 'auto',
+                  top: teacherSharedAudioPanelPosition.top,
+                }
+              : undefined
+          }
         >
-          <div className="teacher-shared-audio-panel-header">
+          <div
+            className="teacher-shared-audio-panel-header"
+            onLostPointerCapture={endTeacherSharedAudioPanelDrag}
+            onPointerCancel={endTeacherSharedAudioPanelDrag}
+            onPointerDown={startTeacherSharedAudioPanelDrag}
+            onPointerMove={moveTeacherSharedAudioPanel}
+            onPointerUp={endTeacherSharedAudioPanelDrag}
+          >
             <strong>공용 음원</strong>
             <button
               onClick={() =>
@@ -2623,9 +3254,30 @@ function App() {
             audioFile={sharedAudioWaveformFile}
             fileName={sharedAudioMetadata.fileName}
             isEditorVisible={isTeacherSharedAudioPanelOpen}
+            key={`${sharedAudioMetadata.assetId}:${sharedAudioMetadata.revision}`}
+            onPlaybackStateChange={(playbackState) =>
+              publishTeacherSharedAudioPlayback(
+                playbackState,
+                sharedAudioMetadata,
+              )
+            }
+            onTimelineAnchorClear={() =>
+              updateTeacherSharedAudioTimelineAnchor(null)
+            }
+            onTimelineAnchorSet={setTeacherSharedAudioTimelineAnchor}
             showPracticeTools={false}
             sourceUrl={sharedAudioUrl}
             startOffsetSeconds={0}
+            timelineAnchor={sharedAudioMetadata.timelineAnchor}
+            timelineAnchorFirstMeasureSeconds={
+              teacherSharedAudioFirstMeasureTime
+            }
+            timelineAnchorMeasureNumber={
+              teacherSharedAudioAnchorMeasureIndex >= 0
+                ? teacherSharedAudioAnchorMeasureIndex + 1
+                : 0
+            }
+            timelineAnchorMeasureCount={measures.length}
           />
           {sharedAudioLoadError && (
             <small className="audio-error">{sharedAudioLoadError}</small>
@@ -2677,9 +3329,11 @@ function App() {
             onOpenAudioLink={openAudioLink}
             onOpenSharedAudioPicker={openTeacherSharedAudioPicker}
             onRemoveSharedAudio={removeTeacherSharedAudio}
+            onApplyGlobalBpm={applyTeacherGlobalBpm}
             onUpdateSelectedMeasureTiming={updateSelectedMeasureTiming}
             onUpdateAudioSettings={updateAudioSettings}
             pageNumber={pageNumber}
+            projectDefaultBpm={projectDefaultBpm}
             returnToStartOnEnd={returnToStartOnEnd}
             sharedAudioInputRef={teacherSharedAudioInputRef}
             sharedAudioMetadata={sharedAudioMetadata}
@@ -2740,7 +3394,7 @@ function App() {
             mode={overlayMode}
             onAddAnnotationStroke={addStudentAnnotationStroke}
             onActivateMeasure={
-              canUseStudentMeasureAudio ? activateStudentAudioMeasure : null
+              canEditStudentAudioTimeline ? activateStudentAudioMeasure : null
             }
             onDebugSnapshot={handleDebugSnapshot}
             onEndMeasureDrag={endMeasureDrag}
@@ -2757,7 +3411,7 @@ function App() {
             resizedMeasureIndex={resizedMeasureIndex}
             selectedMeasureIndex={selectedMeasureIndex}
             showAudioMeasureTargets={
-              canUseStudentMeasureAudio && isStudentAudioPanelOpen
+              canEditStudentAudioTimeline && isStudentAudioPanelOpen
             }
             studentPdfSource={studentPdfSource}
             studentViewMode={studentViewMode}
@@ -2835,6 +3489,7 @@ function Sidebar({
   measureRecognitionState,
   measureTotal,
   mode,
+  onApplyGlobalBpm,
   onEndClassSession,
   onGoToMeasure,
   onGoToPage,
@@ -2859,6 +3514,7 @@ function Sidebar({
   onUpdateAudioSettings,
   onUpdateSelectedMeasureTiming,
   pageNumber,
+  projectDefaultBpm,
   returnToStartOnEnd,
   sharedAudioInputRef,
   sharedAudioMetadata,
@@ -2871,10 +3527,17 @@ function Sidebar({
   const [measureNumberInput, setMeasureNumberInput] = useState(
     measureTotal > 0 ? String(measureIndex + 1) : '',
   );
+  const [globalBpmInput, setGlobalBpmInput] = useState(
+    String(projectDefaultBpm),
+  );
 
   useEffect(() => {
     setMeasureNumberInput(measureTotal > 0 ? String(measureIndex + 1) : '');
   }, [measureIndex, measureTotal]);
+
+  useEffect(() => {
+    setGlobalBpmInput(String(projectDefaultBpm));
+  }, [projectDefaultBpm]);
 
   function submitMeasureNumber(event) {
     event.preventDefault();
@@ -2890,6 +3553,11 @@ function Sidebar({
     }
 
     onGoToMeasure(measureNumber - 1);
+  }
+
+  function submitGlobalBpm(event) {
+    event.preventDefault();
+    onApplyGlobalBpm(globalBpmInput);
   }
 
   return (
@@ -3094,11 +3762,31 @@ function Sidebar({
               ■ Stop
             </button>
           </div>
+          <form className="global-tempo-editor" onSubmit={submitGlobalBpm}>
+            <label htmlFor="global-bpm-input">전체 템포</label>
+            <div className="global-tempo-actions">
+              <input
+                id="global-bpm-input"
+                inputMode="decimal"
+                min="1"
+                onChange={(event) => setGlobalBpmInput(event.target.value)}
+                step="1"
+                type="number"
+                value={globalBpmInput}
+              />
+              <span aria-hidden="true">BPM</span>
+              <button disabled={measureTotal === 0} type="submit">
+                전체 적용
+              </button>
+            </div>
+            <small>모든 마디의 BPM에 적용됩니다.</small>
+          </form>
         </>
       )}
 
       {canEdit && mode === REGISTER_MODE && selectedMeasure && (
         <div className="measure-timing-editor">
+          <strong>현재 마디 템포</strong>
           <p>선택 마디 : {selectedMeasureIndex + 1}</p>
           <label>
             BPM

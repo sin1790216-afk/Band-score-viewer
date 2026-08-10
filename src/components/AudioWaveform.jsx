@@ -46,6 +46,7 @@ export default function AudioWaveform({
   audioFile,
   currentTime,
   duration,
+  isInteractionDisabled = false,
   isVisible,
   measureMarkers = [],
   onSeek,
@@ -242,7 +243,7 @@ export default function AudioWaveform({
   ]);
 
   function handlePointerDown(event) {
-    if (!duration || !visibleDuration) return;
+    if (isInteractionDisabled || !duration || !visibleDuration || !onSeek) return;
 
     event.preventDefault();
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -289,6 +290,8 @@ export default function AudioWaveform({
   }
 
   function handlePointerMove(event) {
+    if (isInteractionDisabled || !onSeek) return;
+
     if (pointerPositionsRef.current.has(event.pointerId)) {
       pointerPositionsRef.current.set(event.pointerId, {
         clientX: event.clientX,
@@ -343,6 +346,8 @@ export default function AudioWaveform({
   }
 
   function handlePointerUp(event) {
+    if (isInteractionDisabled || !onSeek) return;
+
     const wasPinching = Boolean(pinchStateRef.current);
 
     pointerPositionsRef.current.delete(event.pointerId);
@@ -386,7 +391,13 @@ export default function AudioWaveform({
   }
 
   function handleKeyDown(event) {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    if (
+      isInteractionDisabled ||
+      !onSeek ||
+      (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')
+    ) {
+      return;
+    }
 
     event.preventDefault();
     const direction = event.key === 'ArrowLeft' ? -1 : 1;
@@ -404,6 +415,7 @@ export default function AudioWaveform({
       <div className="audio-waveform-surface">
         <canvas
           aria-label="음원 파형 탐색"
+          aria-disabled={isInteractionDisabled}
           aria-valuemax={duration || 0}
           aria-valuemin="0"
           aria-valuenow={currentTime || 0}
@@ -415,7 +427,7 @@ export default function AudioWaveform({
           onPointerUp={handlePointerUp}
           ref={canvasRef}
           role="slider"
-          tabIndex="0"
+          tabIndex={isInteractionDisabled ? -1 : 0}
         />
         {waveformStatus && (
           <span className="audio-waveform-status">{waveformStatus}</span>

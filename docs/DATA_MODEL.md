@@ -65,9 +65,24 @@ Student가 직접 선택한 로컬 음원 파일은 데이터 모델에 저장�
 파형에서 지정한 시작 위치만 기존 `startOffsetSeconds`로 저장한다.
 
 Teacher Shared Audio도 Project State나 `.bsv`가 아닌 현재 서버 세션 자산이다. Socket metadata는
-`{ assetId, fileName, mimeType, byteLength, revision, assetPath }`이며 binary는 HTTP endpoint가
-제공한다. 서버 재시작·수업 종료·Teacher 제거 시 자산이 사라지고, 재생 위치와 재생속도는 각
-기기의 로컬 플레이어 상태로만 존재한다.
+`{ assetId, fileName, mimeType, byteLength, revision, assetPath, timelineAnchor }`이며 binary는 HTTP endpoint가
+제공한다. `timelineAnchor`는 다음 구조다.
+
+```json
+{
+  "measureId": "measure-...",
+  "measureIndex": 2,
+  "positionSeconds": 5.214
+}
+```
+
+`measureId`가 현재 measures에 있으면 이를 기준으로 하며, `measureIndex`는 stable ID가 없던 기존 1마디 데이터의 호환 경로다. 과거 `firstMeasureAnchorSeconds`는 읽거나 legacy Socket event를 받을 때 0번 measure anchor로 변환한다. 중복된 1마디 절대 시각은 저장하지 않고 전체 시작 시간은 anchor와 measure BPM/Beats로 계산한다. 서버 재시작·수업 종료·Teacher 제거 시 자산이 사라진다. 최신 playback snapshot은
+`{ assetId, revision, isPlaying, anchorPositionSeconds, playbackRate, anchorServerTimeMs, sequence, command }`
+형태로 서버 메모리에만 저장되며 프로젝트 파일에는 포함되지 않는다.
+
+곡 전체 BPM은 별도 schema 필드를 추가하지 않고 모든 measure의 `bpm`에 적용한다. 새 마디에 사용할
+Project 기본 BPM은 런타임 값이며 JSON/.bsv import 시 가장 많이 사용된 measure BPM에서 구한다.
+Student 개인 전체 BPM은 아래 `timings`에만 저장되어 Project measure를 변경하지 않는다.
 
 Student 개인 마디 타임라인은 프로젝트 measure를 수정하지 않고 별도 로컬 데이터로 저장한다.
 
@@ -96,6 +111,8 @@ Student 개인 마디 타임라인은 프로젝트 measure를 수정하지 않�
 저장되는 `markers`는 사용자가 직접 지정한 기준점뿐이다. 첫 기준점 이후의 마디 시간은 이전 마디의
 `(60 / bpm) * beats` 길이를 누적해 런타임에서 계산한다. 개인 `timings`가 있으면 Teacher measure의
 BPM/Beats보다 우선하며, 뒤의 직접 marker를 만나면 그 시간부터 다시 계산한다. 계산 marker는 저장하지 않는다.
+
+Student의 `useTeacherTempo`와 `useTeacherTimelineAnchor`는 브라우저 세션의 선택 상태다. 전자는 Teacher measure map과 개인 `timings` 중 계산 입력을 고르고, 후자는 공용 음원에서만 Teacher의 `timelineAnchor`와 source별 개인 marker 중 하나를 고른다. 어느 선택도 Project measure나 로컬 marker/timing을 덮어쓰지 않는다.
 
 ## 현재 syncState
 

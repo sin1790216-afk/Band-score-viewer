@@ -94,7 +94,17 @@ BPM/Beats 또는 Teacher measure 값을 이용해 메모리에서 계산하며, 
 음원 따라가기가 켜진 동안 플레이어는 현재 시간 이전의 가장 최근 유효 marker가 바뀔 때만 App에 measure
 ID를 전달하고, Student의 로컬 표시 페이지/하이라이트만 바꾼다.
 Teacher의 논리적 `pageNumber`/`measureIndex`와 Socket 상태는 수정하지 않는다.
-선생님 공유 음원과 학생 개인 음원은 작은 AudioSource 경계에서 분리된다. 공유 음원의 서버 metadata와 개인 음원의 File/Object URL은 서로 덮어쓰지 않으며, source별 타임라인과 오프셋은 학생 브라우저에만 저장된다. 공용 asset은 `.bsv`에 포함되지 않고 서버 재시작 또는 수업 종료 시 사라진다. 현재 공유되는 것은 파일과 metadata뿐이며 Teacher의 play/pause/seek 위치는 Student에 동기화하지 않는다. 향후 YouTube 같은 URL source와 재생 동기화는 별도 단계다.
+선생님 공유 음원과 학생 개인 음원은 작은 AudioSource 경계에서 분리된다. 공유 음원의 서버 metadata와 개인 음원의 File/Object URL은 서로 덮어쓰지 않으며, source별 타임라인과 오프셋은 학생 브라우저에만 저장된다. 공용 asset은 `.bsv`에 포함되지 않고 서버 재시작 또는 수업 종료 시 사라진다.
+
+공용 음원 playback은 서버가 최신 snapshot을 소유한다. Teacher의 play/pause/seek/rate 명령 때만 `anchorPositionSeconds`, `anchorServerTimeMs`, `playbackRate`, `sequence`를 갱신하며 고빈도 currentTime은 보내지 않는다. Student Follow는 간단한 서버 시각 offset으로 현재 위치를 계산하고 5초마다 로컬 drift를 확인한다. 0.35초 미만은 유지하고 그 이상만 seek한다. Practice와 Student 개인 음원은 이 snapshot을 적용하지 않는다.
+
+Teacher 전체 템포는 호환성을 위해 별도 schema 대신 모든 `measure.bpm`에 기록한다. 런타임 기본 BPM은 새 마디와 자동인식 후보에 사용하며 import 시 가장 많이 사용된 BPM으로 복원한다. Student의 `선생님 템포 사용`은 개인 timing을 지우지 않고 런타임 계산에서 Teacher의 실제 measure BPM/Beats map을 선택한다. OFF에서는 기존 로컬 audio timeline의 전체·마디별 `timings`를 다시 사용한다.
+
+공용 음원은 Shared Audio metadata의 `timelineAnchor`로 "어느 measure의 시작이 음원 몇 초인가"를 저장한다. stable `measureId`를 우선하고 `measureIndex`는 기존 데이터 adapter에 사용한다. 클라이언트는 anchor 앞쪽은 이전 measure의 `(60 / bpm) * beats`를 빼고, 뒤쪽은 현재 measure 길이를 더해 전체 타임라인을 계산한다. Student는 공용 음원에서 이 기준과 source별 개인 marker 중 하나를 계산 시점에 선택한다. 개인 음원에는 Teacher 기준을 자동 적용하지 않는다. `startOffsetSeconds`는 플레이어가 재생을 시작하거나 이동할 transport 위치일 뿐 타임라인 계산에 더하지 않는다.
+
+Teacher의 기준 마디 입력은 PDF 선택/현재 마디와 독립된 화면 번호다. 적용 시에만 화면 번호를 0-based index와 stable measure ID로 변환한다.
+
+현재 duration은 measure의 BPM/Beats로 계산한다. 향후 pickup, fermata, 자유 tempo처럼 일반 박자와 다른 길이는 measure별 duration/timing 예외를 계산 입력으로 추가할 수 있으며 anchor 모델은 그대로 유지한다.
 
 로컬 재생은 HTML media element를 유지하되 Web Audio oscillator로 한 마디 예비박을 예약한다. 처음 재생,
 일시정지 후 재개, marker 마디 클릭 모두 예비박을 거치며 첫 박은 다른 주파수로 accent한다. 개인 BPM/Beats가

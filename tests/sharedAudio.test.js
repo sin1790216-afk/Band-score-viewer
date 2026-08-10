@@ -24,6 +24,7 @@ test('shared audio metadata is bounded and creates a server asset URL', () => {
   assert.deepEqual(metadata, {
     ...SHARED_METADATA,
     assetPath: '/shared-audio/asset-123',
+    timelineAnchor: null,
   });
   assert.equal(
     getSharedAudioAssetUrl(metadata, 'http://192.168.0.10:4000'),
@@ -34,6 +35,28 @@ test('shared audio metadata is bounded and creates a server asset URL', () => {
     'teacher-shared-local:asset-123:3',
   );
   assert.equal(normalizeSharedAudioMetadata({ ...metadata, byteLength: 0 }), null);
+  assert.equal(
+    normalizeSharedAudioMetadata({
+      ...SHARED_METADATA,
+      firstMeasureAnchorSeconds: 12.3496,
+    }).timelineAnchor.positionSeconds,
+    12.35,
+  );
+  assert.deepEqual(
+    normalizeSharedAudioMetadata({
+      ...SHARED_METADATA,
+      timelineAnchor: {
+        measureId: 'measure-3',
+        measureIndex: 2,
+        positionSeconds: 5.2144,
+      },
+    }).timelineAnchor,
+    {
+      measureId: 'measure-3',
+      measureIndex: 2,
+      positionSeconds: 5.214,
+    },
+  );
 });
 
 test('teacher shared upload requires an audio MIME type and a non-empty file', () => {
