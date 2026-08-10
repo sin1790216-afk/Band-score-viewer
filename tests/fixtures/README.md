@@ -11,3 +11,6 @@
 
 `npm run fixture:pdf`는 브라우저 smoke test용 2페이지 합성 PDF를 `/tmp`에 만든다.
 이 PDF 역시 실제 수업 fixture가 아니다.
+
+`npm run fixture:recognition-pdf`는 마디 자동인식 브라우저 smoke test용 단선율 오선
+PDF를 `/tmp`에 만든다. 실제 악보의 음표·조표·가사 복잡도를 대표하지 않는다.

@@ -42,6 +42,7 @@ import {
   NORMALIZED_COORDINATE_SPACE,
   NORMALIZED_COORDINATE_STATUS,
 } from './utils/measureCoordinates.js';
+import { recognizeMeasuresInPdf } from './utils/pdfMeasureRecognition.js';
 import {
   getFullscreenElement,
   isFullscreenSupported,
@@ -193,6 +194,7 @@ function App() {
   const returnToStartOnEndRef = useRef(false);
   const measuresRef = useRef([]);
   const measureIndexRef = useRef(0);
+  const measureRecognitionVersionRef = useRef(0);
   const pageNumberRef = useRef(1);
   const pdfObjectUrlRef = useRef('');
   const teacherPdfObjectUrlRef = useRef('');
@@ -225,6 +227,12 @@ function App() {
   const [resizedMeasureIndex, setResizedMeasureIndex] = useState(-1);
   const [mode, setMode] = useState(REGISTER_MODE);
   const [isLyricEditorOpen, setIsLyricEditorOpen] = useState(false);
+  const [measureRecognitionState, setMeasureRecognitionState] = useState({
+    currentPage: 0,
+    message: '',
+    status: 'idle',
+    totalPages: 0,
+  });
   const [pdfRenderResetVersion, setPdfRenderResetVersion] = useState(0);
   const [studentViewMode, setStudentViewMode] = useState(STUDENT_ZOOM_VIEW);
   const [studentPdfSource, setStudentPdfSource] = useState(TEACHER_PDF_SOURCE);
@@ -717,6 +725,7 @@ function App() {
       studentPdfSourceRef.current === TEACHER_PDF_SOURCE;
 
     stopAutoplay();
+    measureRecognitionVersionRef.current += 1;
     dragStateRef.current = null;
     resizeStateRef.current = null;
     measuresRef.current = [];
@@ -753,6 +762,12 @@ function App() {
     setDraggedMeasureIndex(-1);
     setResizedMeasureIndex(-1);
     setIsLyricEditorOpen(false);
+    setMeasureRecognitionState({
+      currentPage: 0,
+      message: '',
+      status: 'idle',
+      totalPages: 0,
+    });
     setIsStudentAnnotationEnabled(false);
     setMode(REGISTER_MODE);
     setTeacherPdfUrl('');
@@ -807,6 +822,13 @@ function App() {
     if (!file) return;
 
     stopAutoplay();
+    measureRecognitionVersionRef.current += 1;
+    setMeasureRecognitionState({
+      currentPage: 0,
+      message: '',
+      status: 'idle',
+      totalPages: 0,
+    });
 
     const mimeType = PDF_MIME_TYPE;
 
@@ -935,6 +957,13 @@ function App() {
     const nextMimeType = nextProjectState.pdfMetadata.mimeType;
 
     stopAutoplay();
+    measureRecognitionVersionRef.current += 1;
+    setMeasureRecognitionState({
+      currentPage: 0,
+      message: '',
+      status: 'idle',
+      totalPages: 0,
+    });
     dragStateRef.current = null;
     resizeStateRef.current = null;
     measuresRef.current = nextMeasures;
@@ -973,6 +1002,107 @@ function App() {
     });
 
     event.target.value = '';
+  }
+
+  async function recognizePdfMeasures() {
+    const pdfBlob = teacherPdfBlobRef.current;
+
+    if (!canEdit || !pdfBlob || measureRecognitionState.status === 'running') {
+      return;
+    }
+
+    if (
+      measures.length > 0 &&
+      !window.confirm(
+        '현재 마디를 자동인식 결과로 교체할까요? 기존 마디 편집 내용은 사라집니다.',
+      )
+    ) {
+      return;
+    }
+
+    stopAutoplay();
+    const recognitionVersion = measureRecognitionVersionRef.current + 1;
+
+    measureRecognitionVersionRef.current = recognitionVersion;
+    setMeasureRecognitionState({
+      currentPage: 0,
+      message: 'PDF 분석을 준비하고 있습니다.',
+      status: 'running',
+      totalPages: 0,
+    });
+
+    try {
+      const candidates = await recognizeMeasuresInPdf(pdfBlob, {
+        onProgress: ({ currentPage, totalPages: recognitionTotalPages }) => {
+          setMeasureRecognitionState({
+            currentPage,
+            message: `${currentPage} / ${recognitionTotalPages} 페이지 분석 중`,
+            status: 'running',
+            totalPages: recognitionTotalPages,
+          });
+        },
+      });
+
+      if (
+        measureRecognitionVersionRef.current !== recognitionVersion ||
+        teacherPdfBlobRef.current !== pdfBlob
+      ) {
+        return;
+      }
+
+      if (candidates.length === 0) {
+        setMeasureRecognitionState({
+          currentPage: 0,
+          message: '마디 후보를 찾지 못했습니다.',
+          status: 'error',
+          totalPages: 0,
+        });
+        return;
+      }
+
+      const nextMeasures = prepareMeasuresForProject(
+        candidates.map((candidate) => ({
+          ...DEFAULT_MEASURE,
+          ...candidate,
+          coordinateHeight: 1,
+          coordinateSpace: NORMALIZED_COORDINATE_SPACE,
+          coordinateStatus: NORMALIZED_COORDINATE_STATUS,
+          coordinateWidth: 1,
+        })),
+      );
+      const firstPageNumber = Number(nextMeasures[0]?.page) || 1;
+
+      measuresRef.current = nextMeasures;
+      dragStateRef.current = null;
+      resizeStateRef.current = null;
+      dispatchMeasureUpdate({
+        type: PROJECT_ACTIONS.REPLACE_MEASURES,
+        measures: nextMeasures,
+      });
+      setSelectedMeasureIndex(-1);
+      setDraggedMeasureIndex(-1);
+      setResizedMeasureIndex(-1);
+      setMode(REGISTER_MODE);
+      setSyncedPageNumber(firstPageNumber);
+      setSyncedMeasureIndex(0);
+      setMeasureRecognitionState({
+        currentPage: 0,
+        message: `${nextMeasures.length}개 마디 후보 생성 완료`,
+        status: 'complete',
+        totalPages: 0,
+      });
+    } catch (error) {
+      console.error('[measure-recognition] failed', error);
+      setMeasureRecognitionState({
+        currentPage: 0,
+        message: '마디 자동인식에 실패했습니다.',
+        status: 'error',
+        totalPages: 0,
+      });
+      window.alert(
+        `마디 자동인식에 실패했습니다.\n${error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.'}`,
+      );
+    }
   }
 
   function addMeasure(pageMetrics) {
@@ -2239,11 +2369,13 @@ function App() {
             bsvInputRef={bsvInputRef}
             canEdit={canEdit}
             canSaveProject={Boolean(teacherPdfBlobRef.current)}
+            canRecognizeMeasures={Boolean(teacherPdfBlobRef.current)}
             canOpenAudioLink={Boolean(openableAudioUrl)}
             canEndSession={Boolean(teacherPdfBlobRef.current || measures.length)}
             fileInputRef={fileInputRef}
             isAutoPlaying={isAutoPlaying}
             isRepeatEnabled={isRepeatEnabled}
+            measureRecognitionState={measureRecognitionState}
             jsonInputRef={jsonInputRef}
             measureIndex={measureIndex}
             measureTotal={measures.length}
@@ -2255,6 +2387,7 @@ function App() {
             onOpenBsvProject={openBsvProject}
             onOpenJson={() => jsonInputRef.current?.click()}
             onOpenPdf={openPdf}
+            onRecognizeMeasures={recognizePdfMeasures}
             onPdfSelected={selectPdf}
             onSaveJson={saveJson}
             onSaveBsvProject={saveBsvProject}
@@ -2410,12 +2543,14 @@ function Sidebar({
   canEdit,
   canEndSession,
   canOpenAudioLink,
+  canRecognizeMeasures,
   canSaveProject,
   fileInputRef,
   isAutoPlaying,
   isRepeatEnabled,
   jsonInputRef,
   measureIndex,
+  measureRecognitionState,
   measureTotal,
   mode,
   onEndClassSession,
@@ -2428,6 +2563,7 @@ function Sidebar({
   onOpenBsvProject,
   onOpenJson,
   onOpenPdf,
+  onRecognizeMeasures,
   onPdfSelected,
   onSaveJson,
   onSaveBsvProject,
@@ -2473,6 +2609,27 @@ function Sidebar({
       {canEdit && (
         <>
           <button onClick={onOpenPdf}>PDF 열기</button>
+          <div className="measure-recognition-controls">
+            <button
+              disabled={
+                !canRecognizeMeasures || measureRecognitionState.status === 'running'
+              }
+              onClick={onRecognizeMeasures}
+              type="button"
+            >
+              {measureRecognitionState.status === 'running'
+                ? '마디 분석 중'
+                : '마디 자동인식'}
+            </button>
+            {measureRecognitionState.message && (
+              <span
+                aria-live="polite"
+                className={`measure-recognition-status ${measureRecognitionState.status}`}
+              >
+                {measureRecognitionState.message}
+              </span>
+            )}
+          </div>
           <button disabled={!canSaveProject} onClick={onSaveBsvProject} type="button">
             프로젝트 저장 (.bsv)
           </button>

@@ -9,6 +9,7 @@
     "start": "node server.js",
     "build": "vite build",
     "fixture:pdf": "node tests/createTestPdf.mjs",
+    "fixture:recognition-pdf": "node tests/createRecognitionTestPdf.mjs",
     "lint": "oxlint",
     "test": "node --test tests/*.test.js",
     "preview": "vite preview"
