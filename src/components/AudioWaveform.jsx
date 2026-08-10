@@ -200,15 +200,24 @@ export default function AudioWaveform({
         }
 
         const isTarget = marker.measureId === targetMeasureId;
+        const isCalculated = marker.source === 'calculated';
 
-        context.strokeStyle = isTarget ? '#ff4f5e' : '#4dcc83';
+        context.strokeStyle = isTarget
+          ? '#ff4f5e'
+          : isCalculated
+            ? '#647d73'
+            : '#4dcc83';
         context.lineWidth = isTarget ? 3 : 1.5;
         context.beginPath();
         context.moveTo(markerX, 0);
         context.lineTo(markerX, WAVEFORM_HEIGHT);
         context.stroke();
 
-        context.fillStyle = isTarget ? '#ff8a94' : '#8be2ad';
+        context.fillStyle = isTarget
+          ? '#ff8a94'
+          : isCalculated
+            ? '#a2b3ac'
+            : '#8be2ad';
         context.font = 'bold 10px sans-serif';
         context.fillText(String(marker.measureNumber), markerX + 3, 12);
       });

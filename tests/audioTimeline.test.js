@@ -5,6 +5,7 @@ import {
   createLocalAudioIdentity,
   createStudentAudioTimelineKey,
   getAudioTimelineMarkerAtTime,
+  getEffectiveAudioTimelineMarkers,
   getMeasureTimelineTiming,
   getMeasureTimelineTime,
   getStudentAudioTimelineMarkers,
@@ -102,6 +103,75 @@ test('audio time selects the latest marker without depending on array order', ()
   assert.deepEqual(getAudioTimelineMarkerAtTime(markers, 2), markers[1]);
   assert.deepEqual(getAudioTimelineMarkerAtTime(markers, 9), markers[2]);
   assert.deepEqual(getAudioTimelineMarkerAtTime(markers, 99), markers[0]);
+});
+
+test('one explicit marker calculates following measure times from BPM and Beats', () => {
+  const measures = [
+    { beats: 4, bpm: 120, id: 'measure-1' },
+    { beats: 4, bpm: 60, id: 'measure-2' },
+    { beats: 3, bpm: 90, id: 'measure-3' },
+    { beats: 4, bpm: 120, id: 'measure-4' },
+  ];
+
+  assert.deepEqual(
+    getEffectiveAudioTimelineMarkers({
+      markers: [{ measureId: 'measure-1', timeSeconds: 10 }],
+      measures,
+      timings: [],
+    }),
+    [
+      { measureId: 'measure-1', source: 'explicit', timeSeconds: 10 },
+      { measureId: 'measure-2', source: 'calculated', timeSeconds: 12 },
+      { measureId: 'measure-3', source: 'calculated', timeSeconds: 16 },
+      { measureId: 'measure-4', source: 'calculated', timeSeconds: 18 },
+    ],
+  );
+});
+
+test('personal timing and later explicit markers reset the calculated timeline', () => {
+  const measures = [
+    { beats: 4, bpm: 120, id: 'measure-1' },
+    { beats: 4, bpm: 60, id: 'measure-2' },
+    { beats: 3, bpm: 90, id: 'measure-3' },
+    { beats: 4, bpm: 120, id: 'measure-4' },
+  ];
+  const markers = getEffectiveAudioTimelineMarkers({
+    markers: [
+      { measureId: 'measure-1', timeSeconds: 10 },
+      { measureId: 'measure-3', timeSeconds: 20 },
+    ],
+    measures,
+    timings: [{ beats: 4, bpm: 120, measureId: 'measure-2' }],
+  });
+
+  assert.deepEqual(markers, [
+    { measureId: 'measure-1', source: 'explicit', timeSeconds: 10 },
+    { measureId: 'measure-2', source: 'calculated', timeSeconds: 12 },
+    { measureId: 'measure-3', source: 'explicit', timeSeconds: 20 },
+    { measureId: 'measure-4', source: 'calculated', timeSeconds: 22 },
+  ]);
+  assert.equal(getAudioTimelineMarkerAtTime(markers, 19.999)?.measureId, 'measure-2');
+  assert.equal(getAudioTimelineMarkerAtTime(markers, 20)?.measureId, 'measure-3');
+});
+
+test('effective timeline stays empty until a valid explicit marker exists', () => {
+  const measures = [
+    { beats: 4, bpm: 120, id: 'measure-1' },
+    { beats: 4, bpm: 120, id: 'measure-2' },
+  ];
+
+  assert.deepEqual(
+    getEffectiveAudioTimelineMarkers({ markers: [], measures, timings: [] }),
+    [],
+  );
+  assert.deepEqual(
+    getEffectiveAudioTimelineMarkers({
+      markers: [{ measureId: 'missing-measure', timeSeconds: 5 }],
+      measures,
+      timings: [],
+    }),
+    [],
+  );
 });
 
 test('personal measure timing is local to an audio timeline and removable', () => {

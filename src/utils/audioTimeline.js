@@ -6,6 +6,8 @@ const MAX_AUDIO_FILE_NAME_LENGTH = 256;
 const MAX_AUDIO_TIME_SECONDS = 172_800;
 const MAX_TIMELINE_MARKERS = 10_000;
 const MAX_TIMING_VALUE = 10_000;
+const DEFAULT_TIMELINE_BPM = 120;
+const DEFAULT_TIMELINE_BEATS = 4;
 
 function isObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -163,6 +165,117 @@ export function getMeasureTimelineTime(markers, measureId) {
     : null;
 
   return marker?.timeSeconds ?? null;
+}
+
+function getTimelineTimingValue(value, fallbackValue) {
+  const numberValue = Number(value);
+
+  return Number.isFinite(numberValue) &&
+    numberValue > 0 &&
+    numberValue <= MAX_TIMING_VALUE
+    ? numberValue
+    : fallbackValue;
+}
+
+function getMeasureDurationSeconds(measure, personalTiming) {
+  const bpm = getTimelineTimingValue(
+    personalTiming?.bpm,
+    getTimelineTimingValue(measure?.bpm, DEFAULT_TIMELINE_BPM),
+  );
+  const beats = getTimelineTimingValue(
+    personalTiming?.beats,
+    getTimelineTimingValue(measure?.beats, DEFAULT_TIMELINE_BEATS),
+  );
+
+  return (60 / bpm) * beats;
+}
+
+export function getEffectiveAudioTimelineMarkers({
+  markers,
+  measures,
+  timings,
+}) {
+  if (!Array.isArray(measures) || measures.length === 0) return [];
+
+  const explicitMarkersByMeasureId = new Map();
+  const personalTimingsByMeasureId = new Map();
+
+  if (Array.isArray(markers)) {
+    markers.forEach((marker) => {
+      const normalizedMarker = normalizeMarker(marker);
+
+      if (normalizedMarker) {
+        explicitMarkersByMeasureId.set(
+          normalizedMarker.measureId,
+          normalizedMarker,
+        );
+      }
+    });
+  }
+
+  if (Array.isArray(timings)) {
+    timings.forEach((timing) => {
+      const normalizedTiming = normalizeMeasureTiming(timing);
+
+      if (normalizedTiming) {
+        personalTimingsByMeasureId.set(
+          normalizedTiming.measureId,
+          normalizedTiming,
+        );
+      }
+    });
+  }
+
+  const effectiveMarkers = [];
+  let previousMeasure = null;
+  let previousTimeSeconds = null;
+
+  measures.slice(0, MAX_TIMELINE_MARKERS).forEach((measure) => {
+    const measureId =
+      typeof measure?.id === 'string' ? measure.id.trim() : '';
+
+    if (!measureId) {
+      previousMeasure = null;
+      previousTimeSeconds = null;
+      return;
+    }
+
+    const explicitMarker = explicitMarkersByMeasureId.get(measureId);
+    let timeSeconds = explicitMarker?.timeSeconds ?? null;
+    let source = 'explicit';
+
+    if (timeSeconds === null && previousMeasure && previousTimeSeconds !== null) {
+      timeSeconds =
+        previousTimeSeconds +
+        getMeasureDurationSeconds(
+          previousMeasure,
+          personalTimingsByMeasureId.get(previousMeasure.id),
+        );
+      source = 'calculated';
+    }
+
+    if (
+      timeSeconds === null ||
+      !Number.isFinite(timeSeconds) ||
+      timeSeconds > MAX_AUDIO_TIME_SECONDS
+    ) {
+      previousMeasure = null;
+      previousTimeSeconds = null;
+      return;
+    }
+
+    const roundedTimeSeconds = Number(timeSeconds.toFixed(3));
+
+    effectiveMarkers.push({
+      measureId,
+      source,
+      timeSeconds: roundedTimeSeconds,
+    });
+    previousMeasure = measure;
+    previousTimeSeconds = roundedTimeSeconds;
+  });
+
+  return effectiveMarkers;
 }
 
 export function getAudioTimelineMarkerAtTime(markers, timeSeconds) {

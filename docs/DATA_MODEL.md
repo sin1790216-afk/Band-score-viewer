@@ -88,6 +88,10 @@ Student 개인 마디 타임라인은 프로젝트 measure를 수정하지 않�
 음원 파일에는 기존 marker와 개인 템포를 적용하지 않는다. 두 데이터는 JSON, `.bsv`, Socket에
 포함하지 않으며 `timings`가 없는 기존 로컬 타임라인은 빈 개인 템포 목록으로 읽는다.
 
+저장되는 `markers`는 사용자가 직접 지정한 기준점뿐이다. 첫 기준점 이후의 마디 시간은 이전 마디의
+`(60 / bpm) * beats` 길이를 누적해 런타임에서 계산한다. 개인 `timings`가 있으면 Teacher measure의
+BPM/Beats보다 우선하며, 뒤의 직접 marker를 만나면 그 시간부터 다시 계산한다. 계산 marker는 저장하지 않는다.
+
 ## 현재 syncState
 
 ```js

@@ -211,6 +211,10 @@ html:-webkit-full-screen #root{
     display:none;
 }
 
+.student-audio-panel.compact{
+    padding:6px;
+}
+
 .student-audio-panel-header,
 .student-audio-source-controls{
     align-items:center;
@@ -256,9 +260,24 @@ html:-webkit-full-screen #root{
     gap:7px;
 }
 
+.local-audio-editor{
+    display:flex;
+    flex-direction:column;
+    gap:7px;
+}
+
+.local-audio-editor[hidden]{
+    display:none;
+}
+
 .student-local-audio{
     border-top:1px solid #c7c9ce;
     padding-top:8px;
+}
+
+.student-audio-panel.compact .student-local-audio{
+    border-top:0;
+    padding-top:0;
 }
 
 .student-local-audio-file input{

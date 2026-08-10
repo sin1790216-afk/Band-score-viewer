@@ -79,6 +79,7 @@ import {
 import {
   createLocalAudioIdentity,
   createStudentAudioTimelineKey,
+  getEffectiveAudioTimelineMarkers,
   getMeasureTimelineTiming,
   getMeasureTimelineTime,
   getStudentAudioTimelineMarkers,
@@ -331,12 +332,21 @@ function App() {
       ),
     [studentAudioTimelineKey, studentAudioTimelineLibrary],
   );
+  const studentAudioEffectiveMarkers = useMemo(
+    () =>
+      getEffectiveAudioTimelineMarkers({
+        markers: studentAudioTimelineMarkers,
+        measures,
+        timings: studentAudioTimelineTimings,
+      }),
+    [measures, studentAudioTimelineMarkers, studentAudioTimelineTimings],
+  );
   const studentAudioWaveformMarkers = useMemo(() => {
     const measureIndexById = new Map(
       measures.map((measure, index) => [measure.id, index]),
     );
 
-    return studentAudioTimelineMarkers
+    return studentAudioEffectiveMarkers
       .map((marker) => {
         const markerMeasureIndex = measureIndexById.get(marker.measureId);
 
@@ -345,7 +355,7 @@ function App() {
           : null;
       })
       .filter(Boolean);
-  }, [measures, studentAudioTimelineMarkers]);
+  }, [measures, studentAudioEffectiveMarkers]);
   const studentAudioPlaybackMeasureIndex = measures.findIndex(
     (measure) => measure.id === studentAudioPlaybackMeasureId,
   );
@@ -389,6 +399,10 @@ function App() {
   const audioTargetMeasure = measures[audioTargetMeasureIndex] || null;
   const audioTargetMeasureTime = getMeasureTimelineTime(
     studentAudioTimelineMarkers,
+    audioTargetMeasure?.id,
+  );
+  const audioTargetTimelineTime = getMeasureTimelineTime(
+    studentAudioEffectiveMarkers,
     audioTargetMeasure?.id,
   );
   const audioTargetPersonalTiming = getMeasureTimelineTiming(
@@ -1288,7 +1302,7 @@ function App() {
 
     setStudentAudioTargetMeasureIndex(nextMeasureIndex);
     const markerTime = getMeasureTimelineTime(
-      studentAudioTimelineMarkers,
+      studentAudioEffectiveMarkers,
       measure.id,
     );
 
@@ -1961,9 +1975,19 @@ function App() {
               </button>
               <section
                 aria-label="학생 음원 설정"
-                className="student-audio-panel"
-                hidden={!isStudentAudioPanelOpen}
+                className={`student-audio-panel ${
+                  isStudentAudioPanelOpen ? '' : 'compact'
+                }`}
+                hidden={
+                  !isStudentAudioPanelOpen &&
+                  !(
+                    studentAudioSource === LOCAL_AUDIO_SOURCE &&
+                    studentLocalAudioUrl
+                  )
+                }
               >
+                {isStudentAudioPanelOpen && (
+                  <>
                   <div className="student-audio-panel-header">
                     <strong>음원 설정</strong>
                     <button
@@ -2042,20 +2066,24 @@ function App() {
                   >
                     링크 열기
                   </button>
+                  </>
+                )}
                   {studentAudioSource === LOCAL_AUDIO_SOURCE && (
                     <div className="student-local-audio">
-                      <label className="student-local-audio-file">
-                        내 음원 파일
-                        <input
-                          accept={LOCAL_AUDIO_FILE_ACCEPT}
-                          disabled={!studentAnnotationDocumentKey}
-                          onCancel={cancelStudentLocalAudioSelection}
-                          onChange={selectStudentLocalAudio}
-                          onClick={beginStudentLocalAudioSelection}
-                          ref={studentAudioInputRef}
-                          type="file"
-                        />
-                      </label>
+                      {isStudentAudioPanelOpen && (
+                        <label className="student-local-audio-file">
+                          내 음원 파일
+                          <input
+                            accept={LOCAL_AUDIO_FILE_ACCEPT}
+                            disabled={!studentAnnotationDocumentKey}
+                            onCancel={cancelStudentLocalAudioSelection}
+                            onChange={selectStudentLocalAudio}
+                            onClick={beginStudentLocalAudioSelection}
+                            ref={studentAudioInputRef}
+                            type="file"
+                          />
+                        </label>
+                      )}
                       {studentLocalAudioUrl ? (
                         <LocalAudioPlayer
                           audioFile={studentLocalAudioFile}
@@ -2067,6 +2095,7 @@ function App() {
                           )}
                           isEditorVisible={isStudentAudioPanelOpen}
                           measureMarkerTimeSeconds={audioTargetMeasureTime}
+                          measureTimelineTimeSeconds={audioTargetTimelineTime}
                           measureMarkers={studentAudioWaveformMarkers}
                           onMeasureMarkerChange={setStudentMeasureAudioTime}
                           onMeasureMarkerRemove={removeStudentMeasureAudioTime}
@@ -2092,16 +2121,19 @@ function App() {
                           }
                           timelineFollowEnabled={isStudentAudioFollowEnabled}
                         />
-                      ) : (
+                      ) : isStudentAudioPanelOpen ? (
                         <small>이 기기에 저장된 음원 파일을 선택할 수 있습니다.</small>
+                      ) : null}
+                      {isStudentAudioPanelOpen && (
+                        <small>
+                          파일은 서버로 전송되지 않으며 화면을 나가거나 새로고침하면
+                          다시 선택해야 합니다.
+                        </small>
                       )}
-                      <small>
-                        파일은 서버로 전송되지 않으며 화면을 나가거나 새로고침하면
-                        다시 선택해야 합니다.
-                      </small>
                     </div>
                   )}
-                  {studentAudioSource === TEACHER_AUDIO_SOURCE && (
+                  {isStudentAudioPanelOpen &&
+                    studentAudioSource === TEACHER_AUDIO_SOURCE && (
                     <small>Teacher가 변경하면 자동으로 갱신됩니다.</small>
                   )}
                 </section>
@@ -2275,7 +2307,7 @@ function App() {
           )}
 
           <ScoreViewer
-            audioMappedMeasureIds={studentAudioTimelineMarkers.map(
+            audioMappedMeasureIds={studentAudioEffectiveMarkers.map(
               (marker) => marker.measureId,
             )}
             audioTargetMeasureIndex={audioTargetMeasureIndex}

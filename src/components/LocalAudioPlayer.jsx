@@ -20,6 +20,7 @@ export default function LocalAudioPlayer({
   hasPersonalMeasureTiming,
   isEditorVisible,
   measureMarkerTimeSeconds,
+  measureTimelineTimeSeconds,
   measureMarkers,
   onMeasureMarkerChange,
   onMeasureMarkerRemove,
@@ -383,6 +384,7 @@ export default function LocalAudioPlayer({
       >
         이 브라우저는 오디오 재생을 지원하지 않습니다.
       </audio>
+      <div className="local-audio-editor" hidden={!isEditorVisible}>
       <div className={`audio-count-in ${isCountInActive ? 'active' : ''}`}>
         <label className="audio-count-in-toggle">
           <input
@@ -451,9 +453,11 @@ export default function LocalAudioPlayer({
             {targetMeasureNumber ? `${targetMeasureNumber}마디 음원 위치` : '마디 음원 위치'}
           </strong>
           <span>
-            {measureMarkerTimeSeconds === null
-              ? '미지정'
-              : formatAudioTime(measureMarkerTimeSeconds)}
+            {measureMarkerTimeSeconds !== null
+              ? `${formatAudioTime(measureMarkerTimeSeconds)} · 직접 지정`
+              : measureTimelineTimeSeconds !== null
+                ? `${formatAudioTime(measureTimelineTimeSeconds)} · 자동 계산`
+                : '미지정'}
           </span>
         </div>
         <small>악보의 마디 박스를 누른 뒤 파형에서 정확한 위치를 맞춰주세요.</small>
@@ -471,11 +475,11 @@ export default function LocalAudioPlayer({
             현재 위치 지정
           </button>
           <button
-            disabled={measureMarkerTimeSeconds === null}
-            onClick={() => seekToTime(measureMarkerTimeSeconds)}
+            disabled={measureTimelineTimeSeconds === null}
+            onClick={() => seekToTime(measureTimelineTimeSeconds)}
             type="button"
           >
-            지정 위치로 이동
+            마디 위치로 이동
           </button>
           <button
             disabled={measureMarkerTimeSeconds === null || !targetMeasureId}
@@ -536,6 +540,7 @@ export default function LocalAudioPlayer({
         </button>
         <small>이 기기의 현재 PDF와 음원 조합에만 저장됩니다.</small>
       </section>
+      </div>
       {playbackError && <small className="audio-error">{playbackError}</small>}
     </div>
   );
