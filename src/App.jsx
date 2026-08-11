@@ -47,6 +47,9 @@ import { recognizeMeasuresInPdf } from './utils/pdfMeasureRecognition.js';
 import { applyLyricCandidates } from './utils/lyricRecognition.js';
 import { recognizeLyricsInPdf } from './utils/pdfLyricRecognition.js';
 import {
+  createVocalViewModel,
+} from './utils/vocalPhrases.js';
+import {
   getFullscreenElement,
   isFullscreenSupported,
   toggleDocumentFullscreen,
@@ -157,10 +160,6 @@ function getProjectFileName(fileName) {
   return fileName
     ? `${fileName.replace(/\.pdf$/i, '')}.bsv`
     : 'band-score-viewer.bsv';
-}
-
-function getTrimmedLyric(measure) {
-  return measure?.lyric?.trim() || '';
 }
 
 function getMeasureDurationMs(measure) {
@@ -569,12 +568,10 @@ function App() {
     : isStudentAudioFollowing
       ? studentAudioPlaybackMeasureIndex
       : synchronizedDisplayMeasureIndex;
-  const currentMeasure = measures[displayMeasureIndex] || null;
-  const nextDifferentLyric =
-    measures
-      .slice(displayMeasureIndex + 1)
-      .map(getTrimmedLyric)
-      .find((lyric) => lyric && lyric !== getTrimmedLyric(currentMeasure)) || '';
+  const vocalViewModel = useMemo(
+    () => createVocalViewModel(measures, displayMeasureIndex),
+    [displayMeasureIndex, measures],
+  );
   const selectedMeasure = measures[selectedMeasureIndex] || null;
   const teacherSharedAudioAnchorMeasureIndex =
     getAudioTimelineAnchorMeasureIndex(
@@ -3422,7 +3419,10 @@ function App() {
       )}
 
       {viewerMode === ROLE_SELECT_MODE ? null : viewerMode === VOCAL_MODE ? (
-        <VocalView currentMeasure={currentMeasure} nextLyric={nextDifferentLyric} />
+        <VocalView
+          currentText={vocalViewModel.currentText}
+          nextText={vocalViewModel.nextText}
+        />
       ) : (
       <main className="main">
         {canEdit && (
@@ -3604,14 +3604,11 @@ function FullscreenButton({ isFullscreen, isSupported, onToggle }) {
   );
 }
 
-function VocalView({ currentMeasure, nextLyric }) {
-  const currentLyric = getTrimmedLyric(currentMeasure);
-  const upcomingLyric = nextLyric || '';
-
+function VocalView({ currentText, nextText }) {
   return (
     <main className="vocal-view">
-      <section className="vocal-current">{currentLyric}</section>
-      <section className="vocal-next">{upcomingLyric}</section>
+      <section className="vocal-current">{currentText}</section>
+      <section className="vocal-next">{nextText}</section>
     </main>
   );
 }

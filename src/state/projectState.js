@@ -216,6 +216,12 @@ export function importMeasuresJson(jsonText, options) {
   return prepareMeasuresForProject(JSON.parse(jsonText), options);
 }
 
+export function getPersistableMeasures(measures) {
+  return (Array.isArray(measures) ? measures : []).map((measure) => ({
+    ...measure,
+  }));
+}
+
 export function exportMeasuresJson(measures) {
-  return JSON.stringify(measures, null, 2);
+  return JSON.stringify(getPersistableMeasures(measures), null, 2);
 }

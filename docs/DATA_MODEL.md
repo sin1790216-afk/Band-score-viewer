@@ -114,6 +114,29 @@ BPM/Beats보다 우선하며, 뒤의 직접 marker를 만나면 그 시간부터
 
 Student의 `useTeacherTempo`와 `useTeacherTimelineAnchor`는 브라우저 세션의 선택 상태다. 전자는 Teacher measure map과 개인 `timings` 중 계산 입력을 고르고, 후자는 공용 음원에서만 Teacher의 `timelineAnchor`와 source별 개인 marker 중 하나를 고른다. 어느 선택도 Project measure나 로컬 marker/timing을 덮어쓰지 않는다.
 
+## Vocal Phrase 파생 데이터
+
+Vocal Phrase는 저장 모델이 아니며 현재 `measures`에서 결정적으로 계산한다.
+
+```js
+{
+  startMeasureIndex: 0,
+  endMeasureIndex: 1,
+  measureIds: ["measure-1", "measure-2"],
+  text: "매만지는 바람"
+}
+```
+
+의미 있는 `measure.lyric`을 Measure 사이 공백으로 연결한다. PDF text geometry의 lyric
+baseline 변경과 빈 lyric·placeholder를 Phrase 경계로 사용하며, 같은 baseline에서는
+대표 lyric 간격 또는 마디 경계 gap 분포의 중앙값·MAD 대비 비정상적으로 큰 간격에서
+추가 분리한다. 원본 lyric과 내부 줄바꿈은 변경하지 않는다.
+자동인식된 Measure에는 Phrase 판정용 정규화
+`lyricGeometry`가 선택 metadata로 붙으며 Socket, JSON과 `.bsv`에서 보존된다. 이 필드가
+없는 기존 데이터도 호환되며 Vocal 표시는 안전하게 한 마디 lyric으로 제한된다. 향후
+Measure audio timeline에서 Phrase 시작·종료 시간을 계산할 수 있지만 현재는 시간 필드를
+저장하지 않는다.
+
 ## 현재 syncState
 
 ```js

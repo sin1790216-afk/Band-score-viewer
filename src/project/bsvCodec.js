@@ -1,5 +1,6 @@
 import {
   createInitialProjectState,
+  getPersistableMeasures,
   normalizeMeasures,
 } from '../state/projectState.js';
 import { normalizeAudioSettings } from '../utils/audioSettings.js';
@@ -208,7 +209,7 @@ export async function encodeBsvProject({ projectState, pdfBlob, now }) {
     metadata: getProjectMetadata(projectState, timestamp),
     project: {
       audioSettings: normalizeAudioSettings(projectState.audioSettings),
-      measures: normalizeMeasures(projectState.measures),
+      measures: normalizeMeasures(getPersistableMeasures(projectState.measures)),
       pdfMetadata: {
         fileName,
         mimeType,

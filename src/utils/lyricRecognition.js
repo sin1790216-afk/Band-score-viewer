@@ -77,6 +77,68 @@ function groupTextLines(items, staffSpacing) {
   return lines.sort((left, right) => left.baselineY - right.baselineY);
 }
 
+function getLowerMedian(values) {
+  const sortedValues = values
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((left, right) => left - right);
+
+  if (sortedValues.length === 0) return 0;
+
+  return sortedValues[Math.floor((sortedValues.length - 1) / 2)];
+}
+
+function getLowerMedianIncludingZero(values) {
+  const sortedValues = values
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .sort((left, right) => left - right);
+
+  if (sortedValues.length === 0) return 0;
+
+  return sortedValues[Math.floor((sortedValues.length - 1) / 2)];
+}
+
+function getLineBoundaryGapStats(items, measures) {
+  const sortedItems = [...items].sort((left, right) => left.x - right.x);
+  const boundaryGaps = sortedItems.slice(1).flatMap((item, index) => {
+    const previous = sortedItems[index];
+    const previousMeasure = findMeasureForItem(previous, measures);
+    const currentMeasure = findMeasureForItem(item, measures);
+    const gap = item.x - (previous.x + previous.width);
+
+    return previousMeasure &&
+      currentMeasure &&
+      previousMeasure !== currentMeasure &&
+      gap > 0
+      ? [gap]
+      : [];
+  });
+  const median = getLowerMedian(boundaryGaps);
+  const mad = getLowerMedianIncludingZero(
+    boundaryGaps.map((gap) => Math.abs(gap - median)),
+  );
+
+  return { count: boundaryGaps.length, mad, median };
+}
+
+function getLineReferenceGap(items, staffSpacing) {
+  const sortedItems = [...items].sort((left, right) => left.x - right.x);
+  const positiveGaps = sortedItems.slice(1).flatMap((item, index) => {
+    const previous = sortedItems[index];
+    const gap = item.x - (previous.x + previous.width);
+
+    return gap > 0 ? [gap] : [];
+  });
+
+  if (positiveGaps.length > 1) return getLowerMedian(positiveGaps);
+
+  return (
+    getLowerMedian(sortedItems.map((item) => item.width)) ||
+    getLowerMedian(sortedItems.map((item) => item.height)) ||
+    staffSpacing ||
+    0
+  );
+}
+
 function joinLineItems(items) {
   return [...items]
     .sort((left, right) => left.x - right.x)
@@ -146,7 +208,7 @@ export function createLyricCandidates({ measures, systems, textItems }) {
 
   const candidates = [];
 
-  systems.forEach((system) => {
+  systems.forEach((system, systemIndex) => {
     const systemMeasures = measures.filter(
       (measure) => findSystemForMeasure(measure, [system]) === system,
     );
@@ -163,11 +225,30 @@ export function createLyricCandidates({ measures, systems, textItems }) {
       );
     });
 
+    const lyricLines = groupTextLines(lyricItems, system.staffSpacing).map(
+      (line, lineIndex) => ({
+        ...line,
+        boundaryGapStats: getLineBoundaryGapStats(line.items, systemMeasures),
+        items: [...line.items].sort((left, right) => left.x - right.x),
+        lineIndex,
+        referenceGap: getLineReferenceGap(line.items, system.staffSpacing),
+      }),
+    );
+
     systemMeasures.forEach((measure) => {
-      const measureItems = lyricItems.filter(
-        (item) => findMeasureForItem(item, systemMeasures) === measure,
-      );
-      const lyric = groupTextLines(measureItems, system.staffSpacing)
+      const measureLines = lyricLines.flatMap((line) => {
+        const items = line.items.filter(
+          (item) => findMeasureForItem(item, systemMeasures) === measure,
+        );
+
+        if (items.length === 0) return [];
+
+        const startX = Math.min(...items.map((item) => item.x));
+        const endX = Math.max(...items.map((item) => item.x + item.width));
+
+        return [{ ...line, endX, items, startX }];
+      });
+      const lyric = measureLines
         .map((line) => joinLineItems(line.items))
         .filter(Boolean)
         .join('\n');
@@ -175,6 +256,24 @@ export function createLyricCandidates({ measures, systems, textItems }) {
       if (!lyric) return;
 
       candidates.push({
+        lyricGeometry: {
+          lines: measureLines.map((line) => ({
+            baselineY: line.baselineY,
+            boundaryGapCount: line.boundaryGapStats.count,
+            boundaryGapMad: line.boundaryGapStats.mad,
+            boundaryGapMedian: line.boundaryGapStats.median,
+            endX: line.endX,
+            lineIndex: line.lineIndex,
+            referenceGap: line.referenceGap,
+            startX: line.startX,
+          })),
+          page: measure.page,
+          systemEndX: system.x + system.width,
+          systemIndex: Number.isInteger(system.index)
+            ? system.index
+            : systemIndex,
+          systemStartX: system.x,
+        },
         lyric,
         measureId: measure.id,
         measureIndex: measure.measureIndex,
@@ -190,24 +289,29 @@ export function applyLyricCandidates(measures, candidates) {
   const candidatesById = new Map(
     (Array.isArray(candidates) ? candidates : []).map((candidate) => [
       candidate.measureId,
-      candidate.lyric,
+      candidate,
     ]),
   );
   let appliedCount = 0;
   let preservedCount = 0;
 
   const nextMeasures = (Array.isArray(measures) ? measures : []).map((measure) => {
-    const candidateLyric = candidatesById.get(measure.id);
+    const candidate = candidatesById.get(measure.id);
+    const candidateLyric = candidate?.lyric;
 
     if (!candidateLyric) return measure;
 
+    const measureWithGeometry = candidate.lyricGeometry
+      ? { ...measure, lyricGeometry: candidate.lyricGeometry }
+      : measure;
+
     if (String(measure.lyric || '').trim()) {
       preservedCount += 1;
-      return measure;
+      return measureWithGeometry;
     }
 
     appliedCount += 1;
-    return { ...measure, lyric: candidateLyric };
+    return { ...measureWithGeometry, lyric: candidateLyric };
   });
 
   return { appliedCount, measures: nextMeasures, preservedCount };

@@ -146,7 +146,13 @@
 - [ ] 자동재생 중 이전/다음/처음/번호 이동을 하면 기존 타이머가 취소되고 대상 마디의 BPM/Beats 전체 시간부터 다시 진행한다.
 - [ ] Start/Stop이 즉시 동작하고 중복 타이머가 생기지 않는다.
 - [ ] Repeat OFF는 마지막 마디에서 멈추고 Repeat ON은 첫 마디로 돌아간다.
-- [ ] Vocal에서 현재 가사와 다음의 비어 있지 않은 다른 가사가 줄바꿈을 유지해 표시된다.
+- [ ] Vocal에서 현재 마디가 속한 Phrase가 시작·중간·끝 마디 동안 같은 문장으로 표시된다.
+- [ ] 빈 lyric 마디에서는 현재 Phrase가 비고, 다음 Phrase 미리보기는 유지된다.
+- [ ] 같은 lyric baseline의 일반 gap은 Phrase를 유지하고 큰 상대 gap은 Phrase를 분리한다.
+- [ ] 고정 비율 미만이어도 baseline의 다른 마디 경계보다 뚜렷한 MAD outlier gap은 Phrase를 분리한다.
+- [ ] 같은 system의 다른 lyric baseline과 다음 staff system의 baseline은 반드시 새 Phrase가 된다.
+- [ ] `-`, `–`, `_`와 음가 연장 기호만 있는 lyric은 Phrase 텍스트에 포함되지 않는다.
+- [ ] 가사 편집과 PDF 가사 자동인식 적용 직후 Vocal Phrase가 별도 재분석 없이 갱신된다.
 
 ## 명령 검증
 

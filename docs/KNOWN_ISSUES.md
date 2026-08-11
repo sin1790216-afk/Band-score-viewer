@@ -4,8 +4,14 @@
 
 - 현재 자동인식은 디지털 단선율 PDF의 수평 오선과 세로선 구조를 이용하는 후보 생성기다. 스캔·사진, 복잡한 다단 악보, 반복기호와 달세뇨/코다의 연주 순서는 지원하지 않는다.
 - notehead/beam이 직접 붙은 세로 stem은 staff spacing 기준 side branch로 제외하지만, 인쇄 품질이 낮거나 기호가 실제 barline과 겹치면 오검출 또는 누락이 남을 수 있다.
-- content band는 인접 system 중간 경계로 코드·오선·가사를 포함하며 OCR, 코드 또는 가사 텍스트 추출은 수행하지 않는다.
+- content band는 인접 system 중간 경계로 코드·오선·가사를 포함한다. 디지털 PDF 가사는 text layer에서 추출하지만 스캔·사진 PDF의 OCR과 코드 자동 입력은 지원하지 않는다.
 - 실제 악보마다 자동인식 후 Teacher 등록모드의 선택·드래그·8방향 resize·삭제로 확인하고 보정해야 한다.
+
+## Vocal Phrase
+
+- 자동인식 가사는 PDF text geometry의 lyric baseline 변경을 기본 경계로 사용하고, 같은 baseline의 대표 간격 또는 마디 경계 gap 분포의 중앙값·MAD 대비 큰 수평 공백에서 추가 분리한다. 고정 픽셀 기준은 사용하지 않는다.
+- 기존 JSON이나 수동 입력처럼 `lyricGeometry`가 없는 가사는 정교한 Phrase 경계를 복원할 수 없어 Vocal에서 현재 마디 lyric만 표시한다. 자동 가사 인식을 다시 적용하면 Phrase 표시가 복원된다.
+- PDF text item 분할 품질에 따라 경계가 과도하거나 부족할 수 있다. 문장부호, 쉼 구조, 한국어 문맥 분석은 아직 사용하지 않는다.
 
 ## 한 페이지 보기 렌더 경합
 

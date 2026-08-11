@@ -142,9 +142,22 @@ test('.bsv preserves normalized coordinates, BPM, Beats, and multiline lyrics', 
 });
 
 test('.bsv preserves a lyric applied from an automatic recognition candidate', async () => {
+  const lyricGeometry = {
+    lines: [{ endX: 0.4, lineIndex: 0, referenceGap: 0.02, startX: 0.2 }],
+    page: 2,
+    systemEndX: 0.9,
+    systemIndex: 0,
+    systemStartX: 0.1,
+  };
   const recognizedMeasures = applyLyricCandidates(
     [{ ...MEASURE, lyric: '' }],
-    [{ lyric: '자동 인식 가사\n둘째 줄', measureId: MEASURE.id }],
+    [
+      {
+        lyric: '자동 인식 가사\n둘째 줄',
+        lyricGeometry,
+        measureId: MEASURE.id,
+      },
+    ],
   ).measures;
   const encoded = await encodeBsvProject({
     now: TEST_TIMESTAMP,
@@ -157,6 +170,11 @@ test('.bsv preserves a lyric applied from an automatic recognition candidate', a
   const decoded = decodeBsvProject(encoded.text);
 
   assert.equal(decoded.projectState.measures[0].lyric, '자동 인식 가사\n둘째 줄');
+  assert.deepEqual(
+    encoded.document.project.measures[0].lyricGeometry,
+    lyricGeometry,
+  );
+  assert.deepEqual(decoded.projectState.measures[0].lyricGeometry, lyricGeometry);
 });
 
 test('.bsv preserves BPM after a Teacher global tempo application', async () => {

@@ -63,10 +63,29 @@ test('오선 아래 텍스트를 measure 가로 범위에 연결하고 자연스
     ],
   });
 
-  assert.deepEqual(candidates, [
-    { lyric: '솔직히 말했어', measureId: 'm1', measureIndex: 0, page: 1 },
-    { lyric: '다음가사', measureId: 'm2', measureIndex: 1, page: 1 },
-  ]);
+  assert.deepEqual(
+    candidates.map((candidate) => ({
+      lyric: candidate.lyric,
+      measureId: candidate.measureId,
+      measureIndex: candidate.measureIndex,
+      page: candidate.page,
+    })),
+    [
+      { lyric: '솔직히 말했어', measureId: 'm1', measureIndex: 0, page: 1 },
+      { lyric: '다음가사', measureId: 'm2', measureIndex: 1, page: 1 },
+    ],
+  );
+  const [firstLine] = candidates[0].lyricGeometry.lines;
+
+  assert.equal(candidates[0].lyricGeometry.page, 1);
+  assert.equal(candidates[0].lyricGeometry.systemIndex, 0);
+  assert.equal(firstLine.lineIndex, 0);
+  assert.equal(firstLine.boundaryGapCount, 1);
+  assert.ok(Math.abs(firstLine.boundaryGapMedian - 0.15) < 1e-9);
+  assert.equal(firstLine.boundaryGapMad, 0);
+  assert.ok(Math.abs(firstLine.startX - 0.15) < 1e-9);
+  assert.ok(Math.abs(firstLine.endX - 0.41) < 1e-9);
+  assert.ok(Math.abs(firstLine.referenceGap - 0.03) < 1e-9);
 });
 
 test('여러 lyric baseline은 한 measure의 줄바꿈으로 보존한다', () => {
@@ -120,14 +139,46 @@ test('가사 후보 적용은 빈 lyric만 채우고 기존 수동 가사는 보
   assert.equal(originalMeasures[1].lyric, '');
 });
 
+test('가사 후보 geometry는 원본 lyric 보존 여부와 무관하게 runtime measure에 적용된다', () => {
+  const lyricGeometry = {
+    lines: [{ endX: 0.4, lineIndex: 0, referenceGap: 0.02, startX: 0.2 }],
+    page: 1,
+    systemEndX: 0.9,
+    systemIndex: 0,
+    systemStartX: 0.1,
+  };
+  const result = applyLyricCandidates(
+    [{ ...MEASURES[0], lyric: '수동 가사' }],
+    [{ lyric: '자동 후보', lyricGeometry, measureId: 'm1' }],
+  );
+
+  assert.equal(result.measures[0].lyric, '수동 가사');
+  assert.equal(result.measures[0].lyricGeometry, lyricGeometry);
+});
+
 test('적용된 자동 가사는 기존 JSON 배열 형식으로 왕복한다', () => {
   const applied = applyLyricCandidates(MEASURES, [
-    { lyric: '자동 가사\n둘째 줄', measureId: 'm1' },
+    {
+      lyric: '자동 가사\n둘째 줄',
+      lyricGeometry: {
+        lines: [
+          { endX: 0.4, lineIndex: 0, referenceGap: 0.02, startX: 0.2 },
+        ],
+        page: 1,
+        systemEndX: 0.9,
+        systemIndex: 0,
+        systemStartX: 0.1,
+      },
+      measureId: 'm1',
+    },
   ]).measures;
-  const restored = importMeasuresJson(exportMeasuresJson(applied));
+  const exported = exportMeasuresJson(applied);
+  const restored = importMeasuresJson(exported);
 
   assert.equal(restored[0].lyric, '자동 가사\n둘째 줄');
-  assert.equal(Array.isArray(JSON.parse(exportMeasuresJson(applied))), true);
+  assert.deepEqual(restored[0].lyricGeometry, applied[0].lyricGeometry);
+  assert.deepEqual(JSON.parse(exported)[0].lyricGeometry, applied[0].lyricGeometry);
+  assert.equal(Array.isArray(JSON.parse(exported)), true);
 });
 
 test('가사 후보는 적용 전까지 원본 measures를 변경하지 않아 취소할 수 있다', () => {

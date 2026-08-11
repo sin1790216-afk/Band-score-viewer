@@ -65,6 +65,17 @@ canonical `x/y/width/height`로 저장된다.
 
 `src/App.jsx`는 이 상태들의 UI 이벤트와 파일·Socket·타이머 부수효과를 조율한다. `src/components/ScoreViewer.jsx`는 `displayPageNumber` 하나를 입력받아 `react-pdf` 렌더, canvas/overlay DOM, 좌표 변환, 렌더 완료 상태, 크기 관찰과 자동 스크롤을 담당한다.
 
+Vocal Phrase는 별도 Project 데이터가 아니라 `measures`에서 계산하는 파생 데이터다. PDF
+자동인식은 정규화된 lyric line span과 system 범위를 runtime `lyricGeometry`로 Measure에
+연결한다. Phrase 계산은 PDF text geometry로 묶은 lyric baseline이 바뀌면 먼저 분리하고,
+같은 baseline에서는 실제 lyric gap을 해당 line의 대표 간격과 비교하고, 마디 경계 gap
+분포의 중앙값과 MAD 기반 robust outlier에서도 추가 분리한다. 빈 가사와
+placeholder도 경계로 사용한다. `displayMeasureIndex`로 현재와 다음 Phrase를 찾으며 가사
+편집이나 자동인식 적용 후 즉시 다시 계산한다. Phrase는 Socket이나 파일에 별도 저장하지
+않고, Phrase 재계산에 필요한 `lyricGeometry`만 measures의 선택 metadata로 Socket과
+JSON, `.bsv`에서 함께 보존한다. geometry가 없는 기존 데이터의 Vocal 표시는 한 마디
+가사로 제한해 곡 전체 수준의 파생 Phrase를 렌더하지 않는다.
+
 Student 필기는 `ScoreViewer`의 현재 PDF surface에서 pointer 좌표를 `0..1` 범위로
 정규화하고, 같은 canvas stack 위의 전용 SVG overlay에 렌더한다. 필기 데이터는 PDF 출처와
 파일 identity별로 브라우저 `localStorage`에만 저장하며 Socket, measure JSON, `.bsv`에는
