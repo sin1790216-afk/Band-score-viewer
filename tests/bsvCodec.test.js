@@ -177,6 +177,22 @@ test('.bsv preserves a lyric applied from an automatic recognition candidate', a
   assert.deepEqual(decoded.projectState.measures[0].lyricGeometry, lyricGeometry);
 });
 
+test('.bsv preserves three verse lines and an empty middle verse', async () => {
+  const multilineLyric = '1절 가사\n\n3절 가사';
+  const encoded = await encodeBsvProject({
+    now: TEST_TIMESTAMP,
+    pdfBlob: new Blob([PDF_BYTES], { type: PDF_MIME_TYPE }),
+    projectState: createInitialProjectState({
+      ...createProjectState(),
+      measures: [{ ...MEASURE, lyric: multilineLyric }],
+    }),
+  });
+  const decoded = decodeBsvProject(encoded.text);
+
+  assert.equal(encoded.document.project.measures[0].lyric, multilineLyric);
+  assert.equal(decoded.projectState.measures[0].lyric, multilineLyric);
+});
+
 test('.bsv preserves BPM after a Teacher global tempo application', async () => {
   const projectState = projectReducer(
     createInitialProjectState({

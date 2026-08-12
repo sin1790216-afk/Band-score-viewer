@@ -418,6 +418,14 @@ test('Measure lyric 내부 줄바꿈은 보존하고 Measure 사이에만 공백
   assert.equal(phrase.text, '첫 줄\n둘째 줄 다음 마디');
 });
 
+test('Vocal View model은 세 verse와 빈 중간 line을 손실하지 않는다', () => {
+  const multilineLyric = '1절 가사\n\n3절 가사';
+  const model = createVocalViewModel(measuresFromLyrics([multilineLyric]), 0);
+
+  assert.equal(model.currentText, multilineLyric);
+  assert.equal(model.currentPhrase?.text, multilineLyric);
+});
+
 test('4개 Phrase 중 currentMeasure가 속한 Phrase 하나만 Vocal text로 선택한다', () => {
   const measures = [
     measureWithGeometry('첫 Phrase', 0, geometry({ endX: 0.2, startX: 0.1 })),

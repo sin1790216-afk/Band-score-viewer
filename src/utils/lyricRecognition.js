@@ -1,8 +1,12 @@
-const CHORD_PATTERN = /^[A-G](?:#|b|♯|♭)?(?:(?:maj|min|dim|aug|sus|add|m|M)?\d*)?(?:\/[A-G](?:#|b|♯|♭)?)?$/i;
+const CHORD_PATTERN = /^[A-Ga-g](?:#|b|♯|♭)?(?:(?:maj|min|dim|aug|sus|add|m|M)?\d*(?:sus\d*|add\d*)?(?:\([^)]*\))?)?(?:\/[A-Ga-g](?:#|b|♯|♭)?)?$/;
+const CHORD_FRAGMENT_PATTERN = /^(?:(?:m|M|maj|min|dim|aug|sus|add)\d*(?:\([^)]*\))?(?:\/[A-Ga-g](?:#|b|♯|♭)?)?|\d+(?:sus\d*|add\d*)?(?:\([^)]*\))?|\/[A-Ga-g](?:#|b|♯|♭)?|[mM]\/[A-Ga-g](?:#|b|♯|♭)?)$/;
 const BPM_PATTERN = /^(?:bpm\s*)?=?\s*\d+(?:\.\d+)?$/i;
 const LETTER_PATTERN = /\p{L}/u;
 const MEASURE_NUMBER_PATTERN = /^\d+[.)]?$/;
 const NOTATION_GLYPH_PATTERN = /^[œŒjJqQwW\s]+$/;
+const WEB_ADDRESS_PATTERN = /^(?:https?:\/\/|www\.)?[^\s.]+(?:\.[^\s.]+)+(?:\/\S*)?$/i;
+const LYRIC_REGION_START_STAFF_SPACES = 0.35;
+const NEXT_SYSTEM_CHORD_RESERVE_STAFF_SPACES = 2.5;
 
 function multiplyTransforms(left, right) {
   return [
@@ -19,7 +23,15 @@ function normalizeChunk(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
-function isLyricText(value) {
+export function isChordSymbolText(value) {
+  const text = normalizeChunk(value);
+
+  return Boolean(
+    text && (CHORD_PATTERN.test(text) || CHORD_FRAGMENT_PATTERN.test(text)),
+  );
+}
+
+export function isLyricText(value) {
   const text = normalizeChunk(value);
 
   if (!text || !LETTER_PATTERN.test(text)) return false;
@@ -27,7 +39,8 @@ function isLyricText(value) {
     MEASURE_NUMBER_PATTERN.test(text) ||
     BPM_PATTERN.test(text) ||
     NOTATION_GLYPH_PATTERN.test(text) ||
-    CHORD_PATTERN.test(text)
+    WEB_ADDRESS_PATTERN.test(text) ||
+    isChordSymbolText(text)
   ) {
     return false;
   }
@@ -75,6 +88,55 @@ function groupTextLines(items, staffSpacing) {
     });
 
   return lines.sort((left, right) => left.baselineY - right.baselineY);
+}
+
+export function getSystemLyricRegion({ nextSystem, system, textItems }) {
+  if (
+    !system ||
+    !Array.isArray(textItems) ||
+    !Number.isFinite(system.staffBottom) ||
+    !Number.isFinite(system.staffSpacing) ||
+    system.staffSpacing <= 0
+  ) {
+    return { bottom: null, items: [], lines: [], top: null };
+  }
+
+  const top =
+    system.staffBottom +
+    system.staffSpacing * LYRIC_REGION_START_STAFF_SPACES;
+  const bottom = nextSystem
+    ? nextSystem.staffTop -
+      nextSystem.staffSpacing * NEXT_SYSTEM_CHORD_RESERVE_STAFF_SPACES
+    : 1;
+
+  if (!Number.isFinite(bottom) || bottom <= top) {
+    return { bottom, items: [], lines: [], top };
+  }
+
+  const regionItems = textItems.filter((item) => {
+    const centerX = item.x + item.width / 2;
+
+    return (
+      isLyricText(item.text) &&
+      centerX >= system.x &&
+      centerX <= system.x + system.width &&
+      item.baselineY >= top &&
+      item.baselineY <= bottom
+    );
+  });
+  const regionLines = groupTextLines(regionItems, system.staffSpacing);
+  const lines = nextSystem || regionLines.length > 1
+    ? regionLines
+    : regionLines.filter((line) => line.baselineY <= system.contentBottom);
+  const allowedItems = new Set(lines.flatMap((line) => line.items));
+  const items = regionItems.filter((item) => allowedItems.has(item));
+
+  return {
+    bottom,
+    items,
+    lines,
+    top,
+  };
 }
 
 function getLowerMedian(values) {
@@ -212,20 +274,12 @@ export function createLyricCandidates({ measures, systems, textItems }) {
     const systemMeasures = measures.filter(
       (measure) => findSystemForMeasure(measure, [system]) === system,
     );
-    const lyricItems = textItems.filter((item) => {
-      const centerX = item.x + item.width / 2;
-      const minimumBaseline = system.staffBottom + system.staffSpacing * 0.35;
-
-      return (
-        isLyricText(item.text) &&
-        centerX >= system.x &&
-        centerX <= system.x + system.width &&
-        item.baselineY >= minimumBaseline &&
-        item.baselineY <= system.contentBottom
-      );
+    const lyricRegion = getSystemLyricRegion({
+      nextSystem: systems[systemIndex + 1],
+      system,
+      textItems,
     });
-
-    const lyricLines = groupTextLines(lyricItems, system.staffSpacing).map(
+    const lyricLines = lyricRegion.lines.map(
       (line, lineIndex) => ({
         ...line,
         boundaryGapStats: getLineBoundaryGapStats(line.items, systemMeasures),
@@ -236,28 +290,27 @@ export function createLyricCandidates({ measures, systems, textItems }) {
     );
 
     systemMeasures.forEach((measure) => {
-      const measureLines = lyricLines.flatMap((line) => {
+      const measureLines = lyricLines.map((line) => {
         const items = line.items.filter(
           (item) => findMeasureForItem(item, systemMeasures) === measure,
         );
 
-        if (items.length === 0) return [];
+        if (items.length === 0) return null;
 
         const startX = Math.min(...items.map((item) => item.x));
         const endX = Math.max(...items.map((item) => item.x + item.width));
 
-        return [{ ...line, endX, items, startX }];
+        return { ...line, endX, items, startX };
       });
       const lyric = measureLines
-        .map((line) => joinLineItems(line.items))
-        .filter(Boolean)
+        .map((line) => (line ? joinLineItems(line.items) : ''))
         .join('\n');
 
-      if (!lyric) return;
+      if (!lyric.trim()) return;
 
       candidates.push({
         lyricGeometry: {
-          lines: measureLines.map((line) => ({
+          lines: measureLines.filter(Boolean).map((line) => ({
             baselineY: line.baselineY,
             boundaryGapCount: line.boundaryGapStats.count,
             boundaryGapMad: line.boundaryGapStats.mad,
