@@ -95,6 +95,26 @@ const BOUNDARY_CRITIC_RESPONSE_SCHEMA = {
   type: 'object',
 };
 
+const KOREAN_SPACING_RESPONSE_SCHEMA = {
+  additionalProperties: false,
+  properties: {
+    sections: {
+      items: {
+        additionalProperties: false,
+        properties: {
+          polishedText: { type: 'string' },
+          sectionId: { type: 'string' },
+        },
+        required: ['sectionId', 'polishedText'],
+        type: 'object',
+      },
+      type: 'array',
+    },
+  },
+  required: ['sections'],
+  type: 'object',
+};
+
 const INSTRUCTIONS = `You resolve a context window of adjacent song-lyric measures into natural language phrases.
 Return every input measureId exactly once, in the original order, grouped only into contiguous groups.
 Use this priority order when grouping phrases and choosing display cue boundaries: (1) preserve Korean words, stems, endings, particles, and compound expressions, (2) preserve a natural semantic clause, (3) choose a natural vocal breath, (4) prefer a readable display length, and only then (5) consider a measure boundary.
@@ -136,6 +156,22 @@ breathCandidates are advisory only. Ignore them whenever they damage Korean gram
 Keep already natural cue sequences unchanged. Do not create many tiny cues. Do not collapse a readable multi-cue phrase into one unusually large cue.
 When the first pass has "어렵고 힘들었던 시간을 넘어서 아주" and "많은 처음을 주었잖아", prefer "어렵고 힘들었던 시간을 넘어서" and "아주 많은 처음을 주었잖아" while preserving the exact character order.
 Set reasonCategory to the main reason for a changed phrase, or unchanged when its cue texts remain exactly the same.`;
+
+const KOREAN_SPACING_INSTRUCTIONS = `You are the final Korean spacing polisher for song lyrics.
+Review every hard-boundary section together for consistent Korean spacing, but return each section independently with the exact same sectionId and order.
+You may insert, delete, or move whitespace only. Never add, delete, replace, reorder, translate, or correct any non-whitespace character, punctuation, English letter, number, or hyphen.
+Use continuousAnalysisText as the canonical character sequence and acceptedDisplayText as the current spacing reference. Improve only spacing that is clearly unnatural.
+Resolve Korean word continuity across source measure and display cue boundaries. Inspect whether whitespace between adjacent Hangul syllables splits one lexical word, compound expression, stem, ending, or particle sequence.
+Preserve already natural text such as "뺨을 매만지는 바람". Preserve English and numeric tokens such as "K-pop" and "10-20" exactly except for surrounding whitespace when Korean context clearly requires it.
+Do not return offsets, measure IDs, phrase IDs, explanations, or corrected spelling. The server reconstructs all character and source spans deterministically.`;
+
+const FINAL_KOREAN_SPACING_CRITIC_INSTRUCTIONS = `You are an independent final spacing critic for Korean song lyrics.
+Review every hard-boundary section together, but return every section independently with the exact same sectionId and order.
+continuousAnalysisText is the immutable canonical character sequence. firstPassText is a spacing candidate that may contain subtle lexical errors, but it may also contain correct Korean word boundaries. Evaluate it independently and make the smallest clearly justified whitespace correction.
+Inspect every whitespace boundary between adjacent Hangul syllables in full section context. Remove whitespace only with high confidence that it splits one lexical word, compound expression conventionally written without a space, stem, ending, or particle sequence. Do not collapse a valid boundary between separate determiners, pronouns, adverbs, nouns, or other independently written words. Add or move whitespace only when Korean grammar clearly requires it.
+Preserve already natural first-pass spacing. When a boundary is ambiguous rather than clearly wrong, keep the first-pass boundary instead of inventing a new spelling convention.
+You may change whitespace only. Never add, delete, replace, reorder, translate, or correct any non-whitespace character, punctuation, English letter, number, or hyphen.
+Do not change LanguagePhrase or DisplayCue boundaries. Do not return offsets, measure IDs, phrase IDs, explanations, or corrected spelling. The server projects accepted whitespace onto its existing character spans and cue ranges.`;
 
 function createProviderError(message, code) {
   const error = new Error(message);
@@ -296,6 +332,40 @@ export function createOpenAiLanguagePhraseProvider({
         instructions: BOUNDARY_CRITIC_INSTRUCTIONS,
         schema: BOUNDARY_CRITIC_RESPONSE_SCHEMA,
         schemaName: 'global_vocal_boundary_critic',
+      });
+    },
+
+    resolveKoreanSpacing(sections) {
+      return requestStructuredOutput({
+        input: {
+          sections: sections.map((section) => ({
+            acceptedDisplayText: section.phrases
+              .map((item) => item.phrase.displayText)
+              .join(' '),
+            continuousAnalysisText: section.continuousAnalysisText,
+            sectionId: section.sectionId,
+          })),
+        },
+        instructions: KOREAN_SPACING_INSTRUCTIONS,
+        schema: KOREAN_SPACING_RESPONSE_SCHEMA,
+        schemaName: 'global_korean_spacing_polish',
+      });
+    },
+
+    resolveKoreanSpacingCritic(sections) {
+      return requestStructuredOutput({
+        input: {
+          sections: sections.map((section) => ({
+            continuousAnalysisText: section.continuousAnalysisText,
+            firstPassText: section.phrases
+              .map((item) => item.phrase.displayText)
+              .join(' '),
+            sectionId: section.sectionId,
+          })),
+        },
+        instructions: FINAL_KOREAN_SPACING_CRITIC_INSTRUCTIONS,
+        schema: KOREAN_SPACING_RESPONSE_SCHEMA,
+        schemaName: 'final_korean_spacing_critic',
       });
     },
 

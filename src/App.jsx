@@ -51,9 +51,12 @@ import {
   getMeaningfulLyric,
 } from './utils/vocalPhrases.js';
 import {
+  createLanguagePhraseRequestId,
   createLanguagePhraseSourceKey,
+  evaluateLanguagePhraseResolveResponse,
   getLanguagePhrasesForMeasures,
   LANGUAGE_PHRASE_EVENTS,
+  LANGUAGE_PHRASE_RESOLVE_ACK_TIMEOUT_MS,
   validateLanguagePhraseState,
 } from './utils/languagePhrases.js';
 import {
@@ -1496,30 +1499,47 @@ function App() {
       message: '가사 문맥을 분석하고 있습니다...',
       status: 'running',
     });
+    const requestId = createLanguagePhraseRequestId();
 
-    socket.timeout(60_000).emit(
+    if (import.meta.env.DEV) {
+      console.log(`[LanguagePhraseRequest ${requestId}] client emit`);
+    }
+
+    socket.timeout(LANGUAGE_PHRASE_RESOLVE_ACK_TIMEOUT_MS).emit(
       LANGUAGE_PHRASE_EVENTS.RESOLVE,
-      {},
+      { requestId },
       (timeoutError, response) => {
-        if (timeoutError || !response?.ok) {
+        const result = evaluateLanguagePhraseResolveResponse({
+          measures: measuresRef.current,
+          response,
+          transportError: timeoutError,
+        });
+
+        if (import.meta.env.DEV) {
+          console.log(
+            `[LanguagePhraseRequest ${requestId}] client ${
+              result.accepted ? 'accepted' : 'rejected'
+            }`,
+            {
+              reason: result.reason,
+              responseRequestId: response?.requestId || '',
+              responseStatus: response?.status || '',
+            },
+          );
+        }
+
+        if (!result.accepted) {
           setLanguagePhraseMutationState({
-            message: `${
-              response?.error || 'AI 가사 문장 정리에 실패했습니다.'
-            } 기존 Phrase를 계속 사용합니다.`,
+            message:
+              result.reason === 'stale-source'
+                ? result.message
+                : `${result.message} 기존 Phrase를 계속 사용합니다.`,
             status: 'error',
           });
           return;
         }
 
-        const nextState = validateLanguagePhraseState(response.state, measuresRef.current);
-
-        if (!nextState) {
-          setLanguagePhraseMutationState({
-            message: '현재 가사와 분석 결과가 달라 기존 Phrase를 계속 사용합니다.',
-            status: 'error',
-          });
-          return;
-        }
+        const nextState = result.state;
 
         setLanguagePhraseState(nextState);
         setLanguagePhraseMutationState(

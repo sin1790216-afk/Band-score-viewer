@@ -41,6 +41,8 @@ import {
 
 const PORT = process.env.PORT || 4000;
 const distDir = resolve('dist');
+const isLanguagePhraseDebugEnabled =
+  process.env.BSV_LANGUAGE_PHRASE_DEBUG === '1';
 
 const initialSharedSessionState = createEmptySharedSessionState();
 let latestSyncState = initialSharedSessionState.syncState;
@@ -239,4 +241,7 @@ io.on('connection', (socket) => {
 
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Band Score Viewer sync server listening on http://0.0.0.0:${PORT}`);
+  console.log(
+    `[LanguagePhraseDebug] ${isLanguagePhraseDebugEnabled ? 'enabled' : 'disabled'}`,
+  );
 });

@@ -1,5 +1,7 @@
 import {
   applyBoundaryCriticResult,
+  applyFinalKoreanSpacingCriticResult,
+  applyKoreanSpacingPolishResult,
   createBoundaryCriticSections,
   createContinuousAnalysisSource,
   createLanguagePhraseAnalysisPlan,
@@ -9,6 +11,7 @@ import {
   createProtectedLanguagePhrase,
   createLanguagePhraseSourceFingerprint,
   LANGUAGE_PHRASE_STATE_VERSION,
+  normalizeLanguagePhraseRequestId,
   stitchLanguagePhraseFragments,
   validateLanguagePhraseWindowResult,
 } from '../utils/languagePhrases.js';
@@ -192,10 +195,96 @@ function logBoundaryCriticDiagnostics({
   );
 }
 
+function logKoreanSpacingDiagnostics({ application, error, sections }) {
+  if (process.env.BSV_LANGUAGE_PHRASE_DEBUG !== '1') return;
+
+  console.log('[KoreanSpacingPolish]');
+  console.dir(
+    {
+      sections: sections.map((section) => {
+        const detail = application?.details.find(
+          (item) => item.sectionId === section.sectionId,
+        );
+
+        return {
+          POLISHED: detail?.polishedText || null,
+          SOURCE: section.continuousAnalysisText,
+          reason: detail?.reason || '',
+          sectionId: section.sectionId,
+          validation: detail && detail.status !== 'fallback'
+            ? 'accepted'
+            : 'fallback',
+        };
+      }),
+      error: error
+        ? {
+            category: getFallbackCategory(error),
+            message: error.message,
+          }
+        : null,
+      requestCount: sections.length > 0 ? 1 : 0,
+    },
+    { depth: null },
+  );
+
+  const boundaryDecisions = application?.details.flatMap((detail) =>
+    Array.isArray(detail.boundaryDecisions) ? detail.boundaryDecisions : [],
+  ) || [];
+
+  if (boundaryDecisions.length > 0) {
+    console.log('[WordBoundaryGuard]');
+    console.table(boundaryDecisions.map((decision) => ({
+      decision: decision.decision,
+      finalBoundary: decision.finalBoundary,
+      originalBoundary: decision.originalBoundary,
+      reason: decision.reason,
+      sectionId: decision.sectionId,
+    })));
+  }
+}
+
+function logFinalSpacingCriticDiagnostics({ application, error, sections }) {
+  if (process.env.BSV_LANGUAGE_PHRASE_DEBUG !== '1') return;
+
+  console.log('[FinalSpacingCritic]');
+  console.dir(
+    {
+      sections: sections.map((section) => {
+        const detail = application?.details.find(
+          (item) => item.sectionId === section.sectionId,
+        );
+
+        return {
+          FINAL: detail?.polishedText || null,
+          FIRST_PASS: section.phrases
+            .map((item) => item.phrase.displayText)
+            .join(' '),
+          SOURCE: section.continuousAnalysisText,
+          reason: detail?.reason || '',
+          sectionId: section.sectionId,
+          validation: detail && detail.status !== 'fallback'
+            ? 'accepted'
+            : 'fallback',
+        };
+      }),
+      error: error
+        ? {
+            category: getFallbackCategory(error),
+            message: error.message,
+          }
+        : null,
+      requestCount: sections.length > 0 ? 1 : 0,
+    },
+    { depth: null },
+  );
+}
+
 function logLanguagePhraseDiagnostics({
   critic,
   diagnostics,
+  finalSpacingCritic,
   phrases,
+  spacingPolish,
   sourceKey,
 }) {
   if (process.env.BSV_LANGUAGE_PHRASE_DEBUG !== '1') return;
@@ -225,11 +314,19 @@ function logLanguagePhraseDiagnostics({
   console.dir({
     finalPhrases,
     critic,
+    finalSpacingCritic,
     sourceKey,
+    spacingPolish,
     windows: diagnostics,
   }, {
     depth: null,
   });
+}
+
+function logLanguagePhraseRequest(requestId, event, details = {}) {
+  if (process.env.BSV_LANGUAGE_PHRASE_DEBUG !== '1') return;
+
+  console.log(`[LanguagePhraseRequest ${requestId}] ${event}`, details);
 }
 
 export async function resolveLanguagePhraseState({
@@ -237,7 +334,10 @@ export async function resolveLanguagePhraseState({
   measures,
   now = () => new Date().toISOString(),
   provider,
+  requestId: rawRequestId,
 }) {
+  const requestId = normalizeLanguagePhraseRequestId(rawRequestId);
+
   if (!provider || typeof provider.resolveWindow !== 'function') {
     throw new Error('AI 가사 Provider를 사용할 수 없습니다.');
   }
@@ -247,6 +347,11 @@ export async function resolveLanguagePhraseState({
   const fallbackDetails = [];
   const cueFallbackDetails = [];
   const diagnostics = [];
+
+  logLanguagePhraseRequest(requestId, 'resolver started', {
+    candidatePhraseCount: plan.candidatePhraseCount,
+    windowCount: plan.windows.length,
+  });
 
   for (const window of plan.windows) {
     if (window.mode === 'protected-multiline') {
@@ -356,6 +461,10 @@ export async function resolveLanguagePhraseState({
       fragmentsBySegment[segmentIndex],
     ),
   );
+  logLanguagePhraseRequest(requestId, 'core resolved', {
+    fallbackWindowCount: fallbackDetails.length,
+    phraseCount: firstPassPhrasesBySegment.flat().length,
+  });
   const criticSections = createBoundaryCriticSections(
     plan.segments,
     firstPassPhrasesBySegment,
@@ -421,7 +530,153 @@ export async function resolveLanguagePhraseState({
           ? 'unavailable'
           : 'not-needed',
   };
-  const phrases = finalPhrasesBySegment.flat();
+  logLanguagePhraseRequest(requestId, 'critic completed', {
+    fallbackSectionCount: critic.fallbackSectionCount,
+    status: critic.status,
+  });
+  const spacingSections = createBoundaryCriticSections(
+    plan.segments,
+    finalPhrasesBySegment,
+  );
+  let spacingApplication = null;
+  let spacingError = null;
+  let polishedPhrasesBySegment = finalPhrasesBySegment;
+
+  if (
+    spacingSections.length > 0 &&
+    typeof provider.resolveKoreanSpacing === 'function'
+  ) {
+    try {
+      const spacingResult = await provider.resolveKoreanSpacing(spacingSections);
+
+      spacingApplication = applyKoreanSpacingPolishResult(
+        spacingSections,
+        spacingResult,
+      );
+      polishedPhrasesBySegment = finalPhrasesBySegment.map(
+        (phrases, segmentIndex) =>
+          spacingApplication.phrasesBySegment[segmentIndex] || phrases,
+      );
+    } catch (error) {
+      spacingError = error;
+      logFallback('[vocal-phrases] korean spacing fallback', {
+        category: getFallbackCategory(error),
+        message:
+          error instanceof Error ? error.message : 'Korean Spacing 실패',
+      });
+    }
+  }
+
+  const spacingPolish = {
+    acceptedSectionCount: spacingApplication?.acceptedSectionCount || 0,
+    attempted:
+      spacingSections.length > 0 &&
+      typeof provider.resolveKoreanSpacing === 'function',
+    changedSectionCount: spacingApplication?.changedSectionCount || 0,
+    details: spacingApplication?.details || [],
+    fallbackSectionCount:
+      spacingApplication?.fallbackSectionCount ||
+      (spacingError ? spacingSections.length : 0),
+    requestCharacterCount: spacingSections.reduce(
+      (total, section) =>
+        total + getNonWhitespaceCharacterCount(section.continuousAnalysisText),
+      0,
+    ),
+    requestCount:
+      spacingSections.length > 0 &&
+      typeof provider.resolveKoreanSpacing === 'function'
+        ? 1
+        : 0,
+    sectionCount: spacingSections.length,
+    status: spacingError
+      ? 'fallback'
+      : spacingApplication
+        ? spacingApplication.acceptedSectionCount === 0
+          ? 'fallback'
+          : spacingApplication.fallbackSectionCount > 0
+            ? 'partial-fallback'
+            : 'accepted'
+        : spacingSections.length > 0
+          ? 'unavailable'
+          : 'not-needed',
+  };
+  logLanguagePhraseRequest(requestId, 'spacing completed', {
+    fallbackSectionCount: spacingPolish.fallbackSectionCount,
+    status: spacingPolish.status,
+  });
+  const finalSpacingSections = createBoundaryCriticSections(
+    plan.segments,
+    polishedPhrasesBySegment,
+  );
+  let finalSpacingApplication = null;
+  let finalSpacingError = null;
+  let finalSpacingPhrasesBySegment = polishedPhrasesBySegment;
+
+  if (
+    finalSpacingSections.length > 0 &&
+    typeof provider.resolveKoreanSpacingCritic === 'function'
+  ) {
+    try {
+      const finalSpacingResult = await provider.resolveKoreanSpacingCritic(
+        finalSpacingSections,
+      );
+
+      finalSpacingApplication = applyFinalKoreanSpacingCriticResult(
+        finalSpacingSections,
+        finalSpacingResult,
+      );
+      finalSpacingPhrasesBySegment = polishedPhrasesBySegment.map(
+        (phrases, segmentIndex) =>
+          finalSpacingApplication.phrasesBySegment[segmentIndex] || phrases,
+      );
+    } catch (error) {
+      finalSpacingError = error;
+      logFallback('[vocal-phrases] final spacing critic fallback', {
+        category: getFallbackCategory(error),
+        message:
+          error instanceof Error ? error.message : 'Final Spacing Critic 실패',
+      });
+    }
+  }
+
+  const finalSpacingCritic = {
+    acceptedSectionCount: finalSpacingApplication?.acceptedSectionCount || 0,
+    attempted:
+      finalSpacingSections.length > 0 &&
+      typeof provider.resolveKoreanSpacingCritic === 'function',
+    changedSectionCount: finalSpacingApplication?.changedSectionCount || 0,
+    details: finalSpacingApplication?.details || [],
+    fallbackSectionCount:
+      finalSpacingApplication?.fallbackSectionCount ||
+      (finalSpacingError ? finalSpacingSections.length : 0),
+    requestCharacterCount: finalSpacingSections.reduce(
+      (total, section) =>
+        total + getNonWhitespaceCharacterCount(section.continuousAnalysisText),
+      0,
+    ),
+    requestCount:
+      finalSpacingSections.length > 0 &&
+      typeof provider.resolveKoreanSpacingCritic === 'function'
+        ? 1
+        : 0,
+    sectionCount: finalSpacingSections.length,
+    status: finalSpacingError
+      ? 'fallback'
+      : finalSpacingApplication
+        ? finalSpacingApplication.acceptedSectionCount === 0
+          ? 'fallback'
+          : finalSpacingApplication.fallbackSectionCount > 0
+            ? 'partial-fallback'
+            : 'accepted'
+        : finalSpacingSections.length > 0
+          ? 'unavailable'
+          : 'not-needed',
+  };
+  logLanguagePhraseRequest(requestId, 'final spacing critic completed', {
+    fallbackSectionCount: finalSpacingCritic.fallbackSectionCount,
+    status: finalSpacingCritic.status,
+  });
+  const phrases = finalSpacingPhrasesBySegment.flat();
 
   logBoundaryCriticDiagnostics({
     application: criticApplication,
@@ -430,12 +685,27 @@ export async function resolveLanguagePhraseState({
     plan,
     sections: criticSections,
   });
+  logKoreanSpacingDiagnostics({
+    application: spacingApplication,
+    error: spacingError,
+    sections: spacingSections,
+  });
+  logFinalSpacingCriticDiagnostics({
+    application: finalSpacingApplication,
+    error: finalSpacingError,
+    sections: finalSpacingSections,
+  });
 
   logLanguagePhraseDiagnostics({
     critic,
     diagnostics,
+    finalSpacingCritic,
     phrases,
+    spacingPolish,
     sourceKey: plan.sourceKey,
+  });
+  logLanguagePhraseRequest(requestId, 'resolver success', {
+    phraseCount: phrases.length,
   });
 
   return {
@@ -451,6 +721,8 @@ export async function resolveLanguagePhraseState({
     sourceFingerprint: createLanguagePhraseSourceFingerprint(measures),
     sourceKey: plan.sourceKey,
     boundaryCritic: critic,
+    finalSpacingCritic,
+    koreanSpacingPolish: spacingPolish,
     version: LANGUAGE_PHRASE_STATE_VERSION,
   };
 }

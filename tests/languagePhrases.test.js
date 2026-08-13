@@ -8,8 +8,12 @@ import {
   createLanguagePhraseBoundaryMetadata,
   createLanguagePhraseSourceFingerprint,
   createLanguagePhraseSourceKey,
+  createWordBoundaryMap,
+  evaluateLanguagePhraseResolveResponse,
   getLanguagePhrasesForMeasures,
+  LANGUAGE_PHRASE_RESOLVE_ACK_TIMEOUT_MS,
   LANGUAGE_PHRASE_STATE_VERSION,
+  normalizeLanguagePhraseRequestId,
   validateLanguagePhraseState,
   validateLanguagePhraseWindowResult,
 } from '../src/utils/languagePhrases.js';
@@ -80,6 +84,22 @@ function createGroup(entries, measureIds, displayText, overrides = {}) {
     ...overrides,
   };
 }
+
+test('spacing 결과로 canonical 문자 사이의 word boundary map을 복원한다', () => {
+  const result = createWordBoundaryMap('아주 많은 처음');
+
+  assert.equal(result.canonicalText, '아주많은처음');
+  assert.deepEqual(result.safeBoundaryOffsets, [2, 4]);
+  assert.equal(
+    result.boundaries.find((boundary) => boundary.offset === 1)
+      .isInsideKoreanWord,
+    true,
+  );
+  assert.equal(
+    result.boundaries.find((boundary) => boundary.offset === 2).reason,
+    'language-whitespace',
+  );
+});
 
 function createPerMeasureCues(entries, texts) {
   return entries.map((entry, index) => ({
@@ -732,6 +752,57 @@ test('resolver revision만 다른 state는 원본 fingerprint와 전체 span 검
     ),
     null,
   );
+});
+
+test('클라이언트 응답 판정은 서버 성공과 resolver revision 차이를 실패로 오인하지 않는다', () => {
+  const measures = measuresFromLyrics(['동일원본']);
+  const entries = entriesFrom(measures);
+  const phrases = validateLanguagePhraseWindowResult(entries, {
+    groups: [createGroup(entries, ['measure-1'], '동일 원본')],
+  }).phrases;
+  const fingerprint = createLanguagePhraseSourceFingerprint(measures);
+  const state = {
+    ...stateFromPhrases(measures, phrases),
+    sourceFingerprint: fingerprint,
+    sourceKey: `language-phrases-v3-other-revision-${fingerprint}`,
+  };
+  const result = evaluateLanguagePhraseResolveResponse({
+    measures,
+    response: { ok: true, state, status: 'success' },
+  });
+
+  assert.equal(result.accepted, true);
+  assert.equal(result.reason, 'accepted');
+  assert.equal(result.state, state);
+});
+
+test('클라이언트 응답 판정은 실제 lyric 변경과 전송 실패를 구분한다', () => {
+  const measures = measuresFromLyrics(['원본']);
+  const entries = entriesFrom(measures);
+  const phrases = validateLanguagePhraseWindowResult(entries, {
+    groups: [createGroup(entries, ['measure-1'], '원본')],
+  }).phrases;
+  const state = stateFromPhrases(measures, phrases);
+  const staleResult = evaluateLanguagePhraseResolveResponse({
+    measures: [{ ...measures[0], lyric: '변경' }],
+    response: { ok: true, state, status: 'success' },
+  });
+  const timeoutResult = evaluateLanguagePhraseResolveResponse({
+    measures,
+    response: null,
+    transportError: new Error('operation has timed out'),
+  });
+
+  assert.equal(staleResult.accepted, false);
+  assert.equal(staleResult.reason, 'stale-source');
+  assert.equal(timeoutResult.accepted, false);
+  assert.equal(timeoutResult.reason, 'transport-timeout');
+});
+
+test('LanguagePhrase 요청 ID와 전체 pipeline ACK 제한은 안전한 protocol 값을 사용한다', () => {
+  assert.equal(normalizeLanguagePhraseRequestId('request_abc-123'), 'request_abc-123');
+  assert.equal(normalizeLanguagePhraseRequestId('bad\nrequest'), 'unknown');
+  assert.ok(LANGUAGE_PHRASE_RESOLVE_ACK_TIMEOUT_MS > 90_000);
 });
 
 test('수신한 state가 빈 lyric hard boundary를 넘으면 client validation에서 폐기한다', () => {

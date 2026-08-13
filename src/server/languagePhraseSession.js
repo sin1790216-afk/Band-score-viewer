@@ -2,7 +2,14 @@ import { resolveLanguagePhraseState } from './languagePhraseResolver.js';
 import {
   createLanguagePhraseSourceKey,
   LANGUAGE_PHRASE_EVENTS,
+  normalizeLanguagePhraseRequestId,
 } from '../utils/languagePhrases.js';
+
+function logLanguagePhraseRequest(requestId, event, details = {}) {
+  if (process.env.BSV_LANGUAGE_PHRASE_DEBUG !== '1') return;
+
+  console.log(`[LanguagePhraseRequest ${requestId}] ${event}`, details);
+}
 
 export function createLanguagePhraseSession({ analysisOptions, provider }) {
   const cache = new Map();
@@ -21,11 +28,16 @@ export function createLanguagePhraseSession({ analysisOptions, provider }) {
     return true;
   }
 
-  async function resolve(measures) {
+  async function resolve(measures, { requestId: rawRequestId } = {}) {
+    const requestId = normalizeLanguagePhraseRequestId(rawRequestId);
+
     syncMeasures(measures);
 
     if (cache.has(sourceKey)) {
       state = cache.get(sourceKey);
+      logLanguagePhraseRequest(requestId, 'session cache hit', {
+        phraseCount: state.phraseCount,
+      });
       return { fromCache: true, state };
     }
 
@@ -35,6 +47,7 @@ export function createLanguagePhraseSession({ analysisOptions, provider }) {
         analysisOptions,
         measures,
         provider,
+        requestId,
       }).then(
         (nextState) => {
           if (sourceKey !== requestSourceKey) {
@@ -82,24 +95,47 @@ export function registerLanguagePhraseSocketHandlers({
   session,
   socket,
 }) {
-  socket.on(LANGUAGE_PHRASE_EVENTS.RESOLVE, async (_request, acknowledge) => {
+  socket.on(LANGUAGE_PHRASE_EVENTS.RESOLVE, async (request, acknowledge) => {
+    const requestId = normalizeLanguagePhraseRequestId(request?.requestId);
+    const measures = getMeasures();
+
+    logLanguagePhraseRequest(requestId, 'server received', {
+      measureCount: measures.length,
+      socketId: socket.id,
+    });
+
     try {
-      const result = await session.resolve(getMeasures());
+      const result = await session.resolve(measures, { requestId });
+
+      logLanguagePhraseRequest(requestId, 'server response', {
+        fromCache: result.fromCache,
+        phraseCount: result.state.phraseCount,
+        status: 'success',
+      });
 
       io.emit(LANGUAGE_PHRASE_EVENTS.STATE, result.state);
       acknowledge?.({
         fromCache: result.fromCache,
         ok: true,
+        requestId,
         state: result.state,
+        status: 'success',
       });
     } catch (error) {
       console.error('[vocal-phrases] resolution failed', error);
+      logLanguagePhraseRequest(requestId, 'server response', {
+        reason: error?.code || 'resolver-error',
+        status: 'failure',
+      });
       acknowledge?.({
         error:
           error instanceof Error
             ? error.message
             : 'AI 가사 문장 정리에 실패했습니다.',
         ok: false,
+        reason: error?.code || 'resolver-error',
+        requestId,
+        status: 'failure',
       });
     }
   });

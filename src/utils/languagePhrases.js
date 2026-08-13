@@ -14,11 +14,31 @@ export const LANGUAGE_PHRASE_EVENTS = Object.freeze({
 });
 
 export const LANGUAGE_PHRASE_STATE_VERSION = 3;
+// The acknowledgement covers core resolution, Critic, and Spacing as one job.
+export const LANGUAGE_PHRASE_RESOLVE_ACK_TIMEOUT_MS = 180_000;
 export const DEFAULT_LANGUAGE_PHRASE_MAX_CONTEXT_CHARACTERS = 4000;
 export const DEFAULT_LANGUAGE_PHRASE_WINDOW_OVERLAP_MEASURES = 4;
-const LANGUAGE_PHRASE_RESOLVER_REVISION = 'character-span-breath-v2';
+const LANGUAGE_PHRASE_RESOLVER_REVISION = 'character-span-spacing-critic-v4';
 const LANGUAGE_PHRASE_SOURCE_KEY_PREFIX =
   `language-phrases-v${LANGUAGE_PHRASE_STATE_VERSION}-${LANGUAGE_PHRASE_RESOLVER_REVISION}`;
+const LANGUAGE_PHRASE_REQUEST_ID_PATTERN = /^[\w-]{1,64}$/u;
+let languagePhraseRequestSequence = 0;
+
+export function normalizeLanguagePhraseRequestId(value) {
+  return typeof value === 'string' &&
+    LANGUAGE_PHRASE_REQUEST_ID_PATTERN.test(value)
+    ? value
+    : 'unknown';
+}
+
+export function createLanguagePhraseRequestId() {
+  const randomUuid = globalThis.crypto?.randomUUID?.();
+
+  if (randomUuid) return randomUuid.replaceAll('-', '').slice(0, 12);
+
+  languagePhraseRequestSequence += 1;
+  return `${Date.now().toString(36)}-${languagePhraseRequestSequence.toString(36)}`;
+}
 
 function normalizeUnicode(value) {
   return typeof value === 'string' ? value.normalize('NFC') : '';
@@ -1431,6 +1451,298 @@ function haveSameCueTexts(leftCues, rightCues) {
   );
 }
 
+export function createWordBoundaryMap(spacedText) {
+  const boundaries = [];
+  const canonicalCharacters = [];
+  let previousCharacter = '';
+  let sawWhitespace = false;
+
+  for (const character of Array.from(normalizeUnicode(spacedText || ''))) {
+    if (/\s/u.test(character)) {
+      if (canonicalCharacters.length > 0) sawWhitespace = true;
+      continue;
+    }
+
+    if (canonicalCharacters.length > 0) {
+      const isWordBoundary = sawWhitespace;
+      const isPunctuationBoundary =
+        NATURAL_CUE_END_PUNCTUATION_PATTERN.test(previousCharacter);
+
+      boundaries.push({
+        canBreak: isWordBoundary || isPunctuationBoundary,
+        isInsideKoreanWord:
+          !isWordBoundary &&
+          !isPunctuationBoundary &&
+          HANGUL_SYLLABLE_PATTERN.test(previousCharacter) &&
+          HANGUL_SYLLABLE_PATTERN.test(character),
+        leftCharacter: previousCharacter,
+        offset: canonicalCharacters.length,
+        reason: isWordBoundary
+          ? 'language-whitespace'
+          : isPunctuationBoundary
+            ? 'clause-punctuation'
+            : 'token-continuation',
+        rightCharacter: character,
+      });
+    }
+
+    canonicalCharacters.push(character);
+    previousCharacter = character;
+    sawWhitespace = false;
+  }
+
+  return {
+    boundaries,
+    canonicalText: canonicalCharacters.join(''),
+    safeBoundaryOffsets: boundaries
+      .filter((boundary) => boundary.canBreak)
+      .map((boundary) => boundary.offset),
+  };
+}
+
+function guardKoreanWordCueBoundaries({
+  breathCandidates,
+  originalBoundaries,
+  phraseEndOffset,
+  phraseStartOffset,
+  sectionStartOffset,
+  wordBoundaryMap,
+}) {
+  const boundaryByOffset = new Map(
+    wordBoundaryMap.boundaries.map((boundary) => [
+      sectionStartOffset + boundary.offset,
+      boundary,
+    ]),
+  );
+  const safeBoundaryOffsets = wordBoundaryMap.safeBoundaryOffsets
+    .map((offset) => sectionStartOffset + offset)
+    .filter(
+      (offset) => offset > phraseStartOffset && offset < phraseEndOffset,
+    );
+  const breathOffsets = new Set(
+    (Array.isArray(breathCandidates) ? breathCandidates : [])
+      .map((candidate) => candidate?.continuousCharOffset)
+      .filter(Number.isInteger),
+  );
+  const decisions = [];
+  const finalBoundaries = new Set();
+
+  originalBoundaries.forEach((originalBoundary) => {
+    const boundary = boundaryByOffset.get(originalBoundary);
+
+    if (!boundary?.isInsideKoreanWord) {
+      finalBoundaries.add(originalBoundary);
+      return;
+    }
+
+    const [nearestBoundary] = safeBoundaryOffsets
+      .filter((candidate) => !finalBoundaries.has(candidate))
+      .sort((left, right) => {
+        const distanceDifference =
+          Math.abs(left - originalBoundary) -
+          Math.abs(right - originalBoundary);
+
+        if (distanceDifference !== 0) return distanceDifference;
+
+        const breathDifference =
+          Number(breathOffsets.has(right)) - Number(breathOffsets.has(left));
+
+        return breathDifference || left - right;
+      });
+
+    if (Number.isInteger(nearestBoundary)) {
+      finalBoundaries.add(nearestBoundary);
+      decisions.push({
+        decision: 'moved',
+        finalBoundary: nearestBoundary,
+        originalBoundary,
+        reason: 'inside-korean-word',
+      });
+      return;
+    }
+
+    decisions.push({
+      decision: 'removed',
+      finalBoundary: null,
+      originalBoundary,
+      reason: 'inside-korean-word-no-safe-boundary',
+    });
+  });
+
+  return {
+    boundaries: [...finalBoundaries]
+      .filter(
+        (offset) => offset > phraseStartOffset && offset < phraseEndOffset,
+      )
+      .sort((left, right) => left - right),
+    decisions,
+  };
+}
+
+function applyKoreanSpacingResult(
+  sections,
+  result,
+  { preserveCueBoundaries = false } = {},
+) {
+  const safeSections = Array.isArray(sections) ? sections : [];
+  const returnedSections = Array.isArray(result?.sections)
+    ? result.sections
+    : [];
+  const returnedSectionsById = new Map();
+
+  returnedSections.forEach((section) => {
+    const matches = returnedSectionsById.get(section?.sectionId) || [];
+
+    matches.push(section);
+    returnedSectionsById.set(section?.sectionId, matches);
+  });
+
+  const details = [];
+  const phrasesBySegment = [];
+  let acceptedSectionCount = 0;
+  let changedSectionCount = 0;
+  let fallbackSectionCount = 0;
+
+  safeSections.forEach((section) => {
+    const firstPassPhrases = section.phrases.map((item) => item.phrase);
+    const [returnedSection] = returnedSectionsById.get(section.sectionId) || [];
+    const polishedText = returnedSection?.polishedText;
+    const sectionSource = createContinuousAnalysisSource(section.entries);
+    const hasValidShape =
+      returnedSectionsById.get(section.sectionId)?.length === 1 &&
+      typeof polishedText === 'string';
+    const hasMatchingCharacters =
+      hasValidShape &&
+      withoutWhitespace(polishedText) === sectionSource.canonicalText;
+
+    if (!hasValidShape || !hasMatchingCharacters) {
+      phrasesBySegment[section.segmentIndex] = firstPassPhrases;
+      fallbackSectionCount += 1;
+      details.push({
+        reason: hasValidShape
+          ? 'spacing-character-mismatch'
+          : 'spacing-section-shape-mismatch',
+        sectionId: section.sectionId,
+        status: 'fallback',
+      });
+      return;
+    }
+
+    const wordBoundaryMap = createWordBoundaryMap(polishedText);
+    const sectionDecisions = [];
+    const nextPhrases = section.phrases.map((item) => {
+      const phrase = item.phrase;
+      const phraseEntries = section.entries.filter(
+        (entry) =>
+          entry.measureIndex >= phrase.startMeasureIndex &&
+          entry.measureIndex <= phrase.endMeasureIndex,
+      );
+      const phraseStartOffset = phrase.startCharOffset;
+      const phraseEndOffset = phrase.endCharOffset;
+      const originalBoundaries = phrase.displayCues
+        .slice(0, -1)
+        .map((cue) => cue.endCharOffset);
+      const guardedBoundaries = preserveCueBoundaries
+        ? { boundaries: originalBoundaries, decisions: [] }
+        : guardKoreanWordCueBoundaries({
+            breathCandidates: section.breathCandidates,
+            originalBoundaries,
+            phraseEndOffset,
+            phraseStartOffset,
+            sectionStartOffset: sectionSource.startCharOffset,
+            wordBoundaryMap,
+          });
+      const cueEndOffsets = [
+        ...guardedBoundaries.boundaries,
+        phraseEndOffset,
+      ];
+      let cueStartOffset = phraseStartOffset;
+      const displayCues = cueEndOffsets.map((cueEndOffset) => {
+        const cueText = sliceDisplayTextByNormalizedRange(
+          polishedText,
+          cueStartOffset - sectionSource.startCharOffset,
+          cueEndOffset - sectionSource.startCharOffset,
+        );
+        const cue = createDisplayCueFromRange(
+          phraseEntries,
+          cueText,
+          cueStartOffset,
+          cueEndOffset,
+        );
+
+        cueStartOffset = cueEndOffset;
+        return cue;
+      });
+      const phraseDisplayText = sliceDisplayTextByNormalizedRange(
+        polishedText,
+        phraseStartOffset - sectionSource.startCharOffset,
+        phraseEndOffset - sectionSource.startCharOffset,
+      );
+
+      guardedBoundaries.decisions.forEach((decision) => {
+        sectionDecisions.push({
+          ...decision,
+          phraseId: item.phraseId,
+          sectionId: section.sectionId,
+        });
+      });
+
+      return displayCues.every(Boolean) && phraseDisplayText
+        ? {
+            ...phrase,
+            displayCues,
+            displayText: phraseDisplayText,
+          }
+        : null;
+    });
+
+    if (nextPhrases.some((phrase) => !phrase)) {
+      phrasesBySegment[section.segmentIndex] = firstPassPhrases;
+      fallbackSectionCount += 1;
+      details.push({
+        reason: 'spacing-source-span-reconstruction',
+        sectionId: section.sectionId,
+        status: 'fallback',
+      });
+      return;
+    }
+
+    const acceptedDisplayText = firstPassPhrases
+      .map((phrase) => phrase.displayText)
+      .join(' ');
+    const didChange = polishedText !== acceptedDisplayText;
+
+    phrasesBySegment[section.segmentIndex] = nextPhrases;
+    acceptedSectionCount += 1;
+    if (didChange) changedSectionCount += 1;
+    details.push({
+      boundaryDecisions: sectionDecisions,
+      polishedText,
+      sectionId: section.sectionId,
+      sourceText: section.continuousAnalysisText,
+      status: didChange ? 'changed' : 'unchanged',
+    });
+  });
+
+  return {
+    acceptedSectionCount,
+    changedSectionCount,
+    details,
+    fallbackSectionCount,
+    phrasesBySegment,
+  };
+}
+
+export function applyKoreanSpacingPolishResult(sections, result) {
+  return applyKoreanSpacingResult(sections, result);
+}
+
+export function applyFinalKoreanSpacingCriticResult(sections, result) {
+  return applyKoreanSpacingResult(sections, result, {
+    preserveCueBoundaries: true,
+  });
+}
+
 export function applyBoundaryCriticResult(sections, result) {
   const safeSections = Array.isArray(sections) ? sections : [];
   const returnedSections = Array.isArray(result?.sections)
@@ -1977,6 +2289,48 @@ export function validateLanguagePhraseState(state, measures) {
         ...state,
         phrases: validation.phrases,
       };
+}
+
+export function evaluateLanguagePhraseResolveResponse({
+  measures,
+  response,
+  transportError,
+}) {
+  if (transportError) {
+    return {
+      accepted: false,
+      message: 'AI 가사 문장 정리에 실패했습니다.',
+      reason: 'transport-timeout',
+      state: null,
+    };
+  }
+
+  if (!response?.ok) {
+    return {
+      accepted: false,
+      message: response?.error || 'AI 가사 문장 정리에 실패했습니다.',
+      reason: response?.reason || 'server-error',
+      state: null,
+    };
+  }
+
+  const state = validateLanguagePhraseState(response.state, measures);
+
+  if (!state) {
+    return {
+      accepted: false,
+      message: '현재 가사와 분석 결과가 달라 기존 Phrase를 계속 사용합니다.',
+      reason: 'stale-source',
+      state: null,
+    };
+  }
+
+  return {
+    accepted: true,
+    message: '',
+    reason: 'accepted',
+    state,
+  };
 }
 
 export function getLanguagePhrasesForMeasures(state, measures) {

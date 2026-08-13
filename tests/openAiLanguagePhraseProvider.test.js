@@ -245,3 +245,122 @@ test('OpenAI provider는 모든 hard section을 한 번의 Boundary Critic 요�
   assert.match(requestBody.instructions, /Never move, merge, or duplicate/);
   assert.match(requestBody.instructions, /"아주 \| 많은"/);
 });
+
+test('OpenAI provider는 모든 section을 한 번의 Korean Spacing 요청으로 보낸다', async () => {
+  let requestBody;
+  const sections = [
+    {
+      continuousAnalysisText: '저멀리서핑도는눈물이이름을붙여준내일',
+      phrases: [
+        {
+          phrase: {
+            displayText: '저 멀리서 핑 도는 눈물이 이름을 붙여준 내일',
+          },
+        },
+      ],
+      sectionId: 'section-1',
+    },
+    {
+      continuousAnalysisText: '천진난만한이런기분도',
+      phrases: [
+        {
+          phrase: { displayText: '천진난만한 이런기분도' },
+        },
+      ],
+      sectionId: 'section-2',
+    },
+  ];
+  const responsePayload = {
+    sections: [
+      {
+        polishedText: '저 멀리서 핑 도는 눈물이 이름을 붙여준 내일',
+        sectionId: 'section-1',
+      },
+      {
+        polishedText: '천진난만한 이런 기분도',
+        sectionId: 'section-2',
+      },
+    ],
+  };
+  const provider = createOpenAiLanguagePhraseProvider({
+    apiKey: 'test-key',
+    fetchImpl: async (_url, options) => {
+      requestBody = JSON.parse(options.body);
+      return {
+        async json() {
+          return { output_text: JSON.stringify(responsePayload) };
+        },
+        ok: true,
+      };
+    },
+  });
+
+  const result = await provider.resolveKoreanSpacing(sections);
+  const input = JSON.parse(requestBody.input);
+
+  assert.deepEqual(result, responsePayload);
+  assert.equal(requestBody.text.format.name, 'global_korean_spacing_polish');
+  assert.equal(input.sections.length, 2);
+  assert.equal(
+    input.sections[0].acceptedDisplayText,
+    '저 멀리서 핑 도는 눈물이 이름을 붙여준 내일',
+  );
+  assert.equal(
+    input.sections[1].continuousAnalysisText,
+    '천진난만한이런기분도',
+  );
+  assert.match(requestBody.instructions, /whitespace only/);
+  assert.match(requestBody.instructions, /K-pop/);
+  assert.match(requestBody.instructions, /10-20/);
+});
+
+test('OpenAI provider는 전체 section의 첫 spacing을 한 번의 Final Spacing Critic 요청으로 보낸다', async () => {
+  let requestBody;
+  const sections = [
+    {
+      continuousAnalysisText: '천진난만한이런기분도',
+      phrases: [
+        {
+          phrase: { displayText: '천 진난만한 이런 기분도' },
+        },
+      ],
+      sectionId: 'section-1',
+    },
+  ];
+  const responsePayload = {
+    sections: [
+      {
+        polishedText: '천진난만한 이런 기분도',
+        sectionId: 'section-1',
+      },
+    ],
+  };
+  const provider = createOpenAiLanguagePhraseProvider({
+    apiKey: 'test-key',
+    fetchImpl: async (_url, options) => {
+      requestBody = JSON.parse(options.body);
+      return {
+        async json() {
+          return { output_text: JSON.stringify(responsePayload) };
+        },
+        ok: true,
+      };
+    },
+  });
+
+  const result = await provider.resolveKoreanSpacingCritic(sections);
+  const input = JSON.parse(requestBody.input);
+
+  assert.deepEqual(result, responsePayload);
+  assert.equal(requestBody.text.format.name, 'final_korean_spacing_critic');
+  assert.equal(input.sections.length, 1);
+  assert.equal(input.sections[0].continuousAnalysisText, '천진난만한이런기분도');
+  assert.equal(input.sections[0].firstPassText, '천 진난만한 이런 기분도');
+  assert.match(requestBody.instructions, /Evaluate it independently/i);
+  assert.match(requestBody.instructions, /smallest clearly justified/i);
+  assert.match(requestBody.instructions, /whitespace only/i);
+  assert.match(
+    requestBody.instructions,
+    /Do not change LanguagePhrase or DisplayCue boundaries/,
+  );
+});
