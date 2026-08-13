@@ -1,4 +1,7 @@
+import { createVocalDisplayText } from './vocalTextPostprocessing.js';
+
 const LARGE_LYRIC_GAP_RATIO = 4;
+const HARD_LYRIC_GAP_RATIO = LARGE_LYRIC_GAP_RATIO * 2;
 const MIN_ADAPTIVE_BOUNDARY_GAP_COUNT = 3;
 const MIN_ADAPTIVE_BOUNDARY_RATIO = 1.25;
 const ROBUST_DEVIATION_MULTIPLIER = 3;
@@ -124,6 +127,36 @@ export function isVocalPhraseBoundary(previousMeasure, currentMeasure) {
   );
 }
 
+export function isHardVocalPhraseBoundary(previousMeasure, currentMeasure) {
+  if (currentMeasure?.lyricGeometry?.hardBoundaryBefore === true) return true;
+
+  const previousLines = getGeometryLines(previousMeasure);
+  const currentLines = getGeometryLines(currentMeasure);
+
+  if (previousLines.length > 0 && currentLines.length > 0) {
+    const previousLineIndexes = previousLines.map((line) => line.lineIndex);
+    const currentLineIndexes = currentLines.map((line) => line.lineIndex);
+    const isDifferentLyricLane =
+      previousLineIndexes.length !== currentLineIndexes.length ||
+      previousLineIndexes.some(
+        (lineIndex, index) => lineIndex !== currentLineIndexes[index],
+      );
+
+    if (isDifferentLyricLane) return true;
+  }
+
+  if (!hasSameBaselines(previousMeasure, currentMeasure)) return false;
+
+  const gapSignals = getSameBaselineGapSignals(previousMeasure, currentMeasure);
+
+  return (
+    gapSignals.length > 0 &&
+    gapSignals.every(
+      ({ referenceRatio }) => referenceRatio >= HARD_LYRIC_GAP_RATIO,
+    )
+  );
+}
+
 function appendPhraseMeasure(phrase, measure, measureIndex, lyric) {
   return {
     ...phrase,
@@ -135,7 +168,14 @@ function appendPhraseMeasure(phrase, measure, measureIndex, lyric) {
   };
 }
 
-export function createVocalPhrases(measures) {
+function addDisplayText(phrase, displayTextOptions) {
+  return {
+    ...phrase,
+    displayText: createVocalDisplayText(phrase.text, displayTextOptions),
+  };
+}
+
+export function createVocalPhrases(measures, displayTextOptions) {
   if (!Array.isArray(measures) || measures.length === 0) return [];
 
   const phrases = [];
@@ -182,9 +222,8 @@ export function createVocalPhrases(measures) {
 
   if (currentPhrase) phrases.push(currentPhrase);
 
-  // 향후 문장부호, 쉼 구조와 문맥 분석을 추가하더라도 이 파생 구조와
-  // measure.lyric source of truth는 유지할 수 있다.
-  return phrases;
+  // 표시용 후처리는 완성된 Phrase 문맥에만 적용하며 measure.lyric은 건드리지 않는다.
+  return phrases.map((phrase) => addDisplayText(phrase, displayTextOptions));
 }
 
 export function getVocalPhraseContext(phrases, measureIndex) {
@@ -199,8 +238,14 @@ export function getVocalPhraseContext(phrases, measureIndex) {
 
   const currentPhraseIndex = phrases.findIndex(
     (phrase) =>
-      measureIndex >= phrase.startMeasureIndex &&
-      measureIndex <= phrase.endMeasureIndex,
+      measureIndex >=
+        (Number.isInteger(phrase.timingStartMeasureIndex)
+          ? phrase.timingStartMeasureIndex
+          : phrase.startMeasureIndex) &&
+      measureIndex <=
+        (Number.isInteger(phrase.timingEndMeasureIndex)
+          ? phrase.timingEndMeasureIndex
+          : phrase.endMeasureIndex),
   );
   const currentPhrase = phrases[currentPhraseIndex] || null;
   const nextPhraseIndex = currentPhrase
@@ -208,7 +253,10 @@ export function getVocalPhraseContext(phrases, measureIndex) {
       ? currentPhraseIndex + 1
       : -1
     : phrases.findIndex(
-        (phrase) => phrase.startMeasureIndex > measureIndex,
+        (phrase) =>
+          (Number.isInteger(phrase.timingStartMeasureIndex)
+            ? phrase.timingStartMeasureIndex
+            : phrase.startMeasureIndex) > measureIndex,
       );
   const nextPhrase = phrases[nextPhraseIndex] || null;
 
@@ -220,6 +268,10 @@ export function getVocalPhraseContext(phrases, measureIndex) {
   };
 }
 
+export function getVocalPhraseDisplayText(phrase) {
+  return phrase?.displayText || phrase?.text || '';
+}
+
 function hasCompletePhraseGeometry(phrase, measures) {
   if (!phrase) return false;
 
@@ -229,21 +281,28 @@ function hasCompletePhraseGeometry(phrase, measures) {
     .every((measure) => getGeometryLines(measure).length > 0);
 }
 
-function createSingleMeasurePhrase(measures, measureIndex) {
+function createSingleMeasurePhrase(
+  measures,
+  measureIndex,
+  displayTextOptions,
+) {
   const measure = measures[measureIndex];
   const lyric = getMeaningfulLyric(measure);
 
   if (!lyric) return null;
 
-  return {
-    endMeasureIndex: measureIndex,
-    measureIds: measure?.id ? [measure.id] : [],
-    startMeasureIndex: measureIndex,
-    text: lyric,
-  };
+  return addDisplayText(
+    {
+      endMeasureIndex: measureIndex,
+      measureIds: measure?.id ? [measure.id] : [],
+      startMeasureIndex: measureIndex,
+      text: lyric,
+    },
+    displayTextOptions,
+  );
 }
 
-function createDisplayPhrases(phrases, measures) {
+function createDisplayPhrases(phrases, measures, displayTextOptions) {
   return phrases.flatMap((phrase) => {
     if (hasCompletePhraseGeometry(phrase, measures)) return [phrase];
 
@@ -253,16 +312,96 @@ function createDisplayPhrases(phrases, measures) {
         createSingleMeasurePhrase(
           measures,
           phrase.startMeasureIndex + offset,
+          displayTextOptions,
         ),
       )
       .filter(Boolean);
   });
 }
 
-export function createVocalViewModel(measures, measureIndex) {
+export function createCoarseDisplayCueTimingProjection(displayCues) {
+  const cues = Array.isArray(displayCues) ? displayCues : [];
+  const timingStarts = [];
+
+  cues.forEach((cue, index) => {
+    const sourceStart = cue.startMeasureIndex;
+    const previousCue = cues[index - 1];
+    const previousTimingStart = timingStarts[index - 1];
+
+    if (
+      index > 0 &&
+      Number.isInteger(sourceStart) &&
+      Number.isInteger(previousCue?.endMeasureIndex) &&
+      sourceStart <= previousCue.endMeasureIndex
+    ) {
+      timingStarts.push(
+        Math.max(previousCue.endMeasureIndex + 1, previousTimingStart + 1),
+      );
+      return;
+    }
+
+    timingStarts.push(sourceStart);
+  });
+
+  return cues.map((cue, index) => {
+    const timingStartMeasureIndex = timingStarts[index];
+    const nextTimingStart = timingStarts[index + 1];
+    let timingEndMeasureIndex = Math.max(
+      cue.endMeasureIndex,
+      timingStartMeasureIndex,
+    );
+
+    if (
+      Number.isInteger(nextTimingStart) &&
+      nextTimingStart <= timingEndMeasureIndex
+    ) {
+      timingEndMeasureIndex = nextTimingStart - 1;
+    }
+
+    return {
+      ...cue,
+      timingEndMeasureIndex,
+      timingStartMeasureIndex,
+    };
+  });
+}
+
+function createLanguageDisplayCues(languagePhrases) {
+  const displayCues = languagePhrases.flatMap((phrase, languagePhraseIndex) => {
+    if (!Array.isArray(phrase?.displayCues) || phrase.displayCues.length === 0) {
+      return [phrase];
+    }
+
+    return phrase.displayCues.map((cue, displayCueIndex) => ({
+      displayCueIndex,
+      displayText: cue.text,
+      endMeasureIndex: cue.endMeasureIndex,
+      languagePhraseIndex,
+      measureIds: cue.measureIds,
+      sourceSpans: cue.sourceSpans,
+      startCharOffset: cue.startCharOffset,
+      endCharOffset: cue.endCharOffset,
+      startMeasureIndex: cue.startMeasureIndex,
+      text: cue.text,
+    }));
+  });
+
+  return createCoarseDisplayCueTimingProjection(displayCues);
+}
+
+export function createVocalViewModel(
+  measures,
+  measureIndex,
+  displayTextOptions = {},
+) {
   const safeMeasures = Array.isArray(measures) ? measures : [];
-  const phrases = createVocalPhrases(safeMeasures);
-  const displayPhrases = createDisplayPhrases(phrases, safeMeasures);
+  const phrases = createVocalPhrases(safeMeasures, displayTextOptions);
+  const languagePhrases = Array.isArray(displayTextOptions.languagePhrases)
+    ? displayTextOptions.languagePhrases
+    : null;
+  const displayPhrases = languagePhrases
+    ? createLanguageDisplayCues(languagePhrases)
+    : createDisplayPhrases(phrases, safeMeasures, displayTextOptions);
   const phraseContext = getVocalPhraseContext(
     displayPhrases,
     measureIndex,
@@ -270,14 +409,18 @@ export function createVocalViewModel(measures, measureIndex) {
 
   return {
     currentMeasure: safeMeasures[measureIndex] || null,
+    currentCue: phraseContext.currentPhrase,
     currentPhrase: phraseContext.currentPhrase,
     currentPhraseIndex: phraseContext.currentPhraseIndex,
-    currentText: phraseContext.currentPhrase?.text || '',
+    currentText: getVocalPhraseDisplayText(phraseContext.currentPhrase),
     displayPhraseCount: displayPhrases.length,
     displayPhrases,
+    languagePhraseCount: languagePhrases?.length || 0,
+    languagePhrases: languagePhrases || [],
+    nextCue: phraseContext.nextPhrase,
     nextPhrase: phraseContext.nextPhrase,
     nextPhraseIndex: phraseContext.nextPhraseIndex,
-    nextText: phraseContext.nextPhrase?.text || '',
+    nextText: getVocalPhraseDisplayText(phraseContext.nextPhrase),
     phraseCount: phrases.length,
     phrases,
   };

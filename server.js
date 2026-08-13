@@ -3,6 +3,10 @@ import { createServer } from 'node:http';
 import { extname, join, resolve } from 'node:path';
 import { Server } from 'socket.io';
 
+if (existsSync('.env.local')) {
+  process.loadEnvFile?.('.env.local');
+}
+
 import {
   createEmptySharedSessionState,
   getLogicalSyncState,
@@ -14,6 +18,12 @@ import {
   sendSharedAudioState,
 } from './src/server/sharedAudioSession.js';
 import {
+  createLanguagePhraseSession,
+  registerLanguagePhraseSocketHandlers,
+  sendLanguagePhraseState,
+} from './src/server/languagePhraseSession.js';
+import { createOpenAiLanguagePhraseProvider } from './src/server/openAiLanguagePhraseProvider.js';
+import {
   isValidAudioSettings,
   normalizeAudioSettings,
 } from './src/utils/audioSettings.js';
@@ -21,6 +31,7 @@ import {
   MAX_SHARED_AUDIO_BYTES,
   SHARED_AUDIO_EVENTS,
 } from './src/utils/sharedAudio.js';
+import { LANGUAGE_PHRASE_EVENTS } from './src/utils/languagePhrases.js';
 import {
   isValidMeasuresState,
   MAX_PDF_BYTES,
@@ -37,6 +48,9 @@ let latestPdf = initialSharedSessionState.pdf;
 let latestMeasures = initialSharedSessionState.measures;
 let latestAudioSettings = initialSharedSessionState.audioSettings;
 const sharedAudioSession = createSharedAudioSession();
+const languagePhraseSession = createLanguagePhraseSession({
+  provider: createOpenAiLanguagePhraseProvider(),
+});
 
 const mimeTypes = {
   '.css': 'text/css',
@@ -127,6 +141,7 @@ io.on('connection', (socket) => {
   socket.emit('audio:state', latestAudioSettings);
   console.log(`[socket] sent audio:state to ${socket.id}`, latestAudioSettings);
   sendSharedAudioState(socket, sharedAudioSession);
+  sendLanguagePhraseState(socket, languagePhraseSession);
   console.log(
     `[socket] sent ${SHARED_AUDIO_EVENTS.STATE} to ${socket.id}`,
     sharedAudioSession.getMetadata(),
@@ -141,6 +156,12 @@ io.on('connection', (socket) => {
   registerSharedAudioSocketHandlers({
     io,
     session: sharedAudioSession,
+    socket,
+  });
+  registerLanguagePhraseSocketHandlers({
+    getMeasures: () => latestMeasures,
+    io,
+    session: languagePhraseSession,
     socket,
   });
 
@@ -179,8 +200,13 @@ io.on('connection', (socket) => {
     }
 
     latestMeasures = nextMeasures;
+    const didInvalidateLanguagePhrases =
+      languagePhraseSession.syncMeasures(latestMeasures);
     console.log(`[socket] received measures:update count=${latestMeasures.length}`);
     socket.broadcast.emit('measures:state', latestMeasures);
+    if (didInvalidateLanguagePhrases) {
+      io.emit(LANGUAGE_PHRASE_EVENTS.STATE, null);
+    }
   });
 
   socket.on('audio:update', (nextAudioSettings) => {
@@ -202,9 +228,11 @@ io.on('connection', (socket) => {
     latestSyncState = emptySessionState.syncState;
     latestAudioSettings = emptySessionState.audioSettings;
     sharedAudioSession.clear();
+    languagePhraseSession.clear();
     console.log(`[socket] session reset requested by ${socket.id}`);
     io.emit(SHARED_AUDIO_EVENTS.STATE, null);
     io.emit(SHARED_AUDIO_EVENTS.PLAYBACK_STATE, null);
+    io.emit(LANGUAGE_PHRASE_EVENTS.STATE, null);
     socket.broadcast.emit('session:reset', emptySessionState);
   });
 });

@@ -48,7 +48,14 @@ import { applyLyricCandidates } from './utils/lyricRecognition.js';
 import { recognizeLyricsInPdf } from './utils/pdfLyricRecognition.js';
 import {
   createVocalViewModel,
+  getMeaningfulLyric,
 } from './utils/vocalPhrases.js';
+import {
+  createLanguagePhraseSourceKey,
+  getLanguagePhrasesForMeasures,
+  LANGUAGE_PHRASE_EVENTS,
+  validateLanguagePhraseState,
+} from './utils/languagePhrases.js';
 import {
   getFullscreenElement,
   isFullscreenSupported,
@@ -316,6 +323,11 @@ function App() {
   const [lyricRecognitionState, setLyricRecognitionState] = useState(
     createInitialLyricRecognitionState,
   );
+  const [languagePhraseState, setLanguagePhraseState] = useState(null);
+  const [languagePhraseMutationState, setLanguagePhraseMutationState] = useState({
+    message: '',
+    status: 'idle',
+  });
   const [pdfRenderResetVersion, setPdfRenderResetVersion] = useState(0);
   const [studentViewMode, setStudentViewMode] = useState(STUDENT_ZOOM_VIEW);
   const [studentPdfSource, setStudentPdfSource] = useState(TEACHER_PDF_SOURCE);
@@ -568,9 +580,20 @@ function App() {
     : isStudentAudioFollowing
       ? studentAudioPlaybackMeasureIndex
       : synchronizedDisplayMeasureIndex;
+  const languagePhraseSourceKey = useMemo(
+    () => createLanguagePhraseSourceKey(measures),
+    [measures],
+  );
+  const languagePhrases = useMemo(
+    () => getLanguagePhrasesForMeasures(languagePhraseState, measures),
+    [languagePhraseState, measures],
+  );
   const vocalViewModel = useMemo(
-    () => createVocalViewModel(measures, displayMeasureIndex),
-    [displayMeasureIndex, measures],
+    () =>
+      createVocalViewModel(measures, displayMeasureIndex, {
+        languagePhrases,
+      }),
+    [displayMeasureIndex, languagePhrases, measures],
   );
   const selectedMeasure = measures[selectedMeasureIndex] || null;
   const teacherSharedAudioAnchorMeasureIndex =
@@ -967,6 +990,8 @@ function App() {
       totalPages: 0,
     });
     setLyricRecognitionState(createInitialLyricRecognitionState());
+    setLanguagePhraseState(null);
+    setLanguagePhraseMutationState({ message: '', status: 'idle' });
     setIsStudentAnnotationEnabled(false);
     setSharedAudioMetadata(null);
     setSharedAudioPlaybackState(null);
@@ -1446,6 +1471,77 @@ function App() {
   function cancelRecognizedLyrics() {
     lyricRecognitionVersionRef.current += 1;
     setLyricRecognitionState(createInitialLyricRecognitionState());
+  }
+
+  function resolveLanguagePhrases() {
+    if (
+      !canEdit ||
+      languagePhraseMutationState.status === 'running' ||
+      !measures.some((measure) => getMeaningfulLyric(measure))
+    ) {
+      return;
+    }
+
+    const socket = socketRef.current;
+
+    if (!socket?.connected) {
+      setLanguagePhraseMutationState({
+        message: '실시간 서버에 연결된 뒤 다시 시도해주세요.',
+        status: 'error',
+      });
+      return;
+    }
+
+    setLanguagePhraseMutationState({
+      message: '가사 문맥을 분석하고 있습니다...',
+      status: 'running',
+    });
+
+    socket.timeout(60_000).emit(
+      LANGUAGE_PHRASE_EVENTS.RESOLVE,
+      {},
+      (timeoutError, response) => {
+        if (timeoutError || !response?.ok) {
+          setLanguagePhraseMutationState({
+            message: `${
+              response?.error || 'AI 가사 문장 정리에 실패했습니다.'
+            } 기존 Phrase를 계속 사용합니다.`,
+            status: 'error',
+          });
+          return;
+        }
+
+        const nextState = validateLanguagePhraseState(response.state, measuresRef.current);
+
+        if (!nextState) {
+          setLanguagePhraseMutationState({
+            message: '현재 가사와 분석 결과가 달라 기존 Phrase를 계속 사용합니다.',
+            status: 'error',
+          });
+          return;
+        }
+
+        setLanguagePhraseState(nextState);
+        setLanguagePhraseMutationState(
+          nextState.fallbackWindowCount > 0
+            ? {
+                message: `AI를 적용하지 못한 ${nextState.fallbackWindowCount}개 구간은 기존 Phrase를 사용합니다.`,
+                status: 'error',
+              }
+            : nextState.displayCueFallbackCount > 0
+              ? {
+                  message: `${nextState.displayCueFallbackCount}개 표시 구간은 기존 Phrase 표시를 사용합니다.`,
+                  status: 'error',
+                }
+            : {
+                message: `${nextState.candidatePhraseCount}개 Phrase → ${nextState.phraseCount}개 문장 Phrase로 정리${
+                  response.fromCache ? ' (캐시)' : ''
+                }`,
+                status: 'complete',
+              },
+        );
+      },
+    );
   }
 
   function addMeasure(pageMetrics) {
@@ -2538,6 +2634,18 @@ function App() {
         });
       });
 
+      socket.on(LANGUAGE_PHRASE_EVENTS.STATE, (nextState) => {
+        setLanguagePhraseState(nextState || null);
+
+        if (!nextState) {
+          setLanguagePhraseMutationState((previousState) =>
+            previousState.status === 'running'
+              ? previousState
+              : { message: '', status: 'idle' },
+          );
+        }
+      });
+
       socket.on('audio:state', (nextAudioSettings) => {
         if (viewerModeRef.current === TEACHER_MODE) {
           console.log('[socket] ignored remote audio:state while in Teacher mode');
@@ -2635,6 +2743,17 @@ function App() {
       socketRef.current = null;
     };
   }, [publishCurrentTeacherAudioSettings, publishCurrentTeacherPosition]);
+
+  useEffect(() => {
+    setLanguagePhraseState((previousState) =>
+      validateLanguagePhraseState(previousState, measures),
+    );
+    setLanguagePhraseMutationState((previousState) =>
+      previousState.status === 'running'
+        ? previousState
+        : { message: '', status: 'idle' },
+    );
+  }, [languagePhraseSourceKey, measures]);
 
   useEffect(() => {
     const shouldLoadWaveform = Boolean(
@@ -3435,6 +3554,9 @@ function App() {
             canRecognizeLyrics={Boolean(
               teacherPdfBlobRef.current && measures.length
             )}
+            canResolveLanguagePhrases={measures.some((measure) =>
+              getMeaningfulLyric(measure),
+            )}
             canOpenAudioLink={Boolean(openableAudioUrl)}
             canEndSession={Boolean(
               teacherPdfBlobRef.current || measures.length || sharedAudioMetadata
@@ -3444,6 +3566,7 @@ function App() {
             isRepeatEnabled={isRepeatEnabled}
             measureRecognitionState={measureRecognitionState}
             lyricRecognitionState={lyricRecognitionState}
+            languagePhraseMutationState={languagePhraseMutationState}
             jsonInputRef={jsonInputRef}
             measureIndex={measureIndex}
             measureTotal={measures.length}
@@ -3459,6 +3582,7 @@ function App() {
             onRecognizeLyrics={recognizePdfLyrics}
             onApplyRecognizedLyrics={applyRecognizedLyrics}
             onCancelRecognizedLyrics={cancelRecognizedLyrics}
+            onResolveLanguagePhrases={resolveLanguagePhrases}
             onPdfSelected={selectPdf}
             onSaveJson={saveJson}
             onSaveBsvProject={saveBsvProject}
@@ -3621,6 +3745,7 @@ function Sidebar({
   canOpenAudioLink,
   canRecognizeMeasures,
   canRecognizeLyrics,
+  canResolveLanguagePhrases,
   canSaveProject,
   fileInputRef,
   isAutoPlaying,
@@ -3629,6 +3754,7 @@ function Sidebar({
   measureIndex,
   measureRecognitionState,
   lyricRecognitionState,
+  languagePhraseMutationState,
   measureTotal,
   mode,
   onApplyGlobalBpm,
@@ -3647,6 +3773,7 @@ function Sidebar({
   onOpenPdf,
   onRecognizeMeasures,
   onRecognizeLyrics,
+  onResolveLanguagePhrases,
   onRemoveSharedAudio,
   onPdfSelected,
   onSaveJson,
@@ -3762,6 +3889,28 @@ function Sidebar({
                   취소
                 </button>
               </div>
+            )}
+          </div>
+          <div className="language-phrase-controls">
+            <button
+              disabled={
+                !canResolveLanguagePhrases ||
+                languagePhraseMutationState.status === 'running'
+              }
+              onClick={onResolveLanguagePhrases}
+              type="button"
+            >
+              {languagePhraseMutationState.status === 'running'
+                ? '가사 문맥 분석 중'
+                : 'AI 가사 문장 정리'}
+            </button>
+            {languagePhraseMutationState.message && (
+              <span
+                aria-live="polite"
+                className={`language-phrase-status ${languagePhraseMutationState.status}`}
+              >
+                {languagePhraseMutationState.message}
+              </span>
             )}
           </div>
           <button disabled={!canSaveProject} onClick={onSaveBsvProject} type="button">

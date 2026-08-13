@@ -7,6 +7,7 @@ import {
   createVocalViewModel,
   getMeaningfulLyric,
   getVocalPhraseContext,
+  getVocalPhraseDisplayText,
   isVocalPhraseBoundary,
 } from '../src/utils/vocalPhrases.js';
 import { normalizeMeasures } from '../src/state/projectState.js';
@@ -62,12 +63,14 @@ test('빈 lyric을 경계로 연속 Measure 가사를 Vocal Phrase로 묶는다'
 
   assert.deepEqual(phrases, [
     {
+      displayText: '매만지는 바람',
       endMeasureIndex: 1,
       measureIds: ['measure-1', 'measure-2'],
       startMeasureIndex: 0,
       text: '매만지는 바람',
     },
     {
+      displayText: '한숨처럼 다가와',
       endMeasureIndex: 4,
       measureIds: ['measure-4', 'measure-5'],
       startMeasureIndex: 3,
@@ -98,6 +101,7 @@ test('모든 lyric이 비어 있으면 Phrase를 만들지 않는다', () => {
 test('한 Measure의 lyric도 하나의 Phrase가 된다', () => {
   assert.deepEqual(createVocalPhrases(measuresFromLyrics(['한마디'])), [
     {
+      displayText: '한마디',
       endMeasureIndex: 0,
       measureIds: ['measure-1'],
       startMeasureIndex: 0,
@@ -508,15 +512,35 @@ test('lyricGeometry는 Socket 직렬화와 project normalization 후에도 Phras
   );
 });
 
-test('Vocal rendered text는 선택된 currentPhrase.text와 동일한 source를 사용한다', () => {
+test('Vocal rendered text는 선택된 currentPhrase.displayText를 우선 사용한다', () => {
   const measures = [
-    measureWithGeometry('선택된', 0, geometry({ endX: 0.2, startX: 0.1 })),
-    measureWithGeometry('Phrase', 1, geometry({ endX: 0.35, startX: 0.23 })),
+    measureWithGeometry('매 만 지 는', 0, geometry({ endX: 0.2, startX: 0.1 })),
+    measureWithGeometry('바 람', 1, geometry({ endX: 0.35, startX: 0.23 })),
   ];
   const model = createVocalViewModel(measures, 0);
 
-  assert.equal(model.currentText, model.currentPhrase?.text);
-  assert.equal(model.currentText.length, model.currentPhrase?.text.length);
+  assert.equal(model.currentPhrase?.text, '매 만 지 는 바 람');
+  assert.equal(model.currentPhrase?.displayText, '매만지는바람');
+  assert.equal(model.currentText, model.currentPhrase?.displayText);
+});
+
+test('Vocal current와 next는 각 Phrase의 displayText를 사용하고 선택 순서는 유지한다', () => {
+  const measures = [
+    measureWithGeometry('매 만 지 는 바 람', 0, geometry({ endX: 0.2, startX: 0.1 })),
+    { id: 'empty', lyric: '' },
+    measureWithGeometry('한 숨 처 럼 다 가 와', 2, geometry({ endX: 0.5, startX: 0.4 })),
+  ];
+  const model = createVocalViewModel(measures, 0);
+
+  assert.equal(model.currentPhraseIndex, 0);
+  assert.equal(model.nextPhraseIndex, 1);
+  assert.equal(model.currentText, '매만지는바람');
+  assert.equal(model.nextText, '한숨처럼다가와');
+});
+
+test('displayText가 없으면 Vocal View model은 원본 text로 안전하게 fallback한다', () => {
+  assert.equal(getVocalPhraseDisplayText({ text: '원본 가사' }), '원본 가사');
+  assert.equal(getVocalPhraseDisplayText(null), '');
 });
 
 test('Phrase 4개에서 current와 next를 같은 context로 선택한다', () => {
