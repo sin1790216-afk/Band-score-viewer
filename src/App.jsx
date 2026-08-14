@@ -43,6 +43,11 @@ import {
   NORMALIZED_COORDINATE_STATUS,
 } from './utils/measureCoordinates.js';
 import { resizeCanonicalMeasure } from './utils/measureResize.js';
+import {
+  createMeasureRecognitionRuntimeDiagnostics,
+  isCurrentMeasureRecognitionResult,
+  prepareRecognizedMeasures,
+} from './utils/measureRecognitionRuntime.js';
 import { recognizeMeasuresInPdf } from './utils/pdfMeasureRecognition.js';
 import { applyLyricCandidates } from './utils/lyricRecognition.js';
 import { recognizeLyricsInPdf } from './utils/pdfLyricRecognition.js';
@@ -1290,7 +1295,13 @@ function App() {
     });
 
     try {
+      const pageDiagnostics = [];
       const candidates = await recognizeMeasuresInPdf(pdfBlob, {
+        onPageDiagnostics: import.meta.env.DEV
+          ? (diagnostics) => {
+              pageDiagnostics.push(diagnostics);
+            }
+          : undefined,
         onProgress: ({ currentPage, totalPages: recognitionTotalPages }) => {
           setMeasureRecognitionState({
             currentPage,
@@ -1302,8 +1313,12 @@ function App() {
       });
 
       if (
-        measureRecognitionVersionRef.current !== recognitionVersion ||
-        teacherPdfBlobRef.current !== pdfBlob
+        !isCurrentMeasureRecognitionResult({
+          currentPdfBlob: teacherPdfBlobRef.current,
+          currentVersion: measureRecognitionVersionRef.current,
+          requestedPdfBlob: pdfBlob,
+          requestedVersion: recognitionVersion,
+        })
       ) {
         return;
       }
@@ -1318,18 +1333,37 @@ function App() {
         return;
       }
 
-      const nextMeasures = prepareMeasuresForProject(
-        candidates.map((candidate) => ({
-          ...DEFAULT_MEASURE,
-          bpm: projectDefaultBpmRef.current,
-          ...candidate,
-          coordinateHeight: 1,
-          coordinateSpace: NORMALIZED_COORDINATE_SPACE,
-          coordinateStatus: NORMALIZED_COORDINATE_STATUS,
-          coordinateWidth: 1,
-        })),
+      const nextMeasures = prepareRecognizedMeasures(
+        candidates,
+        projectDefaultBpmRef.current,
       );
       const firstPageNumber = Number(nextMeasures[0]?.page) || 1;
+
+      if (import.meta.env.DEV) {
+        const runtimeDiagnostics = createMeasureRecognitionRuntimeDiagnostics({
+          appliedMeasures: nextMeasures,
+          fileName,
+          pageDiagnostics,
+          recognizedMeasures: candidates,
+        });
+
+        window.__BSV_MEASURE_RECOGNITION_DEBUG__ = runtimeDiagnostics;
+        console.log('[MeasureRecognitionRuntime]', {
+          appliedByPage: runtimeDiagnostics.appliedByPage,
+          appliedTotal: runtimeDiagnostics.appliedTotal,
+          fileName: runtimeDiagnostics.fileName,
+          pages: pageDiagnostics.map((page) => ({
+            generatedRegionCount: page.generatedRegionCount,
+            pageNumber: page.pageNumber,
+            raster: page.raster,
+            systemRegionCounts: page.systems.map(
+              (system) => system.regionCount,
+            ),
+          })),
+          recognizedByPage: runtimeDiagnostics.recognizedByPage,
+          recognizedTotal: runtimeDiagnostics.recognizedTotal,
+        });
+      }
 
       measuresRef.current = nextMeasures;
       dragStateRef.current = null;

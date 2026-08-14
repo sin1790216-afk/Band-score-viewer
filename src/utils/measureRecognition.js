@@ -5,10 +5,16 @@ const DEFAULT_OPTIONS = {
   attachedBranchStaffLineExclusionInStaffSpaces: 0.2,
   barlineContinuityRatio: 0.99,
   barlineOutsideInkRatio: 0.3,
+  diagnosticBarlineContinuityRatio: 0.65,
+  diagnosticBarlineOutsideInkRatio: 0.5,
   inkThreshold: 190,
+  maximumRecoveredBarlinesPerSystem: 8,
   minimumFirstMeasureWidthInStaffSpaces: 22,
   minimumMeasureWidthInStaffSpaces: 14,
   minimumStaffWidthRatio: 0.25,
+  oversizedMeasureWidthRatio: 1.65,
+  recoveryBarlineContinuityRatio: 0.93,
+  recoveryBarlineOutsideInkRatio: 0.3,
   rowCoverageRatio: 0.28,
 };
 
@@ -17,6 +23,17 @@ export const DEFAULT_MAX_RENDER_SCALE = 3;
 
 function clamp(value, minimum, maximum) {
   return Math.min(Math.max(value, minimum), maximum);
+}
+
+function getMedian(values) {
+  if (!Array.isArray(values) || values.length === 0) return 0;
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
 }
 
 function createInkMask(imageData, inkThreshold) {
@@ -275,61 +292,212 @@ function hasAttachedSideBranch(
   ).some(({ end, start }) => end - start + 1 >= minimumBranchThickness);
 }
 
-function findBarlineCenters(mask, width, height, staffGroup, staffRange, options) {
-  const candidateColumns = [];
+function getBarlineColumnMetrics(
+  mask,
+  width,
+  height,
+  staffGroup,
+  x,
+) {
   const firstLine = staffGroup.bands[0].center;
   const lastLine = staffGroup.bands.at(-1).center;
   const exteriorInset = staffGroup.spacing * 0.5;
   const exteriorDepth = staffGroup.spacing * 2.5;
+  const continuityRatio = getGapInkRatio(
+    mask,
+    width,
+    height,
+    x,
+    firstLine,
+    lastLine,
+  );
+  const upperOutsideInkRatio = getGapInkRatio(
+    mask,
+    width,
+    height,
+    x,
+    firstLine - exteriorDepth,
+    firstLine - exteriorInset,
+  );
+  const lowerOutsideInkRatio = getGapInkRatio(
+    mask,
+    width,
+    height,
+    x,
+    lastLine + exteriorInset,
+    lastLine + exteriorDepth,
+  );
+  const staffLineSampleRadius = Math.max(
+    1,
+    Math.ceil(Math.max(...staffGroup.bands.map((band) => band.thickness)) / 2),
+  );
+  const staffLineIntersectionRatio =
+    staffGroup.bands.reduce(
+      (count, band) =>
+        count +
+        Number(
+          hasInkNear(
+            mask,
+            width,
+            height,
+            x,
+            band.center,
+            staffLineSampleRadius,
+          ),
+        ),
+      0,
+    ) / staffGroup.bands.length;
+
+  return {
+    continuityRatio,
+    lowerOutsideInkRatio,
+    outsideInkRatio: Math.max(
+      upperOutsideInkRatio,
+      lowerOutsideInkRatio,
+    ),
+    staffLineIntersectionRatio,
+    upperOutsideInkRatio,
+    x,
+  };
+}
+
+function getBestStrokeMetrics(columnMetrics, strokeGroup) {
+  return columnMetrics
+    .slice(strokeGroup.start, strokeGroup.end + 1)
+    .reduce((best, metrics) => {
+      if (!best) return metrics;
+      if (metrics.continuityRatio !== best.continuityRatio) {
+        return metrics.continuityRatio > best.continuityRatio ? metrics : best;
+      }
+      if (metrics.staffLineIntersectionRatio !== best.staffLineIntersectionRatio) {
+        return metrics.staffLineIntersectionRatio >
+          best.staffLineIntersectionRatio
+          ? metrics
+          : best;
+      }
+
+      return metrics.outsideInkRatio < best.outsideInkRatio ? metrics : best;
+    }, null);
+}
+
+function findBarlineAnalysis(
+  mask,
+  width,
+  height,
+  staffGroup,
+  staffRange,
+  options,
+) {
+  const columnMetrics = Array.from({ length: width }, (_, x) =>
+    getBarlineColumnMetrics(mask, width, height, staffGroup, x),
+  );
+  const strictColumns = [];
+  const diagnosticColumns = [];
 
   for (let x = staffRange.start; x <= staffRange.end; x += 1) {
-    const continuityRatio = getGapInkRatio(
-      mask,
-      width,
-      height,
-      x,
-      firstLine,
-      lastLine,
-    );
-    const upperOutsideInkRatio = getGapInkRatio(
-      mask,
-      width,
-      height,
-      x,
-      firstLine - exteriorDepth,
-      firstLine - exteriorInset,
-    );
-    const lowerOutsideInkRatio = getGapInkRatio(
-      mask,
-      width,
-      height,
-      x,
-      lastLine + exteriorInset,
-      lastLine + exteriorDepth,
-    );
+    const metrics = columnMetrics[x];
 
     if (
-      continuityRatio >= options.barlineContinuityRatio &&
-      Math.max(upperOutsideInkRatio, lowerOutsideInkRatio) <=
-        options.barlineOutsideInkRatio
+      metrics.continuityRatio >= options.barlineContinuityRatio &&
+      metrics.outsideInkRatio <= options.barlineOutsideInkRatio
     ) {
-      candidateColumns.push(x);
+      strictColumns.push(x);
+    }
+
+    if (
+      metrics.continuityRatio >= options.diagnosticBarlineContinuityRatio &&
+      metrics.outsideInkRatio <= options.diagnosticBarlineOutsideInkRatio
+    ) {
+      diagnosticColumns.push(x);
     }
   }
 
-  return mergeConsecutiveValues(candidateColumns, 1)
-    .filter(
-      (strokeGroup) =>
-        !hasAttachedSideBranch(
-          mask,
-          width,
-          height,
-          staffGroup,
-          strokeGroup,
-          options,
-        ),
-    )
-    .map(({ end, start }) => (start + end) / 2);
+  const strictStrokes = mergeConsecutiveValues(strictColumns, 1).map(
+    (strokeGroup) => ({
+      attachedSideBranch: hasAttachedSideBranch(
+        mask,
+        width,
+        height,
+        staffGroup,
+        strokeGroup,
+        options,
+      ),
+      center: (strokeGroup.start + strokeGroup.end) / 2,
+      metrics: getBestStrokeMetrics(columnMetrics, strokeGroup),
+      strokeGroup,
+    }),
+  );
+  const acceptedStrokes = strictStrokes.filter(
+    (stroke) => !stroke.attachedSideBranch,
+  );
+  const diagnosticStrokes = mergeConsecutiveValues(diagnosticColumns, 1).map(
+    (strokeGroup) => {
+      const metrics = getBestStrokeMetrics(columnMetrics, strokeGroup);
+      const center = metrics?.x ?? (strokeGroup.start + strokeGroup.end) / 2;
+      const attachedSideBranch = hasAttachedSideBranch(
+        mask,
+        width,
+        height,
+        staffGroup,
+        strokeGroup,
+        options,
+      );
+      const acceptedStroke = acceptedStrokes.find(
+        (stroke) =>
+          stroke.strokeGroup.end >= strokeGroup.start &&
+          stroke.strokeGroup.start <= strokeGroup.end,
+      );
+      const recoverable =
+        !attachedSideBranch &&
+        metrics.continuityRatio >= options.recoveryBarlineContinuityRatio &&
+        metrics.outsideInkRatio <= options.recoveryBarlineOutsideInkRatio &&
+        metrics.staffLineIntersectionRatio === 1;
+      let rejectedReason = '';
+
+      if (!acceptedStroke) {
+        if (attachedSideBranch) rejectedReason = 'attached-side-branch';
+        else if (
+          metrics.continuityRatio < options.recoveryBarlineContinuityRatio
+        ) {
+          rejectedReason = 'insufficient-continuity';
+        } else if (
+          metrics.outsideInkRatio > options.recoveryBarlineOutsideInkRatio
+        ) {
+          rejectedReason = 'outside-ink';
+        } else if (metrics.staffLineIntersectionRatio < 1) {
+          rejectedReason = 'incomplete-staff-intersections';
+        } else {
+          rejectedReason = 'below-strict-threshold';
+        }
+      }
+
+      return {
+        accepted: Boolean(acceptedStroke),
+        attachedSideBranch,
+        center: acceptedStroke?.center ?? center,
+        metrics,
+        recoverable,
+        rejectedReason,
+        strokeGroup,
+      };
+    },
+  );
+
+  return {
+    acceptedCenters: acceptedStrokes.map((stroke) => stroke.center),
+    acceptedStrokes,
+    diagnosticStrokes,
+    recoveryCandidates: diagnosticStrokes.filter(
+      (stroke) => stroke.recoverable,
+    ),
+  };
+}
+
+function getMinimumMeasureWidth(staffSpacing, options) {
+  return Math.max(
+    staffSpacing * options.minimumMeasureWidthInStaffSpaces,
+    8,
+  );
 }
 
 function getMeasureBoundaries(staffRange, barlineCenters, staffSpacing, options) {
@@ -358,10 +526,7 @@ function getMeasureBoundaries(staffRange, barlineCenters, staffSpacing, options)
   if (boundaries[0] !== staffRange.start) boundaries.unshift(staffRange.start);
   if (boundaries.at(-1) !== staffRange.end) boundaries.push(staffRange.end);
 
-  const minimumMeasureWidth = Math.max(
-    staffSpacing * options.minimumMeasureWidthInStaffSpaces,
-    8,
-  );
+  const minimumMeasureWidth = getMinimumMeasureWidth(staffSpacing, options);
   const minimumFirstMeasureWidth = Math.max(
     staffSpacing * options.minimumFirstMeasureWidthInStaffSpaces,
     minimumMeasureWidth,
@@ -383,6 +548,195 @@ function getMeasureBoundaries(staffRange, barlineCenters, staffSpacing, options)
 
   filtered.push(rightEdge);
   return filtered;
+}
+
+function getMeasureWidthStatistics(boundaries, staffSpacing) {
+  const widths = boundaries
+    .slice(0, -1)
+    .map((boundary, index) => boundaries[index + 1] - boundary);
+
+  if (widths.length === 0) {
+    return {
+      lowerQuartileWidth: 0,
+      madWidth: 0,
+      medianWidth: 0,
+      widths,
+      widthsInStaffSpaces: [],
+    };
+  }
+
+  const sortedWidths = [...widths].sort((left, right) => left - right);
+  const medianWidth = getMedian(widths);
+  const madWidth = getMedian(
+    widths.map((measureWidth) => Math.abs(measureWidth - medianWidth)),
+  );
+  const lowerQuartileWidth =
+    sortedWidths[Math.floor((sortedWidths.length - 1) * 0.25)];
+
+  return {
+    lowerQuartileWidth,
+    madWidth,
+    medianWidth,
+    widths,
+    widthsInStaffSpaces: widths.map(
+      (measureWidth) => measureWidth / staffSpacing,
+    ),
+  };
+}
+
+function findOversizedMeasureIndexes(boundaries, staffSpacing, options) {
+  const statistics = getMeasureWidthStatistics(boundaries, staffSpacing);
+
+  if (statistics.widths.length < 2 || statistics.lowerQuartileWidth <= 0) {
+    return { indexes: [], statistics };
+  }
+
+  const minimumExcess = getMinimumMeasureWidth(staffSpacing, options);
+  const oversizedThreshold =
+    statistics.lowerQuartileWidth * options.oversizedMeasureWidthRatio;
+  const indexes = statistics.widths.flatMap((measureWidth, index) =>
+    measureWidth >= oversizedThreshold &&
+    measureWidth - statistics.lowerQuartileWidth >= minimumExcess
+      ? [index]
+      : [],
+  );
+
+  return { indexes, statistics };
+}
+
+function getRecoveryCandidateScore(
+  candidate,
+  leftWidth,
+  rightWidth,
+  referenceWidth,
+) {
+  const widthFit =
+    Math.abs(leftWidth / referenceWidth - 1) +
+    Math.abs(rightWidth / referenceWidth - 1);
+  const continuityPenalty = 1 - candidate.metrics.continuityRatio;
+  const outsideInkPenalty = candidate.metrics.outsideInkRatio;
+
+  return widthFit + continuityPenalty + outsideInkPenalty;
+}
+
+function findBestRecoverySplit({
+  boundaries,
+  candidates,
+  options,
+  staffSpacing,
+}) {
+  const { indexes, statistics } = findOversizedMeasureIndexes(
+    boundaries,
+    staffSpacing,
+    options,
+  );
+  const minimumMeasureWidth = getMinimumMeasureWidth(staffSpacing, options);
+  let bestSplit = null;
+
+  indexes.forEach((boundaryIndex) => {
+    const left = boundaries[boundaryIndex];
+    const right = boundaries[boundaryIndex + 1];
+    const regionWidth = right - left;
+    const beforeMaximumError = Math.abs(
+      regionWidth / statistics.lowerQuartileWidth - 1,
+    );
+
+    candidates.forEach((candidate) => {
+      if (candidate.center <= left || candidate.center >= right) return;
+
+      const leftWidth = candidate.center - left;
+      const rightWidth = right - candidate.center;
+
+      if (
+        leftWidth < minimumMeasureWidth ||
+        rightWidth < minimumMeasureWidth
+      ) {
+        return;
+      }
+
+      const afterMaximumError = Math.max(
+        Math.abs(leftWidth / statistics.lowerQuartileWidth - 1),
+        Math.abs(rightWidth / statistics.lowerQuartileWidth - 1),
+      );
+
+      if (afterMaximumError >= beforeMaximumError) return;
+
+      const score = getRecoveryCandidateScore(
+        candidate,
+        leftWidth,
+        rightWidth,
+        statistics.lowerQuartileWidth,
+      );
+
+      if (!bestSplit || score < bestSplit.score) {
+        bestSplit = {
+          boundaryIndex,
+          candidate,
+          left,
+          leftWidth,
+          right,
+          rightWidth,
+          score,
+        };
+      }
+    });
+  });
+
+  return { bestSplit, statistics, suspiciousIndexes: indexes };
+}
+
+function recoverOversizedMeasureBoundaries({
+  barlineAnalysis,
+  boundaries: initialBoundaries,
+  options,
+  staffSpacing,
+}) {
+  let boundaries = [...initialBoundaries];
+  const recovered = [];
+  const initialOversized = findOversizedMeasureIndexes(
+    boundaries,
+    staffSpacing,
+    options,
+  );
+
+  for (
+    let pass = 0;
+    pass < options.maximumRecoveredBarlinesPerSystem;
+    pass += 1
+  ) {
+    const { bestSplit } = findBestRecoverySplit({
+      boundaries,
+      candidates: barlineAnalysis.recoveryCandidates.filter(
+        (candidate) =>
+          !recovered.some((item) => item.x === candidate.center),
+      ),
+      options,
+      staffSpacing,
+    });
+
+    if (!bestSplit) break;
+
+    boundaries.splice(bestSplit.boundaryIndex + 1, 0, bestSplit.candidate.center);
+    recovered.push({
+      continuityRatio: bestSplit.candidate.metrics.continuityRatio,
+      leftWidthInStaffSpaces: bestSplit.leftWidth / staffSpacing,
+      outsideInkRatio: bestSplit.candidate.metrics.outsideInkRatio,
+      pass,
+      rightWidthInStaffSpaces: bestSplit.rightWidth / staffSpacing,
+      staffLineIntersectionRatio:
+        bestSplit.candidate.metrics.staffLineIntersectionRatio,
+      x: bestSplit.candidate.center,
+    });
+  }
+
+  return {
+    boundaries,
+    finalStatistics: getMeasureWidthStatistics(boundaries, staffSpacing),
+    initialBoundaries: [...initialBoundaries],
+    initialStatistics: initialOversized.statistics,
+    initiallySuspiciousIndexes: initialOversized.indexes,
+    recovered,
+  };
 }
 
 export function getStaffContentRanges(staffGroups, pageHeight) {
@@ -413,12 +767,71 @@ export function getStaffContentRanges(staffGroups, pageHeight) {
   });
 }
 
-export function detectScoreLayout(imageData, userOptions = {}) {
+function createSystemRecognitionDiagnostics({
+  barlineAnalysis,
+  height,
+  recovery,
+  staffGroup,
+  systemIndex,
+  width,
+}) {
+  const finalBoundaries = recovery.boundaries;
+  const toNormalizedX = (value) => value / width;
+  const getNeighborDistanceInStaffSpaces = (x) =>
+    Math.min(...finalBoundaries.map((boundary) => Math.abs(boundary - x))) /
+    staffGroup.spacing;
+
+  return {
+    acceptedBarlineX: barlineAnalysis.acceptedCenters.map(toNormalizedX),
+    diagnosticBarlineCount: barlineAnalysis.diagnosticStrokes.length,
+    finalBoundaryX: recovery.boundaries.map(toNormalizedX),
+    finalRegionCount: Math.max(0, recovery.boundaries.length - 1),
+    finalMeasureWidthsInStaffSpaces:
+      recovery.finalStatistics.widthsInStaffSpaces,
+    initialBoundaryX: recovery.initialBoundaries.map(toNormalizedX),
+    initialRegionCount: Math.max(0, recovery.initialBoundaries.length - 1),
+    initialMeasureWidthsInStaffSpaces:
+      recovery.initialStatistics.widthsInStaffSpaces,
+    initiallySuspiciousIndexes: recovery.initiallySuspiciousIndexes,
+    madMeasureWidthInStaffSpaces:
+      recovery.initialStatistics.madWidth / staffGroup.spacing,
+    medianMeasureWidthInStaffSpaces:
+      recovery.initialStatistics.medianWidth / staffGroup.spacing,
+    recoveredBarlines: recovery.recovered.map((item) => ({
+      ...item,
+      x: toNormalizedX(item.x),
+    })),
+    rejectedBarlines: barlineAnalysis.diagnosticStrokes
+      .filter((stroke) => !stroke.accepted)
+      .map((stroke) => ({
+        attachedSideBranch: stroke.attachedSideBranch,
+        neighboringBarlineDistanceInStaffSpaces:
+          getNeighborDistanceInStaffSpaces(stroke.center),
+        reason: stroke.rejectedReason,
+        recoverable: stroke.recoverable,
+        staffLineIntersectionRatio:
+          stroke.metrics.staffLineIntersectionRatio,
+        verticalContinuityRatio: stroke.metrics.continuityRatio,
+        outsideInkRatio: stroke.metrics.outsideInkRatio,
+        x: toNormalizedX(stroke.center),
+      })),
+    staffSpacing: staffGroup.spacing / height,
+    systemIndex,
+  };
+}
+
+function detectScoreLayoutInternal(
+  imageData,
+  userOptions = {},
+  includeDiagnostics = false,
+) {
   const width = Number(imageData?.width) || 0;
   const height = Number(imageData?.height) || 0;
 
   if (!imageData?.data || width <= 0 || height <= 0) {
-    return { measures: [], systems: [] };
+    return includeDiagnostics
+      ? { diagnostics: [], measures: [], systems: [] }
+      : { measures: [], systems: [] };
   }
 
   const options = { ...DEFAULT_OPTIONS, ...userOptions };
@@ -427,6 +840,7 @@ export function detectScoreLayout(imageData, userOptions = {}) {
   const staffGroups = findStaffGroups(horizontalBands);
   const contentRanges = getStaffContentRanges(staffGroups, height);
   const candidates = [];
+  const diagnostics = [];
   const systems = [];
 
   staffGroups.forEach((staffGroup, staffIndex) => {
@@ -440,7 +854,7 @@ export function detectScoreLayout(imageData, userOptions = {}) {
 
     if (!staffRange) return;
 
-    const barlineCenters = findBarlineCenters(
+    const barlineAnalysis = findBarlineAnalysis(
       mask,
       width,
       height,
@@ -448,12 +862,19 @@ export function detectScoreLayout(imageData, userOptions = {}) {
       staffRange,
       options,
     );
-    const boundaries = getMeasureBoundaries(
+    const initialBoundaries = getMeasureBoundaries(
       staffRange,
-      barlineCenters,
+      barlineAnalysis.acceptedCenters,
       staffGroup.spacing,
       options,
     );
+    const recovery = recoverOversizedMeasureBoundaries({
+      barlineAnalysis,
+      boundaries: initialBoundaries,
+      options,
+      staffSpacing: staffGroup.spacing,
+    });
+    const boundaries = recovery.boundaries;
     const verticalRange = contentRanges[staffIndex];
     const systemIndex = systems.length;
 
@@ -461,12 +882,26 @@ export function detectScoreLayout(imageData, userOptions = {}) {
       contentBottom: verticalRange.bottom / height,
       contentTop: verticalRange.top / height,
       index: systemIndex,
+      regionCount: boundaries.length - 1,
       staffBottom: staffGroup.bands.at(-1).center / height,
       staffSpacing: staffGroup.spacing / height,
       staffTop: staffGroup.bands[0].center / height,
       width: (staffRange.end - staffRange.start) / width,
       x: staffRange.start / width,
     });
+
+    if (includeDiagnostics) {
+      diagnostics.push(
+        createSystemRecognitionDiagnostics({
+          barlineAnalysis,
+          height,
+          recovery,
+          staffGroup,
+          systemIndex,
+          width,
+        }),
+      );
+    }
 
     for (let boundaryIndex = 0; boundaryIndex < boundaries.length - 1; boundaryIndex += 1) {
       const left = boundaries[boundaryIndex];
@@ -481,7 +916,17 @@ export function detectScoreLayout(imageData, userOptions = {}) {
     }
   });
 
-  return { measures: candidates, systems };
+  return includeDiagnostics
+    ? { diagnostics, measures: candidates, systems }
+    : { measures: candidates, systems };
+}
+
+export function detectScoreLayout(imageData, userOptions = {}) {
+  return detectScoreLayoutInternal(imageData, userOptions);
+}
+
+export function diagnoseScoreLayout(imageData, userOptions = {}) {
+  return detectScoreLayoutInternal(imageData, userOptions, true);
 }
 
 export function detectMeasureCandidates(imageData, userOptions = {}) {
@@ -493,7 +938,9 @@ export async function recognizePdfDocumentPages(
   {
     createCanvas,
     maxRenderScale = DEFAULT_MAX_RENDER_SCALE,
+    onPageDiagnostics,
     onProgress,
+    recognitionOptions,
     targetRenderWidth = DEFAULT_TARGET_RENDER_WIDTH,
   } = {},
 ) {
@@ -529,9 +976,32 @@ export async function recognizePdfDocumentPages(
 
     await page.render({ canvasContext: context, viewport }).promise;
 
-    const pageMeasures = detectMeasureCandidates(
-      context.getImageData(0, 0, canvas.width, canvas.height),
-    );
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const layout = detectScoreLayout(imageData, recognitionOptions);
+    const pageMeasures = layout.measures;
+
+    onPageDiagnostics?.({
+      baseViewport: {
+        height: baseViewport.height,
+        width: baseViewport.width,
+      },
+      generatedRegionCount: pageMeasures.length,
+      pageNumber,
+      raster: {
+        height: canvas.height,
+        width: canvas.width,
+      },
+      renderScale,
+      systems: layout.systems.map((system) => ({
+        contentBottom: system.contentBottom,
+        contentTop: system.contentTop,
+        regionCount: system.regionCount,
+        staffBottom: system.staffBottom,
+        staffSpacing: system.staffSpacing,
+        staffTop: system.staffTop,
+      })),
+      totalPages: pdf.numPages,
+    });
 
     measures.push(
       ...pageMeasures.map((measure) => ({

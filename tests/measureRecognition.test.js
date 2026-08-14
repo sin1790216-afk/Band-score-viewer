@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   detectMeasureCandidates,
   detectScoreLayout,
+  diagnoseScoreLayout,
   getStaffContentRanges,
   recognizePdfDocumentPages,
   recognizePdfLoadingTaskPages,
@@ -33,6 +34,17 @@ function drawPixel(image, x, y) {
   image.data[index + 3] = 255;
 }
 
+function erasePixel(image, x, y) {
+  if (x < 0 || x >= image.width || y < 0 || y >= image.height) return;
+
+  const index = (Math.floor(y) * image.width + Math.floor(x)) * 4;
+
+  image.data[index] = 255;
+  image.data[index + 1] = 255;
+  image.data[index + 2] = 255;
+  image.data[index + 3] = 255;
+}
+
 function drawHorizontalLine(image, startX, endX, y, thickness = 1) {
   for (let offsetY = 0; offsetY < thickness; offsetY += 1) {
     for (let x = startX; x <= endX; x += 1) drawPixel(image, x, y + offsetY);
@@ -43,6 +55,32 @@ function drawVerticalLine(image, x, startY, endY, thickness = 1) {
   for (let offsetX = 0; offsetX < thickness; offsetX += 1) {
     for (let y = startY; y <= endY; y += 1) drawPixel(image, x + offsetX, y);
   }
+}
+
+function drawWeakBarline(image, x, top, spacing = 10) {
+  drawVerticalLine(image, x, top, top + spacing * 4);
+
+  for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+    erasePixel(image, x + offsetX, top + spacing * 0.6);
+    erasePixel(image, x + offsetX, top + spacing * 0.7);
+  }
+}
+
+function createSingleStaffScore({
+  barlines = [80, 360, 920],
+  top = 150,
+  weakBarlines = [],
+} = {}) {
+  const image = createImage(1000, 400);
+
+  drawStaff(image, {
+    barlines,
+    left: 80,
+    scale: 1,
+    top,
+  });
+  weakBarlines.forEach((x) => drawWeakBarline(image, x, top));
+  return image;
 }
 
 function drawStaff(image, { barlines, left, scale, top }) {
@@ -194,6 +232,130 @@ test('오선 시작부의 음표 기둥으로 지나치게 좁은 첫 박스를 
   assertClose(candidates[0].width, 0.22);
 });
 
+test('일정한 measure width에는 oversized recovery를 실행하지 않는다', () => {
+  const layout = diagnoseScoreLayout(
+    createSingleStaffScore({ barlines: [80, 360, 640, 920] }),
+  );
+
+  assert.equal(layout.measures.length, 3);
+  assert.deepEqual(layout.diagnostics[0].initiallySuspiciousIndexes, []);
+  assert.deepEqual(layout.diagnostics[0].recoveredBarlines, []);
+});
+
+test('oversized region 안에서 strict detector가 놓친 약한 barline을 복구한다', () => {
+  const image = createSingleStaffScore({ weakBarlines: [640] });
+  const before = diagnoseScoreLayout(image, {
+    maximumRecoveredBarlinesPerSystem: 0,
+  });
+  const after = diagnoseScoreLayout(image);
+
+  assert.equal(before.measures.length, 2);
+  assert.deepEqual(before.diagnostics[0].initiallySuspiciousIndexes, [1]);
+  assert.equal(
+    before.diagnostics[0].rejectedBarlines.some(
+      (barline) =>
+        barline.reason === 'below-strict-threshold' && barline.recoverable,
+    ),
+    true,
+  );
+  assert.equal(after.measures.length, 3);
+  assert.equal(after.diagnostics[0].recoveredBarlines.length, 1);
+  assertClose(after.diagnostics[0].recoveredBarlines[0].x, 0.64);
+  after.measures.forEach((measure) => assertClose(measure.width, 0.28));
+});
+
+test('oversized region 내부 note stem은 weak barline으로 복구하지 않는다', () => {
+  const image = createSingleStaffScore();
+
+  drawVerticalLine(image, 640, 150, 190, 2);
+  drawHorizontalLine(image, 620, 639, 174, 6);
+
+  const layout = diagnoseScoreLayout(image);
+
+  assert.equal(layout.measures.length, 2);
+  assert.deepEqual(layout.diagnostics[0].recoveredBarlines, []);
+  assert.equal(
+    layout.diagnostics[0].rejectedBarlines.some(
+      (barline) => barline.reason === 'attached-side-branch',
+    ),
+    true,
+  );
+});
+
+test('oversized region 내부 beam과 연결된 stem은 barline으로 복구하지 않는다', () => {
+  const image = createSingleStaffScore();
+
+  drawVerticalLine(image, 640, 144, 190, 2);
+  drawHorizontalLine(image, 600, 639, 144, 4);
+
+  const layout = diagnoseScoreLayout(image);
+
+  assert.equal(layout.measures.length, 2);
+  assert.deepEqual(layout.diagnostics[0].recoveredBarlines, []);
+  assert.equal(
+    layout.diagnostics[0].rejectedBarlines.some(
+      (barline) => barline.reason === 'attached-side-branch',
+    ),
+    true,
+  );
+});
+
+test('weak barline split이 한쪽에 최소 폭 미만 region을 만들면 거부한다', () => {
+  const image = createSingleStaffScore({ weakBarlines: [400] });
+  const layout = diagnoseScoreLayout(image);
+
+  assert.equal(layout.measures.length, 2);
+  assert.deepEqual(layout.diagnostics[0].initiallySuspiciousIndexes, [1]);
+  assert.deepEqual(layout.diagnostics[0].recoveredBarlines, []);
+});
+
+test('두 internal barline이 누락된 oversized region을 반복 pass로 복구한다', () => {
+  const image = createSingleStaffScore({
+    barlines: [80, 300, 920],
+    weakBarlines: [500, 700],
+  });
+  const before = detectMeasureCandidates(image, {
+    maximumRecoveredBarlinesPerSystem: 0,
+  });
+  const after = diagnoseScoreLayout(image);
+
+  assert.equal(before.length, 2);
+  assert.equal(after.measures.length, 4);
+  assert.deepEqual(
+    after.diagnostics[0].recoveredBarlines.map((barline) => barline.pass),
+    [0, 1],
+  );
+  assert.deepEqual(
+    after.diagnostics[0].recoveredBarlines
+      .map((barline) => Number(barline.x.toFixed(2)))
+      .sort(),
+    [0.5, 0.7],
+  );
+});
+
+test('주변 대비 정상 범위의 넓은 measure는 약한 선만으로 분할하지 않는다', () => {
+  const image = createSingleStaffScore({
+    barlines: [80, 320, 680, 920],
+    weakBarlines: [500],
+  });
+  const layout = diagnoseScoreLayout(image);
+
+  assert.equal(layout.measures.length, 3);
+  assert.deepEqual(layout.diagnostics[0].initiallySuspiciousIndexes, []);
+  assert.deepEqual(layout.diagnostics[0].recoveredBarlines, []);
+});
+
+test('staff system 전환과 page edge는 recovery false split을 만들지 않는다', () => {
+  const layout = diagnoseScoreLayout(createScore());
+
+  assert.equal(layout.systems.length, 2);
+  assert.equal(layout.measures.length, 6);
+  assert.deepEqual(
+    layout.diagnostics.map((diagnostic) => diagnostic.recoveredBarlines),
+    [[], []],
+  );
+});
+
 test('system content band는 인접 system 사이의 중간 경계를 공유한다', () => {
   const ranges = getStaffContentRanges(
     [createStaffGroup(100), createStaffGroup(300), createStaffGroup(460)],
@@ -249,6 +411,7 @@ test('가사 분석용 score layout은 기존 measure와 정규화된 staff geom
 
 test('PDF 페이지를 순서대로 분석하고 각 후보에 페이지 번호를 붙인다', async () => {
   const progress = [];
+  const diagnostics = [];
   const cleanedPages = [];
   const image = createScore();
   const pdf = {
@@ -284,6 +447,7 @@ test('PDF 페이지를 순서대로 분석하고 각 후보에 페이지 번호�
       };
     },
     onProgress: (nextProgress) => progress.push(nextProgress),
+    onPageDiagnostics: (nextDiagnostics) => diagnostics.push(nextDiagnostics),
     targetRenderWidth: image.width,
   });
 
@@ -301,6 +465,69 @@ test('PDF 페이지를 순서대로 분석하고 각 후보에 페이지 번호�
     { currentPage: 2, totalPages: 2 },
   ]);
   assert.deepEqual(cleanedPages, [1, 2]);
+  assert.deepEqual(
+    diagnostics.map((page) => ({
+      generatedRegionCount: page.generatedRegionCount,
+      pageNumber: page.pageNumber,
+      raster: page.raster,
+      systemRegionCounts: page.systems.map((system) => system.regionCount),
+    })),
+    [
+      {
+        generatedRegionCount: 6,
+        pageNumber: 1,
+        raster: { height: image.height, width: image.width },
+        systemRegionCounts: [3, 3],
+      },
+      {
+        generatedRegionCount: 6,
+        pageNumber: 2,
+        raster: { height: image.height, width: image.width },
+        systemRegionCounts: [3, 3],
+      },
+    ],
+  );
+});
+
+test('동일 raster의 direct 인식과 production page adapter 결과가 일치한다', async () => {
+  const image = createScore();
+  const directMeasures = detectMeasureCandidates(image);
+  const pdf = {
+    numPages: 1,
+    async getPage() {
+      return {
+        cleanup() {},
+        getViewport({ scale }) {
+          return { height: image.height * scale, width: image.width * scale };
+        },
+        render() {
+          return { promise: Promise.resolve() };
+        },
+      };
+    },
+  };
+  const runtimeMeasures = await recognizePdfDocumentPages(pdf, {
+    createCanvas() {
+      return {
+        getContext() {
+          return {
+            fillRect() {},
+            getImageData() {
+              return image;
+            },
+          };
+        },
+        height: image.height,
+        width: image.width,
+      };
+    },
+    targetRenderWidth: image.width,
+  });
+
+  assert.deepEqual(
+    runtimeMeasures.map(({ page: _page, ...measure }) => measure),
+    directMeasures,
+  );
 });
 
 test('PDF 페이지 분석이 끝난 뒤 loading task를 종료한다', async () => {
