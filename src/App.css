@@ -1,9 +1,16 @@
 .app {
   display : flex;
   flex-direction : column;
+  min-height:100vh;
+}
 
+.teacher-mode{
+    height:100svh;
+    overflow:hidden;
+}
 
-
+.teacher-mode .header{
+    flex:0 0 auto;
 }
 
 html:fullscreen,
@@ -94,24 +101,24 @@ html:-webkit-full-screen #root{
     background:#111;
 }
 
-.student-page-view .pdf-viewer{
+.page-fit-view .pdf-viewer{
     align-items:center;
     display:flex;
     justify-content:center;
     overflow:hidden;
 }
 
-.student-page-view .react-pdf__Document{
+.page-fit-view .react-pdf__Document{
     display:flex;
     justify-content:center;
     width:100%;
 }
 
-.student-page-view .pdf-page-frame{
+.page-fit-view .pdf-page-frame{
     margin:auto;
 }
 
-.student-page-view .fit-page-wrapper{
+.page-fit-view .fit-page-wrapper{
     margin:auto;
 }
 
@@ -709,16 +716,67 @@ html:-webkit-full-screen #root{
 
 .main{
     display:flex;
-    height:calc(100vh - 120px);
-
-
+    flex:1;
+    min-height:0;
+    overflow:hidden;
 }
 
 .sidebar{
-    flex:0 0 clamp(9rem, 14vw, 11rem);
+    box-sizing:border-box;
+    flex:0 0 clamp(13rem, 19vw, 18rem);
     background:red;
     display:flex;
     flex-direction:column;
+    min-height:0;
+    overflow-y:auto;
+    overscroll-behavior:contain;
+    padding:4px;
+}
+
+.sidebar-section{
+    border-bottom:1px solid rgba(0, 0, 0, 0.45);
+}
+
+.sidebar-section > summary{
+    cursor:pointer;
+    font-size:13px;
+    font-weight:700;
+    list-style-position:inside;
+    padding:8px 4px;
+    user-select:none;
+}
+
+.sidebar-section-content{
+    display:flex;
+    flex-direction:column;
+    gap:5px;
+    padding:0 2px 8px;
+}
+
+.sidebar-section-content > button{
+    width:100%;
+}
+
+.sidebar-button-grid{
+    display:grid;
+    gap:4px;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+}
+
+.sidebar-button-grid button{
+    min-width:0;
+    white-space:normal;
+}
+
+.sidebar-button-grid button.active{
+    background:#242424;
+    color:#fff;
+}
+
+.sidebar-help{
+    background:rgba(255, 255, 255, 0.9);
+    color:#333;
+    padding:6px;
 }
 
 .sidebar .session-end-button{
@@ -786,7 +844,9 @@ html:-webkit-full-screen #root{
     flex-direction:column;
     gap:8px;
     padding:8px;
-    width:260px;
+    flex:0 1 260px;
+    min-height:0;
+    min-width:12rem;
 }
 
 .lyric-editor-header{
@@ -1078,15 +1138,47 @@ html:-webkit-full-screen #root{
     flex:1;
     display:flex;
     flex-direction:column;
+    min-height:0;
+    min-width:0;
     overflow:hidden;
+}
+
+.status-bar{
+    align-items:center;
+    display:flex;
+    flex:0 0 auto;
+    flex-wrap:wrap;
+    gap:6px 12px;
+    justify-content:space-between;
+    padding:4px 8px;
+}
+
+.status-bar p{
+    margin:0;
+    min-width:0;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+}
+
+.teacher-pdf-view-controls{
+    display:flex;
+    gap:4px;
+}
+
+.teacher-pdf-view-controls button.active{
+    border:2px solid currentColor;
 }
 
 
 
 .pdf-viewer{
     flex:1;
+    min-height:0;
+    min-width:0;
     position:relative;
     overflow:auto;
+    overscroll-behavior:contain;
     text-align:center;
 }
 
@@ -1319,11 +1411,6 @@ html:-webkit-full-screen #root{
 }
 
 @media (max-width:600px){
-    .teacher-mode{
-        height:100svh;
-        overflow:hidden;
-    }
-
     .teacher-mode .header{
         flex:0 0 auto;
         padding-top:max(0px, env(safe-area-inset-top));
@@ -1353,6 +1440,20 @@ html:-webkit-full-screen #root{
         flex:1;
         height:auto;
         min-height:0;
+    }
+
+    .teacher-mode .sidebar{
+        flex-basis:clamp(10.5rem, 44vw, 13rem);
+    }
+
+    .teacher-mode .status-bar{
+        align-items:stretch;
+        flex-direction:column;
+    }
+
+    .teacher-pdf-view-controls button{
+        flex:1;
+        min-width:0;
     }
 
     .student-mode .floating-view-controls{

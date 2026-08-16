@@ -6,8 +6,8 @@ export const NAVIGATION_MARKER_TYPES = Object.freeze({
 });
 
 export const NAVIGATION_MARKER_OPTIONS = Object.freeze([
-  { label: 'Repeat Start', shortLabel: 'Repeat Start', type: NAVIGATION_MARKER_TYPES.REPEAT_START },
-  { label: 'Repeat End', shortLabel: 'Repeat End', type: NAVIGATION_MARKER_TYPES.REPEAT_END },
+  { description: '반복 시작', label: '||:', shortLabel: '||:', type: NAVIGATION_MARKER_TYPES.REPEAT_START },
+  { description: '반복 끝', label: ':||', shortLabel: ':||', type: NAVIGATION_MARKER_TYPES.REPEAT_END },
   { label: 'Segno', shortLabel: 'Segno', type: NAVIGATION_MARKER_TYPES.SEGNO },
   { label: 'D.S.', shortLabel: 'D.S.', type: NAVIGATION_MARKER_TYPES.DAL_SEGNO },
 ]);

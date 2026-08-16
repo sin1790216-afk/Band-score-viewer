@@ -157,6 +157,8 @@ const TEACHER_PDF_SOURCE = 'teacher';
 const LOCAL_PDF_SOURCE = 'local';
 const STUDENT_ZOOM_VIEW = 'zoom';
 const STUDENT_PAGE_VIEW = 'page';
+const TEACHER_PAGE_VIEW = 'page';
+const TEACHER_WIDTH_VIEW = 'width';
 const TEACHER_AUDIO_SOURCE = AUDIO_SOURCE_TYPES.TEACHER_SHARED_LOCAL;
 const LOCAL_AUDIO_SOURCE = AUDIO_SOURCE_TYPES.STUDENT_PERSONAL_LOCAL;
 const SOCKET_PORT = import.meta.env.VITE_SOCKET_PORT || '4000';
@@ -350,6 +352,7 @@ function App() {
   });
   const [pdfRenderResetVersion, setPdfRenderResetVersion] = useState(0);
   const [studentViewMode, setStudentViewMode] = useState(STUDENT_ZOOM_VIEW);
+  const [teacherViewMode, setTeacherViewMode] = useState(TEACHER_PAGE_VIEW);
   const [studentPdfSource, setStudentPdfSource] = useState(TEACHER_PDF_SOURCE);
   const [studentLocalPdfIdentity, setStudentLocalPdfIdentity] = useState('');
   const [studentAnnotationLibrary, setStudentAnnotationLibrary] = useState(() =>
@@ -431,8 +434,9 @@ function App() {
   } = sessionState;
 
   const canEdit = viewerMode === TEACHER_MODE;
-  const isStudentPageView =
-    viewerMode === STUDENT_MODE && studentViewMode === STUDENT_PAGE_VIEW;
+  const isTeacherPageView =
+    viewerMode === TEACHER_MODE && teacherViewMode === TEACHER_PAGE_VIEW;
+  const pdfViewMode = canEdit ? teacherViewMode : studentViewMode;
   const isStudentAnnotating =
     viewerMode === STUDENT_MODE && isStudentAnnotationEnabled;
   const synchronizedDisplayPageNumber = canEdit
@@ -3207,11 +3211,13 @@ function App() {
           ? 'role-select-mode'
           : viewerMode === STUDENT_MODE
           ? `student-mode ${
-              studentViewMode === STUDENT_PAGE_VIEW ? 'student-page-view' : 'student-zoom-view'
+              studentViewMode === STUDENT_PAGE_VIEW
+                ? 'student-page-view page-fit-view'
+                : 'student-zoom-view'
             }`
           : viewerMode === VOCAL_MODE
             ? 'vocal-mode'
-            : 'teacher-mode'
+            : `teacher-mode ${isTeacherPageView ? 'page-fit-view' : 'teacher-width-view'}`
       }`}
     >
       {viewerMode === ROLE_SELECT_MODE ? (
@@ -3837,6 +3843,28 @@ function App() {
           {canEdit && (
             <div className="status-bar">
               <p>{fileName}</p>
+              <div
+                aria-label="Teacher PDF 보기 방식"
+                className="teacher-pdf-view-controls"
+                role="group"
+              >
+                <button
+                  aria-pressed={teacherViewMode === TEACHER_PAGE_VIEW}
+                  className={teacherViewMode === TEACHER_PAGE_VIEW ? 'active' : ''}
+                  onClick={() => setTeacherViewMode(TEACHER_PAGE_VIEW)}
+                  type="button"
+                >
+                  페이지 전체
+                </button>
+                <button
+                  aria-pressed={teacherViewMode === TEACHER_WIDTH_VIEW}
+                  className={teacherViewMode === TEACHER_WIDTH_VIEW ? 'active' : ''}
+                  onClick={() => setTeacherViewMode(TEACHER_WIDTH_VIEW)}
+                  type="button"
+                >
+                  너비 맞춤
+                </button>
+              </div>
             </div>
           )}
 
@@ -3854,7 +3882,6 @@ function App() {
             displayMeasureIndex={displayMeasureIndex}
             displayPageNumber={displayPageNumber}
             draggedMeasureIndex={draggedMeasureIndex}
-            isStudentPageView={isStudentPageView}
             measures={measures}
             mode={overlayMode}
             onAddAnnotationStroke={addStudentAnnotationStroke}
@@ -3872,6 +3899,7 @@ function App() {
             onStartMeasureResize={startMeasureResize}
             onTotalPagesChange={setTotalPages}
             pdfUrl={pdfUrl}
+            pdfViewMode={pdfViewMode}
             renderResetVersion={pdfRenderResetVersion}
             resizedMeasureIndex={resizedMeasureIndex}
             selectedMeasureIndex={selectedMeasureIndex}
@@ -3880,7 +3908,6 @@ function App() {
               canEditStudentAudioTimeline && isStudentAudioPanelOpen
             }
             studentPdfSource={studentPdfSource}
-            studentViewMode={studentViewMode}
             viewerMode={viewerMode}
           />
         </section>
@@ -3933,6 +3960,21 @@ function VocalView({ currentText, nextText }) {
       <section className="vocal-current">{currentText}</section>
       <section className="vocal-next">{nextText}</section>
     </main>
+  );
+}
+
+function SidebarSection({ children, defaultOpen = false, title }) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+
+  return (
+    <details
+      className="sidebar-section"
+      onToggle={(event) => setIsOpen(event.currentTarget.open)}
+      open={isOpen}
+    >
+      <summary>{title}</summary>
+      <div className="sidebar-section-content">{children}</div>
+    </details>
   );
 }
 
@@ -4036,252 +4078,167 @@ function Sidebar({
     onApplyGlobalBpm(globalBpmInput);
   }
 
+  if (!canEdit) return null;
+
   return (
     <aside className="sidebar">
-      {canEdit && (
-        <>
-          <button onClick={onOpenPdf}>PDF 열기</button>
-          <div className="measure-recognition-controls">
-            <button
-              disabled={
-                !canRecognizeMeasures || measureRecognitionState.status === 'running'
-              }
-              onClick={onRecognizeMeasures}
-              type="button"
-            >
-              {measureRecognitionState.status === 'running'
-                ? '마디 분석 중'
-                : '마디 자동인식'}
-            </button>
-            {measureRecognitionState.message && (
-              <span
-                aria-live="polite"
-                className={`measure-recognition-status ${measureRecognitionState.status}`}
-              >
-                {measureRecognitionState.message}
-              </span>
-            )}
-          </div>
-          <div className="lyric-recognition-controls">
-            <button
-              disabled={
-                !canRecognizeLyrics ||
-                lyricRecognitionState.status === 'running' ||
-                measureRecognitionState.status === 'running'
-              }
-              onClick={onRecognizeLyrics}
-              type="button"
-            >
-              {lyricRecognitionState.status === 'running'
-                ? '가사 분석 중'
-                : '가사 자동인식'}
-            </button>
-            {lyricRecognitionState.message && (
-              <span
-                aria-live="polite"
-                className={`lyric-recognition-status ${lyricRecognitionState.status}`}
-              >
-                {lyricRecognitionState.message}
-              </span>
-            )}
-            {lyricRecognitionState.status === 'ready' && (
-              <div className="lyric-recognition-actions">
-                <button onClick={onApplyRecognizedLyrics} type="button">
-                  적용
-                </button>
-                <button onClick={onCancelRecognizedLyrics} type="button">
-                  취소
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="language-phrase-controls">
-            <button
-              disabled={
-                !canResolveLanguagePhrases ||
-                languagePhraseMutationState.status === 'running'
-              }
-              onClick={onResolveLanguagePhrases}
-              type="button"
-            >
-              {languagePhraseMutationState.status === 'running'
-                ? '가사 문맥 분석 중'
-                : 'AI 가사 문장 정리'}
-            </button>
-            {languagePhraseMutationState.message && (
-              <span
-                aria-live="polite"
-                className={`language-phrase-status ${languagePhraseMutationState.status}`}
-              >
-                {languagePhraseMutationState.message}
-              </span>
-            )}
-          </div>
-          <button disabled={!canSaveProject} onClick={onSaveBsvProject} type="button">
-            프로젝트 저장 (.bsv)
-          </button>
-          <button onClick={onOpenBsvProject} type="button">
-            프로젝트 열기 (.bsv)
-          </button>
-          <button onClick={onSaveJson}>💾 JSON 저장</button>
-          <button onClick={onOpenJson}>📂 JSON 불러오기</button>
-          <button onClick={onOpenLyricEditor}>가사 편집</button>
-          <div className="audio-settings-editor">
-            <label>
-              음원 링크
-              <input
-                onChange={(event) =>
-                  onUpdateAudioSettings({ url: event.target.value })
-                }
-                placeholder="https://..."
-                type="url"
-                value={audioSettings.url}
-              />
-            </label>
-            <label>
-              시작 오프셋(초)
-              <input
-                min="0"
-                onChange={(event) =>
-                  onUpdateAudioSettings({
-                    startOffsetSeconds: event.target.value,
-                  })
-                }
-                step="0.1"
-                type="number"
-                value={audioSettings.startOffsetSeconds}
-              />
-            </label>
-            <button
-              disabled={!canOpenAudioLink}
-              onClick={onOpenAudioLink}
-              type="button"
-            >
-              링크 열기
-            </button>
-          </div>
-          <div className="shared-audio-editor">
-            <strong>공용 로컬 음원</strong>
-            <span title={sharedAudioMetadata?.fileName || ''}>
-              {sharedAudioMetadata?.fileName || '등록된 음원 없음'}
-            </span>
-            <button
-              disabled={sharedAudioMutationState.status === 'working'}
-              onClick={onOpenSharedAudioPicker}
-              type="button"
-            >
-              {sharedAudioMetadata ? '음원 교체' : '음원 추가'}
-            </button>
-            <button
-              disabled={
-                !sharedAudioMetadata ||
-                sharedAudioMutationState.status === 'working'
-              }
-              onClick={onRemoveSharedAudio}
-              type="button"
-            >
-              음원 제거
-            </button>
-            {sharedAudioMutationState.message && (
-              <small className={sharedAudioMutationState.status}>
-                {sharedAudioMutationState.message}
-              </small>
-            )}
-            <input
-              accept={LOCAL_AUDIO_FILE_ACCEPT}
-              className="file-input"
-              onChange={onSharedAudioSelected}
-              ref={sharedAudioInputRef}
-              type="file"
-            />
-          </div>
+      <input
+        accept=".pdf"
+        className="file-input"
+        onChange={onPdfSelected}
+        ref={fileInputRef}
+        type="file"
+      />
+      <input
+        accept=".bsv"
+        className="file-input"
+        onChange={onLoadBsvProject}
+        ref={bsvInputRef}
+        type="file"
+      />
+      <input
+        accept=".json"
+        className="file-input"
+        onChange={onLoadJson}
+        ref={jsonInputRef}
+        type="file"
+      />
+      <input
+        accept={LOCAL_AUDIO_FILE_ACCEPT}
+        className="file-input"
+        onChange={onSharedAudioSelected}
+        ref={sharedAudioInputRef}
+        type="file"
+      />
+
+      <div className="sidebar-button-grid">
+        <button
+          className={mode === REGISTER_MODE ? 'active' : ''}
+          onClick={() => onSetMode(REGISTER_MODE)}
+          type="button"
+        >
+          등록모드
+        </button>
+        <button
+          className={mode === PLAY_MODE ? 'active' : ''}
+          onClick={() => onSetMode(PLAY_MODE)}
+          type="button"
+        >
+          연주모드
+        </button>
+      </div>
+
+      <SidebarSection defaultOpen title="악보">
+        <button onClick={onOpenPdf} type="button">PDF 열기</button>
+        <div className="measure-recognition-controls">
           <button
-            className="session-end-button"
-            disabled={!canEndSession}
-            onClick={onEndClassSession}
+            disabled={
+              !canRecognizeMeasures || measureRecognitionState.status === 'running'
+            }
+            onClick={onRecognizeMeasures}
             type="button"
           >
-            수업 종료
+            {measureRecognitionState.status === 'running'
+              ? '마디 분석 중'
+              : '마디 자동인식'}
           </button>
-
-          <input
-            accept=".bsv"
-            className="file-input"
-            onChange={onLoadBsvProject}
-            ref={bsvInputRef}
-            type="file"
-          />
-
-          <input
-            type="file"
-            accept=".json"
-            ref={jsonInputRef}
-            className="file-input"
-            onChange={onLoadJson}
-          />
-
-          <button onClick={() => onSetMode(REGISTER_MODE)}>📝 등록모드</button>
-          <button onClick={() => onSetMode(PLAY_MODE)}>▶ 연주모드</button>
-
-          <input
-            className="file-input"
-            type="file"
-            accept=".pdf"
-            ref={fileInputRef}
-            onChange={onPdfSelected}
-          />
-
-          {mode === REGISTER_MODE ? (
-            <>
-              <button onClick={() => onGoToPage(pageNumber - 1)}>◀ 페이지</button>
-              <button onClick={() => onGoToPage(pageNumber + 1)}>▶ 페이지</button>
-            </>
-          ) : (
-            <>
-              <div className="current-measure-display" aria-live="polite">
-                <span>현재 마디</span>
-                <strong>
-                  {measureTotal > 0 ? measureIndex + 1 : 0} / {measureTotal}
-                </strong>
-              </div>
-              <button onClick={() => onGoToMeasure(0)}>⏮ 처음</button>
-              <button onClick={onGoToPreviousPlaybackStep}>◀ 마디</button>
-              <button onClick={onAdvancePlayback}>▶ 마디</button>
-              <form className="measure-jump-form" onSubmit={submitMeasureNumber}>
-                <label htmlFor="measure-number-input">이동할 마디</label>
-                <input
-                  id="measure-number-input"
-                  inputMode="numeric"
-                  max={measureTotal || undefined}
-                  min="1"
-                  onChange={(event) => setMeasureNumberInput(event.target.value)}
-                  type="number"
-                  value={measureNumberInput}
-                />
-                <button disabled={measureTotal === 0} type="submit">
-                  이동
-                </button>
-              </form>
-            </>
+          {measureRecognitionState.message && (
+            <span
+              aria-live="polite"
+              className={`measure-recognition-status ${measureRecognitionState.status}`}
+            >
+              {measureRecognitionState.message}
+            </span>
           )}
+        </div>
+        <div className="lyric-recognition-controls">
+          <button
+            disabled={
+              !canRecognizeLyrics ||
+              lyricRecognitionState.status === 'running' ||
+              measureRecognitionState.status === 'running'
+            }
+            onClick={onRecognizeLyrics}
+            type="button"
+          >
+            {lyricRecognitionState.status === 'running'
+              ? '가사 분석 중'
+              : '가사 자동인식'}
+          </button>
+          {lyricRecognitionState.message && (
+            <span
+              aria-live="polite"
+              className={`lyric-recognition-status ${lyricRecognitionState.status}`}
+            >
+              {lyricRecognitionState.message}
+            </span>
+          )}
+          {lyricRecognitionState.status === 'ready' && (
+            <div className="lyric-recognition-actions">
+              <button onClick={onApplyRecognizedLyrics} type="button">적용</button>
+              <button onClick={onCancelRecognizedLyrics} type="button">취소</button>
+            </div>
+          )}
+        </div>
+        <div className="language-phrase-controls">
+          <button
+            disabled={
+              !canResolveLanguagePhrases ||
+              languagePhraseMutationState.status === 'running'
+            }
+            onClick={onResolveLanguagePhrases}
+            type="button"
+          >
+            {languagePhraseMutationState.status === 'running'
+              ? '가사 문맥 분석 중'
+              : 'AI 가사 문장 정리'}
+          </button>
+          {languagePhraseMutationState.message && (
+            <span
+              aria-live="polite"
+              className={`language-phrase-status ${languagePhraseMutationState.status}`}
+            >
+              {languagePhraseMutationState.message}
+            </span>
+          )}
+        </div>
+        <button onClick={onOpenLyricEditor} type="button">가사 편집</button>
+      </SidebarSection>
 
-          <div className="autoplay-controls">
-            <label className="repeat-toggle">
-              <input
-                checked={isRepeatEnabled}
-                onChange={(event) => onSetRepeatEnabled(event.target.checked)}
-                type="checkbox"
-              />
-              반복재생
-            </label>
-            <label className="repeat-toggle">
-              <input
-                checked={returnToStartOnEnd}
-                onChange={(event) => onSetReturnToStartOnEnd(event.target.checked)}
-                type="checkbox"
-              />
-              종료 후 처음으로
-            </label>
+      <SidebarSection title="프로젝트">
+        <button disabled={!canSaveProject} onClick={onSaveBsvProject} type="button">
+          프로젝트 저장
+        </button>
+        <button onClick={onOpenBsvProject} type="button">프로젝트 열기</button>
+        <button
+          className="session-end-button"
+          disabled={!canEndSession}
+          onClick={onEndClassSession}
+          type="button"
+        >
+          수업 종료
+        </button>
+      </SidebarSection>
+
+      <SidebarSection defaultOpen title="연주">
+        <div className="autoplay-controls">
+          <label className="repeat-toggle">
+            <input
+              checked={isRepeatEnabled}
+              onChange={(event) => onSetRepeatEnabled(event.target.checked)}
+              type="checkbox"
+            />
+            반복재생
+          </label>
+          <label className="repeat-toggle">
+            <input
+              checked={returnToStartOnEnd}
+              onChange={(event) => onSetReturnToStartOnEnd(event.target.checked)}
+              type="checkbox"
+            />
+            종료 후 처음으로
+          </label>
+          <div className="sidebar-button-grid">
             <button
               disabled={isAutoPlaying || measureTotal === 0}
               onClick={onStartAutoplay}
@@ -4293,30 +4250,59 @@ function Sidebar({
               ■ Stop
             </button>
           </div>
-          <form className="global-tempo-editor" onSubmit={submitGlobalBpm}>
-            <label htmlFor="global-bpm-input">전체 템포</label>
-            <div className="global-tempo-actions">
-              <input
-                id="global-bpm-input"
-                inputMode="decimal"
-                min="1"
-                onChange={(event) => setGlobalBpmInput(event.target.value)}
-                step="1"
-                type="number"
-                value={globalBpmInput}
-              />
-              <span aria-hidden="true">BPM</span>
-              <button disabled={measureTotal === 0} type="submit">
-                전체 적용
-              </button>
-            </div>
-            <small>모든 마디의 BPM에 적용됩니다.</small>
-          </form>
-        </>
-      )}
+        </div>
+        <form className="global-tempo-editor" onSubmit={submitGlobalBpm}>
+          <label htmlFor="global-bpm-input">전체 템포</label>
+          <div className="global-tempo-actions">
+            <input
+              id="global-bpm-input"
+              inputMode="decimal"
+              min="1"
+              onChange={(event) => setGlobalBpmInput(event.target.value)}
+              step="1"
+              type="number"
+              value={globalBpmInput}
+            />
+            <span aria-hidden="true">BPM</span>
+            <button disabled={measureTotal === 0} type="submit">전체 적용</button>
+          </div>
+          <small>모든 마디의 BPM에 적용됩니다.</small>
+        </form>
+      </SidebarSection>
 
-      {canEdit && mode === REGISTER_MODE && selectedMeasure && (
-        <>
+      <SidebarSection defaultOpen title="현재 마디">
+        <div className="current-measure-display" aria-live="polite">
+          <span>현재 마디</span>
+          <strong>{measureTotal > 0 ? measureIndex + 1 : 0} / {measureTotal}</strong>
+        </div>
+        {mode === REGISTER_MODE ? (
+          <div className="sidebar-button-grid">
+            <button onClick={() => onGoToPage(pageNumber - 1)} type="button">◀ 페이지</button>
+            <button onClick={() => onGoToPage(pageNumber + 1)} type="button">▶ 페이지</button>
+          </div>
+        ) : (
+          <>
+            <button onClick={() => onGoToMeasure(0)} type="button">⏮ 처음</button>
+            <div className="sidebar-button-grid">
+              <button onClick={onGoToPreviousPlaybackStep} type="button">◀ 마디</button>
+              <button onClick={onAdvancePlayback} type="button">▶ 마디</button>
+            </div>
+            <form className="measure-jump-form" onSubmit={submitMeasureNumber}>
+              <label htmlFor="measure-number-input">이동할 마디</label>
+              <input
+                id="measure-number-input"
+                inputMode="numeric"
+                max={measureTotal || undefined}
+                min="1"
+                onChange={(event) => setMeasureNumberInput(event.target.value)}
+                type="number"
+                value={measureNumberInput}
+              />
+              <button disabled={measureTotal === 0} type="submit">이동</button>
+            </form>
+          </>
+        )}
+        {mode === REGISTER_MODE && selectedMeasure && (
           <div className="measure-timing-editor">
             <strong>현재 마디 템포</strong>
             <p>선택 마디 : {selectedMeasureIndex + 1}</p>
@@ -4343,6 +4329,15 @@ function Sidebar({
               />
             </label>
           </div>
+        )}
+        <div className="sidebar-status">
+          <span>현재 페이지</span>
+          <strong>{pageNumber} / {totalPages}</strong>
+        </div>
+      </SidebarSection>
+
+      <SidebarSection title="악보 진행">
+        {mode === REGISTER_MODE && selectedMeasure ? (
           <div className="navigation-marker-editor">
             <strong>악보 이동 Marker</strong>
             <span>선택 마디 : {selectedMeasureIndex + 1}</span>
@@ -4351,16 +4346,19 @@ function Sidebar({
                 const isActive = selectedMeasure.navigationMarkers?.some(
                   (marker) => marker.type === option.type,
                 );
+                const accessibleLabel = option.description
+                  ? `${option.label} ${option.description}`
+                  : option.label;
 
                 return (
                   <button
+                    aria-label={accessibleLabel}
                     aria-pressed={isActive}
                     className={isActive ? 'active' : ''}
                     disabled={isAutoPlaying}
                     key={option.type}
-                    onClick={() =>
-                      onToggleSelectedMeasureNavigationMarker(option.type)
-                    }
+                    onClick={() => onToggleSelectedMeasureNavigationMarker(option.type)}
+                    title={accessibleLabel}
                     type="button"
                   >
                     {option.label}
@@ -4374,24 +4372,73 @@ function Sidebar({
               </small>
             )}
           </div>
-        </>
-      )}
+        ) : (
+          <small className="sidebar-help">등록모드에서 마디를 선택하세요.</small>
+        )}
+      </SidebarSection>
 
-      {mode === REGISTER_MODE && (
-        <div className="sidebar-status">
-          <span>현재 마디</span>
-          <strong>
-            {measureTotal > 0 ? measureIndex + 1 : 0} / {measureTotal}
-          </strong>
+      <SidebarSection title="오디오">
+        <div className="audio-settings-editor">
+          <label>
+            음원 링크
+            <input
+              onChange={(event) => onUpdateAudioSettings({ url: event.target.value })}
+              placeholder="https://..."
+              type="url"
+              value={audioSettings.url}
+            />
+          </label>
+          <label>
+            시작 오프셋(초)
+            <input
+              min="0"
+              onChange={(event) =>
+                onUpdateAudioSettings({ startOffsetSeconds: event.target.value })
+              }
+              step="0.1"
+              type="number"
+              value={audioSettings.startOffsetSeconds}
+            />
+          </label>
+          <button disabled={!canOpenAudioLink} onClick={onOpenAudioLink} type="button">
+            링크 열기
+          </button>
         </div>
-      )}
+        <div className="shared-audio-editor">
+          <strong>공용 로컬 음원</strong>
+          <span title={sharedAudioMetadata?.fileName || ''}>
+            {sharedAudioMetadata?.fileName || '등록된 음원 없음'}
+          </span>
+          <button
+            disabled={sharedAudioMutationState.status === 'working'}
+            onClick={onOpenSharedAudioPicker}
+            type="button"
+          >
+            {sharedAudioMetadata ? '음원 교체' : '음원 추가'}
+          </button>
+          <button
+            disabled={
+              !sharedAudioMetadata || sharedAudioMutationState.status === 'working'
+            }
+            onClick={onRemoveSharedAudio}
+            type="button"
+          >
+            음원 제거
+          </button>
+          {sharedAudioMutationState.message && (
+            <small className={sharedAudioMutationState.status}>
+              {sharedAudioMutationState.message}
+            </small>
+          )}
+        </div>
+      </SidebarSection>
 
-      <div className="sidebar-status">
-        <span>현재 페이지</span>
-        <strong>
-          {pageNumber} / {totalPages}
-        </strong>
-      </div>
+      {import.meta.env.DEV && (
+        <SidebarSection title="개발자 도구">
+          <button onClick={onSaveJson} type="button">JSON 저장</button>
+          <button onClick={onOpenJson} type="button">JSON 불러오기</button>
+        </SidebarSection>
+      )}
     </aside>
   );
 }

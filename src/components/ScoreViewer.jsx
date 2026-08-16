@@ -31,6 +31,8 @@ const REGISTER_MODE = 'register';
 const PDF_WIDTH_SCALE = 1.5;
 const PAGE_FIT_PADDING = 24;
 const DEFAULT_PAGE_ASPECT_RATIO = 0.707;
+const PDF_PAGE_VIEW = 'page';
+const PDF_WIDTH_VIEW = 'width';
 
 const RESIZE_HANDLES = [
   {
@@ -134,7 +136,6 @@ function ScoreViewer({
   displayMeasureIndex,
   displayPageNumber,
   draggedMeasureIndex,
-  isStudentPageView,
   measures,
   mode,
   onAddAnnotationStroke,
@@ -150,13 +151,13 @@ function ScoreViewer({
   onStartMeasureResize,
   onTotalPagesChange,
   pdfUrl,
+  pdfViewMode,
   renderResetVersion,
   resizedMeasureIndex,
   selectedMeasureIndex,
   showNavigationMarkers = false,
   showAudioMeasureTargets = false,
   studentPdfSource,
-  studentViewMode,
   viewerMode,
 }) {
   const pdfViewerRef = useRef(null);
@@ -202,14 +203,20 @@ function ScoreViewer({
       Math.max(100, viewerSize.height - PAGE_FIT_PADDING) * pageAspectRatio,
     ),
   );
-  const renderedPdfPageWidth = isStudentPageView ? fittedPdfPageWidth : zoomPdfPageWidth;
+  const widthFitPdfPageWidth = Math.max(100, viewerSize.width - PAGE_FIT_PADDING);
+  const isPageFitView = pdfViewMode === PDF_PAGE_VIEW;
+  const renderedPdfPageWidth = isPageFitView
+    ? fittedPdfPageWidth
+    : pdfViewMode === PDF_WIDTH_VIEW
+      ? widthFitPdfPageWidth
+      : zoomPdfPageWidth;
   const surfaceIdentity = getSurfaceIdentity({
     pageNumber: pdfPageNumber,
     pdfIdentity: pdfUrl,
     renderResetVersion,
     renderWidth: renderedPdfPageWidth,
     studentPdfSource,
-    studentViewMode,
+    studentViewMode: pdfViewMode,
     viewerMode,
   });
 
@@ -321,7 +328,7 @@ function ScoreViewer({
         scrollLeft: pdfViewerRef.current?.scrollLeft ?? null,
         scrollTop: pdfViewerRef.current?.scrollTop ?? null,
         studentPdfSource,
-        studentViewMode,
+        studentViewMode: pdfViewMode,
         totalPages: documentState.totalPages,
         viewMode: viewerMode,
       };
@@ -340,7 +347,7 @@ function ScoreViewer({
       renderedPageNumber,
       shouldRenderHighlights,
       studentPdfSource,
-      studentViewMode,
+      pdfViewMode,
       surfaceIdentity,
       viewerMode,
     ],
@@ -566,7 +573,7 @@ function ScoreViewer({
     measureViewer,
     renderResetVersion,
     studentPdfSource,
-    studentViewMode,
+    pdfViewMode,
     viewerMode,
   ]);
 
@@ -619,7 +626,7 @@ function ScoreViewer({
 
     const nextCurrentMeasure = measuresRef.current[displayMeasureIndex];
 
-    if (isStudentPageView) {
+    if (isPageFitView) {
       pdfViewerRef.current?.scrollTo({ left: 0, top: 0, behavior: 'auto' });
       scrolledPageNumberRef.current = pdfPageNumber;
       return;
@@ -653,7 +660,7 @@ function ScoreViewer({
     calculateHighlightRect,
     currentMeasureMatchesPage,
     displayMeasureIndex,
-    isStudentPageView,
+    isPageFitView,
     pdfPageNumber,
     readySurface?.height,
     readySurface?.identity,
@@ -696,7 +703,7 @@ function ScoreViewer({
     pdfPageNumber,
     viewerMode,
     studentPdfSource,
-    studentViewMode,
+    pdfViewMode,
     renderResetVersion,
   ].join('|');
 
@@ -711,7 +718,7 @@ function ScoreViewer({
         >
           {documentReady && (
             <div
-              className={`pdf-page-frame ${isStudentPageView ? 'fit-page-wrapper' : ''}`}
+              className={`pdf-page-frame ${isPageFitView ? 'fit-page-wrapper' : ''}`}
               ref={pdfPageFrameRef}
             >
               <div className="pdf-canvas-stack" ref={pdfCanvasStackRef}>
