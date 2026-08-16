@@ -4,6 +4,7 @@
 
 - `measures-explicit-basis.json`: `coordinateWidth`와 `coordinateHeight`가 있는 합성 데이터
 - `measures-legacy-no-basis.json`: 좌표 기준 metadata가 없는 합성 legacy 데이터
+- `lyricRecognitionTargetItems.js`: 실제 악보의 가사 오염 회귀에 필요한 정규화 text-item metadata만 담은 최소 fixture
 
 두 파일은 좌표 변환의 자동 테스트만을 위한 최소 데이터다. 실제 악보 배치나 기존
 수업 데이터가 정확히 복원된다는 근거로 사용하지 않는다. 실제 iPad 검증 전에는

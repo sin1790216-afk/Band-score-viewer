@@ -1422,6 +1422,11 @@ function App() {
 
     try {
       const result = await recognizeLyricsInPdf(pdfBlob, measuresRef.current, {
+        onPageDiagnostics: (diagnostics) => {
+          if (import.meta.env.DEV) {
+            console.info('[LyricRecognitionRuntime]', diagnostics);
+          }
+        },
         onProgress: ({ currentPage, totalPages: recognitionTotalPages }) => {
           setLyricRecognitionState({
             candidates: [],

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  analyzeLyricCandidates,
   applyLyricCandidates,
   createLyricCandidates,
   getSystemLyricRegion,
@@ -9,6 +10,12 @@ import {
   isLyricText,
   normalizePdfTextItems,
 } from '../src/utils/lyricRecognition.js';
+import {
+  TARGET_LYRIC_SYSTEM,
+  TARGET_LYRIC_TEXT_ITEMS,
+  TARGET_MEASURE,
+  TARGET_NEXT_SYSTEM,
+} from './fixtures/lyricRecognitionTargetItems.js';
 import {
   exportMeasuresJson,
   importMeasuresJson,
@@ -40,20 +47,49 @@ const MEASURES = [
   { height: 0.4, id: 'm2', lyric: '', page: 1, width: 0.4, x: 0.5, y: 0.1 },
 ];
 
-function text(textValue, x, baselineY, width = 0.02, height = 0.02) {
-  return { baselineY, height, text: textValue, width, x, y: baselineY - height };
+function text(
+  textValue,
+  x,
+  baselineY,
+  width = 0.02,
+  height = 0.02,
+  metadata = {},
+) {
+  return {
+    baselineY,
+    height,
+    text: textValue,
+    width,
+    x,
+    y: baselineY - height,
+    ...metadata,
+  };
 }
 
 test('PDF text item을 페이지 좌상단 기준 정규화 좌표로 변환한다', () => {
   const [item] = normalizePdfTextItems(
-    [{ str: '가사', transform: [10, 0, 0, 10, 250, 500], width: 200 }],
+    [
+      {
+        fontName: 'lyric-font',
+        str: '가사',
+        transform: [10, 0, 0, 10, 250, 500],
+        width: 200,
+      },
+    ],
     { height: 1000, transform: [1, 0, 0, -1, 0, 1000], width: 1000 },
+    { 'lyric-font': { fontFamily: 'monospace' } },
+    1,
   );
 
   assert.deepEqual(item, {
     baselineY: 0.5,
+    fontFamily: 'monospace',
+    fontName: 'lyric-font',
     height: 0.01,
+    page: 1,
+    sourceIndex: 0,
     text: '가사',
+    transform: [10, 0, 0, 10, 250, 500],
     width: 0.2,
     x: 0.25,
     y: 0.49,
@@ -264,6 +300,114 @@ test('오선 위 코드와 박자 숫자, 오선 안 기호는 가사 후보에�
   });
 
   assert.deepEqual(candidates, []);
+});
+
+test('notation font 사용 패턴으로 lyric 위치의 악보 glyph를 제외한다', () => {
+  const result = analyzeLyricCandidates({
+    measures: [{ ...MEASURES[0], measureIndex: 0 }],
+    systems: [SYSTEM],
+    textItems: [
+      text('œ', 0.15, 0.23, 0.02, 0.02, { fontName: 'notation' }),
+      text('q', 0.2, 0.24, 0.02, 0.02, { fontName: 'notation' }),
+      text('& b', 0.25, 0.32, 0.04, 0.02, { fontName: 'notation' }),
+      text('정상 가사', 0.32, 0.32, 0.08, 0.02, { fontName: 'lyric' }),
+    ],
+  });
+
+  assert.equal(result.candidates[0].lyric, '정상 가사');
+  assert.equal(result.stats.rejectedMusicGlyphCount, 3);
+  assert.equal(
+    result.diagnostics[0].rejectedReasonCounts['music-glyph-font'],
+    1,
+  );
+});
+
+test('staff 아래의 chord font cluster는 제외하고 같은 영역의 영문 가사는 유지한다', () => {
+  const result = analyzeLyricCandidates({
+    measures: [{ ...MEASURES[0], measureIndex: 0 }],
+    systems: [SYSTEM],
+    textItems: [
+      text('Cm', 0.15, 0.31, 0.03, 0.02, { fontName: 'chord' }),
+      text('Bb7', 0.22, 0.31, 0.03, 0.02, { fontName: 'chord' }),
+      text('Eb/Bb', 0.29, 0.31, 0.05, 0.02, { fontName: 'chord' }),
+      text('C#7(b9)', 0.36, 0.31, 0.06, 0.02, { fontName: 'chord' }),
+      text('Come with me', 0.15, 0.37, 0.12, 0.02, { fontName: 'english' }),
+    ],
+  });
+
+  assert.equal(result.candidates[0].lyric, 'Come with me');
+  assert.equal(result.stats.rejectedChordCount, 4);
+});
+
+test('실제 target metadata에서 다음 system chord, glyph와 lyric이 섞이지 않는다', () => {
+  const [candidate] = createLyricCandidates({
+    measures: [TARGET_MEASURE],
+    systems: [TARGET_LYRIC_SYSTEM, TARGET_NEXT_SYSTEM],
+    textItems: TARGET_LYRIC_TEXT_ITEMS,
+  });
+
+  assert.equal(candidate.lyric, '눈 물짓－ 던 그 대의－말');
+  assert.equal(candidate.lyric.includes('& b'), false);
+  assert.equal(candidate.lyric.includes('그 대가'), false);
+  assert.equal(candidate.lyric.includes('/D'), false);
+});
+
+test('큰 title metadata와 page number는 lyric candidate가 되지 않는다', () => {
+  const result = analyzeLyricCandidates({
+    measures: [{ ...MEASURES[0], measureIndex: 0 }],
+    systems: [SYSTEM],
+    textItems: [
+      text('그대만 있다면', 0.15, 0.32, 0.15, 0.09, {
+        fontName: 'title',
+      }),
+      text('12', 0.35, 0.32, 0.02, 0.02, { fontName: 'number' }),
+    ],
+  });
+
+  assert.deepEqual(result.candidates, []);
+  assert.ok(result.stats.rejectedMetadataCount >= 2);
+});
+
+test('lyric character purity가 낮은 isolated candidate는 자동 적용 후보에서 제외한다', () => {
+  const result = analyzeLyricCandidates({
+    measures: [{ ...MEASURES[0], measureIndex: 0 }],
+    systems: [SYSTEM],
+    textItems: [text('A---___...', 0.15, 0.32, 0.1, 0.02)],
+  });
+
+  assert.deepEqual(result.candidates, []);
+  assert.equal(result.stats.purityRejectCount, 1);
+  assert.equal(result.diagnostics[0].rejectedReasonCounts['low-purity'], 1);
+});
+
+test('system-level baseline lane identity는 인접 Measure에서 뒤집히지 않는다', () => {
+  const candidates = createLyricCandidates({
+    measures: MEASURES.map((measure, measureIndex) => ({
+      ...measure,
+      measureIndex,
+    })),
+    systems: [SYSTEM, NEXT_SYSTEM],
+    textItems: [
+      text('2절 뒤', 0.56, 0.42),
+      text('1절 앞', 0.15, 0.32),
+      text('2절 앞', 0.15, 0.42),
+      text('1절 뒤', 0.56, 0.32),
+    ],
+  });
+
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.lyric),
+    ['1절 앞\n2절 앞', '1절 뒤\n2절 뒤'],
+  );
+  assert.deepEqual(
+    candidates.map((candidate) =>
+      candidate.lyricGeometry.lines.map((line) => line.lineIndex),
+    ),
+    [
+      [0, 1],
+      [0, 1],
+    ],
+  );
 });
 
 test('명확한 chord와 분리된 suffix는 제외하고 일반 영문 가사는 유지한다', () => {
