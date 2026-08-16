@@ -34,6 +34,7 @@ const MEASURE = {
   height: 0.1,
   id: 'measure-bsv-1',
   lyric: '첫 번째 줄\n두 번째 줄',
+  navigationMarkers: [{ type: 'segno' }],
   page: 2,
   width: 0.2,
   x: 0.25,
@@ -139,6 +140,27 @@ test('.bsv preserves normalized coordinates, BPM, Beats, and multiline lyrics', 
   assert.equal(measure.bpm, 90);
   assert.equal(measure.beats, 3);
   assert.equal(measure.lyric, '첫 번째 줄\n두 번째 줄');
+  assert.deepEqual(measure.navigationMarkers, [{ type: 'segno' }]);
+});
+
+test('a legacy .bsv without navigation markers receives an empty marker list', async () => {
+  const { document } = await createEncodedProject();
+
+  delete document.project.measures[0].navigationMarkers;
+  const decoded = decodeBsvProject(JSON.stringify(document));
+
+  assert.deepEqual(decoded.projectState.measures[0].navigationMarkers, []);
+});
+
+test('.bsv rejects malformed navigation markers', async () => {
+  const { document } = await createEncodedProject();
+
+  document.project.measures[0].navigationMarkers = [{ type: 'unknown-marker' }];
+
+  expectBsvError(
+    () => decodeBsvProject(JSON.stringify(document)),
+    'MEASURE_NAVIGATION_MARKERS_INVALID',
+  );
 });
 
 test('.bsv preserves a lyric applied from an automatic recognition candidate', async () => {

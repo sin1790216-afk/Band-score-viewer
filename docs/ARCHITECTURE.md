@@ -65,6 +65,12 @@ canonical `x/y/width/height`로 저장된다.
 
 `src/App.jsx`는 이 상태들의 UI 이벤트와 파일·Socket·타이머 부수효과를 조율한다. `src/components/ScoreViewer.jsx`는 `displayPageNumber` 하나를 입력받아 `react-pdf` 렌더, canvas/overlay DOM, 좌표 변환, 렌더 완료 상태, 크기 관찰과 자동 스크롤을 담당한다.
 
+물리 Measure 배열은 Project State에서 PDF 순서를 유지한다. `src/utils/playbackResolver.js`는
+Measure의 수동 Navigation Marker를 읽어 현재 playback run의 다음 Physical Measure를 결정하는
+순수 로직이다. Repeat End와 D.S.는 run·cycle마다 한 번만 실행하며, 기존 사이드바 `반복재생`은
+곡 끝에서 새 cycle을 시작하는 별도 Session 옵션이다. App은 Resolver가 반환한 마디만 기존
+`sync:update` 경로로 발행하므로 Student와 Vocal은 Resolver를 독립 실행하지 않는다.
+
 Vocal Phrase는 별도 Project 데이터가 아니라 `measures`에서 계산하는 파생 데이터다. PDF
 자동인식은 정규화된 lyric line span과 system 범위를 runtime `lyricGeometry`로 Measure에
 연결한다. Phrase 계산은 PDF text geometry로 묶은 lyric baseline이 바뀌면 먼저 분리하고,

@@ -44,6 +44,17 @@ import {
 } from './utils/measureCoordinates.js';
 import { resizeCanonicalMeasure } from './utils/measureResize.js';
 import {
+  getNavigationMarkerValidation,
+  NAVIGATION_MARKER_OPTIONS,
+  toggleNavigationMarker,
+} from './utils/navigationMarkers.js';
+import {
+  advancePlaybackProgression as advancePlaybackProgressionState,
+  createPlaybackProgression,
+  isPlaybackProgressionAtMeasure,
+  rewindPlaybackProgression,
+} from './utils/playbackResolver.js';
+import {
   createMeasureRecognitionRuntimeDiagnostics,
   isCurrentMeasureRecognitionResult,
   prepareRecognizedMeasures,
@@ -279,6 +290,7 @@ function App() {
   const socketRef = useRef(null);
   const autoplayTimerRef = useRef(null);
   const autoplayTimerVersionRef = useRef(0);
+  const playbackProgressionRef = useRef(null);
   const audioSettingsRef = useRef({ ...DEFAULT_AUDIO_SETTINGS });
   const projectDefaultBpmRef = useRef(DEFAULT_MEASURE.bpm);
   const isRepeatEnabledRef = useRef(false);
@@ -604,6 +616,10 @@ function App() {
     [displayMeasureIndex, languagePhrases, measures],
   );
   const selectedMeasure = measures[selectedMeasureIndex] || null;
+  const navigationMarkerValidation = useMemo(
+    () => getNavigationMarkerValidation(measures),
+    [measures],
+  );
   const teacherSharedAudioAnchorMeasureIndex =
     getAudioTimelineAnchorMeasureIndex(
       sharedAudioMetadata?.timelineAnchor,
@@ -1814,6 +1830,24 @@ function App() {
     });
   }
 
+  function toggleSelectedMeasureNavigationMarker(type) {
+    if (!canEdit || isAutoPlaying || selectedMeasureIndex < 0 || !selectedMeasure) {
+      return;
+    }
+
+    dispatchMeasureUpdate({
+      type: PROJECT_ACTIONS.UPDATE_MEASURE,
+      index: selectedMeasureIndex,
+      changes: {
+        navigationMarkers: toggleNavigationMarker(
+          selectedMeasure.navigationMarkers,
+          type,
+        ),
+      },
+    });
+    playbackProgressionRef.current = null;
+  }
+
   function applyTeacherGlobalBpm(value) {
     if (!canEdit || measures.length === 0) return;
 
@@ -2463,11 +2497,16 @@ function App() {
   }
 
   function goToMeasure(nextMeasureIndex) {
-    const nextMeasure = measures[nextMeasureIndex];
+    const nextMeasure = measuresRef.current[nextMeasureIndex];
 
     if (!nextMeasure) return;
 
-    if (nextMeasure.page !== pageNumber) {
+    playbackProgressionRef.current = createPlaybackProgression(
+      measuresRef.current,
+      nextMeasureIndex,
+    );
+
+    if (nextMeasure.page !== pageNumberRef.current) {
       setSyncedPageNumber(nextMeasure.page);
     }
 
@@ -2489,19 +2528,118 @@ function App() {
 
   function stopAutoplay() {
     clearAutoplayTimer();
+    playbackProgressionRef.current = null;
     setAutoPlaying(false);
   }
 
-  function goToMeasureFromAutoplay(nextMeasureIndex) {
+  function syncToPlaybackStep(playbackStep) {
+    if (!playbackStep) return -1;
+
+    const nextMeasureIndex = measuresRef.current.findIndex(
+      (measure) => measure.id === playbackStep.measureId,
+    );
     const nextMeasure = measuresRef.current[nextMeasureIndex];
 
-    if (!nextMeasure) return;
+    if (!nextMeasure) return -1;
 
     if (nextMeasure.page !== pageNumberRef.current) {
       setSyncedPageNumber(nextMeasure.page);
     }
 
     setSyncedMeasureIndex(nextMeasureIndex);
+    return nextMeasureIndex;
+  }
+
+  function resetPlaybackProgression(nextMeasureIndex) {
+    const nextProgression = createPlaybackProgression(
+      measuresRef.current,
+      nextMeasureIndex,
+    );
+
+    playbackProgressionRef.current = nextProgression;
+    return nextProgression;
+  }
+
+  function getPlaybackProgressionAtCurrentMeasure() {
+    const currentMeasure = measuresRef.current[measureIndexRef.current];
+    const currentProgression = playbackProgressionRef.current;
+
+    if (
+      isPlaybackProgressionAtMeasure(currentProgression, currentMeasure)
+    ) {
+      return currentProgression;
+    }
+
+    return resetPlaybackProgression(measureIndexRef.current);
+  }
+
+  function advancePlayback() {
+    const currentProgression = getPlaybackProgressionAtCurrentMeasure();
+    const result = advancePlaybackProgressionState(
+      currentProgression,
+      measuresRef.current,
+      { loopAtEnd: isRepeatEnabledRef.current },
+    );
+
+    playbackProgressionRef.current = result.progression;
+
+    if (!result.didMove || !result.progression.runState.currentStep) {
+      return {
+        ended: result.progression.runState.ended,
+        measureIndex: measureIndexRef.current,
+      };
+    }
+
+    const nextMeasureIndex = syncToPlaybackStep(
+      result.progression.runState.currentStep,
+    );
+
+    return {
+      ended: nextMeasureIndex < 0,
+      measureIndex: nextMeasureIndex,
+    };
+  }
+
+  function advanceManualPlayback() {
+    if (!canEdit || measuresRef.current.length === 0) return;
+
+    if (isAutoPlaying) clearAutoplayTimer();
+
+    const result = advancePlayback();
+
+    if (result.ended) {
+      if (isAutoPlaying) finishAutoplayAtEnd();
+      return;
+    }
+
+    if (isAutoPlaying) scheduleNextAutoplayStep(result.measureIndex);
+  }
+
+  function goToPreviousPlaybackStep() {
+    if (!canEdit || measuresRef.current.length === 0) return;
+
+    if (isAutoPlaying) clearAutoplayTimer();
+
+    const currentProgression = getPlaybackProgressionAtCurrentMeasure();
+    const result = rewindPlaybackProgression(currentProgression);
+
+    if (!result.didMove || !result.progression?.runState?.currentStep) {
+      if (measureIndexRef.current > 0) {
+        goToMeasure(measureIndexRef.current - 1);
+      } else if (isAutoPlaying) {
+        scheduleNextAutoplayStep(measureIndexRef.current);
+      }
+      return;
+    }
+
+    playbackProgressionRef.current = result.progression;
+    const previousMeasureIndex = syncToPlaybackStep(
+      result.progression.runState.currentStep,
+    );
+
+    if (isAutoPlaying && previousMeasureIndex >= 0) {
+      scheduleNextAutoplayStep(previousMeasureIndex);
+    }
   }
 
   function finishAutoplayAtEnd() {
@@ -2509,7 +2647,8 @@ function App() {
     setAutoPlaying(false);
 
     if (returnToStartOnEndRef.current) {
-      goToMeasureFromAutoplay(0);
+      const firstProgression = resetPlaybackProgression(0);
+      syncToPlaybackStep(firstProgression.runState.currentStep);
     }
   }
 
@@ -2528,29 +2667,14 @@ function App() {
     autoplayTimerRef.current = window.setTimeout(() => {
       if (timerVersion !== autoplayTimerVersionRef.current) return;
 
-      const isLastMeasure = currentIndex >= measuresRef.current.length - 1;
+      const result = advancePlayback();
 
-      if (isLastMeasure && !isRepeatEnabledRef.current) {
+      if (result.ended) {
         finishAutoplayAtEnd();
         return;
       }
 
-      const nextMeasureIndex = isLastMeasure ? 0 : currentIndex + 1;
-
-      goToMeasureFromAutoplay(nextMeasureIndex);
-
-      if (nextMeasureIndex >= measuresRef.current.length - 1 && !isRepeatEnabledRef.current) {
-        if (returnToStartOnEndRef.current) {
-          scheduleNextAutoplayStep(nextMeasureIndex);
-          return;
-        }
-
-        clearAutoplayTimer();
-        setAutoPlaying(false);
-        return;
-      }
-
-      scheduleNextAutoplayStep(nextMeasureIndex);
+      scheduleNextAutoplayStep(result.measureIndex);
     }, getMeasureDurationMs(currentAutoplayMeasure));
   }
 
@@ -2558,7 +2682,15 @@ function App() {
     if (!canEdit || isAutoPlaying || measures.length === 0) return;
 
     const startMeasureIndex = Math.min(measureIndexRef.current, measures.length - 1);
+    const currentMeasure = measuresRef.current[startMeasureIndex];
+    const currentProgression = playbackProgressionRef.current;
 
+    if (
+      !isPlaybackProgressionAtMeasure(currentProgression, currentMeasure) ||
+      currentProgression.runState.ended
+    ) {
+      resetPlaybackProgression(startMeasureIndex);
+    }
     setAutoPlaying(true);
     scheduleNextAutoplayStep(startMeasureIndex);
   }
@@ -3623,6 +3755,8 @@ function App() {
             fileInputRef={fileInputRef}
             isAutoPlaying={isAutoPlaying}
             isRepeatEnabled={isRepeatEnabled}
+            navigationMarkerOptions={NAVIGATION_MARKER_OPTIONS}
+            navigationMarkerValidation={navigationMarkerValidation}
             measureRecognitionState={measureRecognitionState}
             lyricRecognitionState={lyricRecognitionState}
             languagePhraseMutationState={languagePhraseMutationState}
@@ -3648,8 +3782,13 @@ function App() {
             onSetMode={setMode}
             onSetRepeatEnabled={setRepeatEnabled}
             onSetReturnToStartOnEnd={setReturnToStartOnEnd}
+            onToggleSelectedMeasureNavigationMarker={
+              toggleSelectedMeasureNavigationMarker
+            }
             onGoToPage={goToPage}
             onGoToMeasure={goToMeasure}
+            onGoToPreviousPlaybackStep={goToPreviousPlaybackStep}
+            onAdvancePlayback={advanceManualPlayback}
             onEndClassSession={endClassSession}
             onOpenLyricEditor={openLyricEditor}
             onOpenAudioLink={openAudioLink}
@@ -3736,6 +3875,7 @@ function App() {
             renderResetVersion={pdfRenderResetVersion}
             resizedMeasureIndex={resizedMeasureIndex}
             selectedMeasureIndex={selectedMeasureIndex}
+            showNavigationMarkers={canEdit}
             showAudioMeasureTargets={
               canEditStudentAudioTimeline && isStudentAudioPanelOpen
             }
@@ -3810,6 +3950,8 @@ function Sidebar({
   isAutoPlaying,
   isRepeatEnabled,
   jsonInputRef,
+  navigationMarkerOptions,
+  navigationMarkerValidation,
   measureIndex,
   measureRecognitionState,
   lyricRecognitionState,
@@ -3820,8 +3962,10 @@ function Sidebar({
   onApplyRecognizedLyrics,
   onCancelRecognizedLyrics,
   onEndClassSession,
+  onAdvancePlayback,
   onGoToMeasure,
   onGoToPage,
+  onGoToPreviousPlaybackStep,
   onLoadJson,
   onLoadBsvProject,
   onOpenAudioLink,
@@ -3842,6 +3986,7 @@ function Sidebar({
   onSetReturnToStartOnEnd,
   onStartAutoplay,
   onStopAutoplay,
+  onToggleSelectedMeasureNavigationMarker,
   onUpdateAudioSettings,
   onUpdateSelectedMeasureTiming,
   pageNumber,
@@ -4100,8 +4245,8 @@ function Sidebar({
                 </strong>
               </div>
               <button onClick={() => onGoToMeasure(0)}>⏮ 처음</button>
-              <button onClick={() => onGoToMeasure(measureIndex - 1)}>◀ 마디</button>
-              <button onClick={() => onGoToMeasure(measureIndex + 1)}>▶ 마디</button>
+              <button onClick={onGoToPreviousPlaybackStep}>◀ 마디</button>
+              <button onClick={onAdvancePlayback}>▶ 마디</button>
               <form className="measure-jump-form" onSubmit={submitMeasureNumber}>
                 <label htmlFor="measure-number-input">이동할 마디</label>
                 <input
@@ -4171,32 +4316,65 @@ function Sidebar({
       )}
 
       {canEdit && mode === REGISTER_MODE && selectedMeasure && (
-        <div className="measure-timing-editor">
-          <strong>현재 마디 템포</strong>
-          <p>선택 마디 : {selectedMeasureIndex + 1}</p>
-          <label>
-            BPM
-            <input
-              min="1"
-              onChange={(event) =>
-                onUpdateSelectedMeasureTiming('bpm', event.target.value)
-              }
-              type="number"
-              value={selectedMeasure.bpm}
-            />
-          </label>
-          <label>
-            Beats
-            <input
-              min="1"
-              onChange={(event) =>
-                onUpdateSelectedMeasureTiming('beats', event.target.value)
-              }
-              type="number"
-              value={selectedMeasure.beats}
-            />
-          </label>
-        </div>
+        <>
+          <div className="measure-timing-editor">
+            <strong>현재 마디 템포</strong>
+            <p>선택 마디 : {selectedMeasureIndex + 1}</p>
+            <label>
+              BPM
+              <input
+                min="1"
+                onChange={(event) =>
+                  onUpdateSelectedMeasureTiming('bpm', event.target.value)
+                }
+                type="number"
+                value={selectedMeasure.bpm}
+              />
+            </label>
+            <label>
+              Beats
+              <input
+                min="1"
+                onChange={(event) =>
+                  onUpdateSelectedMeasureTiming('beats', event.target.value)
+                }
+                type="number"
+                value={selectedMeasure.beats}
+              />
+            </label>
+          </div>
+          <div className="navigation-marker-editor">
+            <strong>악보 이동 Marker</strong>
+            <span>선택 마디 : {selectedMeasureIndex + 1}</span>
+            <div className="navigation-marker-actions">
+              {navigationMarkerOptions.map((option) => {
+                const isActive = selectedMeasure.navigationMarkers?.some(
+                  (marker) => marker.type === option.type,
+                );
+
+                return (
+                  <button
+                    aria-pressed={isActive}
+                    className={isActive ? 'active' : ''}
+                    disabled={isAutoPlaying}
+                    key={option.type}
+                    onClick={() =>
+                      onToggleSelectedMeasureNavigationMarker(option.type)
+                    }
+                    type="button"
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+            {navigationMarkerValidation.message && (
+              <small className="navigation-marker-warning" role="status">
+                {navigationMarkerValidation.message}
+              </small>
+            )}
+          </div>
+        </>
       )}
 
       {mode === REGISTER_MODE && (

@@ -7,6 +7,7 @@ import {
   DEFAULT_AUDIO_SETTINGS,
   MAX_AUDIO_URL_LENGTH,
 } from '../utils/audioSettings.js';
+import { isValidNavigationMarkers } from '../utils/navigationMarkers.js';
 
 export const BSV_FORMAT = 'band-score-viewer-project';
 export const BSV_SCHEMA_VERSION = 1;
@@ -94,6 +95,13 @@ function assertValidMeasure(measure, index, measureIds) {
 
   if (typeof measure.lyric !== 'string') {
     fail('MEASURE_LYRIC_INVALID', `${index + 1}번 마디의 가사가 올바르지 않습니다.`);
+  }
+
+  if (!isValidNavigationMarkers(measure.navigationMarkers)) {
+    fail(
+      'MEASURE_NAVIGATION_MARKERS_INVALID',
+      `${index + 1}번 마디의 Navigation Marker가 올바르지 않습니다.`,
+    );
   }
 }
 

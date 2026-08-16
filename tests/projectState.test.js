@@ -28,6 +28,7 @@ const canonicalMeasure = {
   height: 0.1,
   id: 'measure-existing',
   lyric: '',
+  navigationMarkers: [],
   page: 1,
   width: 0.2,
   x: 0.25,
@@ -220,7 +221,28 @@ test('JSON import keeps the legacy array format and applies existing defaults', 
   assert.equal(measure.bpm, DEFAULT_MEASURE.bpm);
   assert.equal(measure.beats, DEFAULT_MEASURE.beats);
   assert.equal(measure.lyric, '');
+  assert.deepEqual(measure.navigationMarkers, []);
   assert.ok(isValidMeasureId(measure.id));
+});
+
+test('JSON round-trip preserves navigation markers without changing the array format', () => {
+  const state = createInitialProjectState({
+    measures: [
+      {
+        ...canonicalMeasure,
+        navigationMarkers: [{ type: 'repeat-start' }, { type: 'segno' }],
+      },
+    ],
+  });
+  const serialized = exportMeasuresJson(state.measures);
+  const restoredMeasures = importMeasuresJson(serialized);
+
+  assert.ok(Array.isArray(JSON.parse(serialized)));
+  assert.deepEqual(restoredMeasures, state.measures);
+  assert.deepEqual(restoredMeasures[0].navigationMarkers, [
+    { type: 'repeat-start' },
+    { type: 'segno' },
+  ]);
 });
 
 test('JSON export remains a measure array and preserves normalized coordinates', () => {

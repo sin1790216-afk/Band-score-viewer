@@ -11,6 +11,10 @@ import {
 } from '../utils/measureCoordinates.js';
 import { MEASURE_RESIZE_DIRECTIONS } from '../utils/measureResize.js';
 import {
+  getNavigationMarkerLabel,
+  normalizeNavigationMarkers,
+} from '../utils/navigationMarkers.js';
+import {
   getPageLoadIdentity,
   getSurfaceIdentity,
   getTargetPageNumber,
@@ -149,6 +153,7 @@ function ScoreViewer({
   renderResetVersion,
   resizedMeasureIndex,
   selectedMeasureIndex,
+  showNavigationMarkers = false,
   showAudioMeasureTargets = false,
   studentPdfSource,
   studentViewMode,
@@ -742,6 +747,7 @@ function ScoreViewer({
                   onStartMeasureResize={onStartMeasureResize}
                   resizedMeasureIndex={resizedMeasureIndex}
                   selectedMeasureIndex={canEdit ? selectedMeasureIndex : -1}
+                  showNavigationMarkers={showNavigationMarkers}
                   showAudioMeasureTargets={showAudioMeasureTargets}
                 />
 
@@ -858,6 +864,7 @@ function MeasureOverlay({
   onStartMeasureResize,
   resizedMeasureIndex,
   selectedMeasureIndex,
+  showNavigationMarkers,
   showAudioMeasureTargets,
 }) {
   const visibleMeasures =
@@ -872,6 +879,9 @@ function MeasureOverlay({
       {visibleMeasures.map(({ measure, index }) => {
         const highlightRect = calculateHighlightRect(measure);
         const isAudioMapped = audioMappedMeasureIds.includes(measure.id);
+        const navigationMarkers = showNavigationMarkers
+          ? normalizeNavigationMarkers(measure.navigationMarkers)
+          : [];
 
         if (!highlightRect) return null;
 
@@ -912,6 +922,15 @@ function MeasureOverlay({
             style={highlightStyle}
             aria-label={`measure ${index + 1}`}
           >
+            {navigationMarkers.length > 0 && (
+              <span aria-hidden="true" className="navigation-marker-badges">
+                {navigationMarkers.map((marker) => (
+                  <span key={marker.type}>
+                    {getNavigationMarkerLabel(marker.type)}
+                  </span>
+                ))}
+              </span>
+            )}
             {mode === REGISTER_MODE && index === selectedMeasureIndex && (
               <>
                 {RESIZE_HANDLES.map((handle) => (

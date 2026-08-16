@@ -140,6 +140,13 @@
 
 ## 재생과 Vocal
 
+- [ ] 등록모드에서 선택 마디의 Repeat Start/End, Segno, D.S.를 토글하고 Teacher 악보 배지를 확인한다.
+- [ ] M3 Repeat Start, M4 Repeat End, M6 Segno, M8 D.S.에서 자동재생 순서가 `1-2-3-4-3-4-5-6-7-8-6-7-8`인지 확인한다.
+- [ ] Repeat End와 D.S.를 두 번째 방문했을 때 다시 jump하지 않고 곡이 종료되는지 확인한다.
+- [ ] Marker가 없는 기존 JSON/`.bsv`가 빈 Marker로 열리고, 새 Marker는 JSON/`.bsv` 왕복 후 유지되는지 확인한다.
+- [ ] 자동재생 중 수동 마디 이동 후 대상 마디의 전체 BPM/Beats 시간으로 새 run이 시작되는지 확인한다.
+- [ ] 악보 Marker와 기존 전체곡 반복재생을 함께 켜면 새 cycle에서 Marker가 다시 한 번씩 동작하는지 확인한다.
+- [ ] Navigation jump를 Student와 Vocal이 Teacher와 같은 물리 마디 순서로 따라가는지 확인한다.
 - [ ] Teacher 연주모드에서 마디 번호를 입력하면 해당 마디와 페이지로 즉시 이동하고 Student/Vocal도 따라간다.
 - [ ] Repeat OFF에서 `종료 후 처음으로`가 켜져 있으면 마지막 마디 재생 후 첫 마디로 이동하고, 꺼져 있으면 마지막 마디에 남는다.
 - [ ] `종료 후 처음으로`가 켜져 있어도 Stop을 누르면 자동 복귀하지 않는다.

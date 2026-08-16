@@ -7,6 +7,7 @@ import {
   ensureUniqueMeasureIds,
   isValidMeasureId,
 } from '../utils/measureIdentity.js';
+import { normalizeNavigationMarkers } from '../utils/navigationMarkers.js';
 
 export const DEFAULT_MEASURE = {
   width: 140,
@@ -14,6 +15,7 @@ export const DEFAULT_MEASURE = {
   bpm: 120,
   beats: 4,
   lyric: '',
+  navigationMarkers: [],
 };
 
 export const PROJECT_ACTIONS = {
@@ -61,6 +63,7 @@ export function normalizeMeasure(measure) {
     bpm: getPositiveNumber(nextMeasure.bpm, DEFAULT_MEASURE.bpm),
     beats: getPositiveNumber(nextMeasure.beats, DEFAULT_MEASURE.beats),
     lyric: typeof nextMeasure.lyric === 'string' ? nextMeasure.lyric : '',
+    navigationMarkers: normalizeNavigationMarkers(nextMeasure.navigationMarkers),
   };
 }
 

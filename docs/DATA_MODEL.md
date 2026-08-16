@@ -15,6 +15,7 @@ JSON 파일은 measure 객체 배열이다. 기존 핵심 필드는 유지된다
   bpm: 120,
   beats: 4,
   lyric: "",
+  navigationMarkers: [{ type: "repeat-start" }],
   coordinateSpace: "normalized-page-v1",
   coordinateStatus: "validated",
   coordinateWidth: 1,
@@ -27,6 +28,8 @@ JSON 파일은 measure 객체 배열이다. 기존 핵심 필드는 유지된다
 - `x`, `y`, `width`, `height`: PDF 페이지 전체를 `1 x 1`로 본 정규화 좌표
 - `bpm`, `beats`: 자동재생 시간 계산 값. 누락되거나 유효하지 않으면 각각 120, 4로 정규화
 - `lyric`: 여러 줄을 포함할 수 있는 문자열. 누락되면 빈 문자열로 정규화
+- `navigationMarkers`: 해당 물리 마디에 붙는 수동 악보 이동 표식. 현재
+  `repeat-start`, `repeat-end`, `segno`, `dal-segno`를 지원하며 누락되면 빈 배열로 정규화
 - `coordinateSpace`: 현재 canonical 좌표 형식
 - `coordinateStatus`: 좌표 변환 신뢰 상태
 - `coordinateWidth`, `coordinateHeight`: 기존 JSON 필드 호환을 위해 정규화 기준인 `1`을 유지
@@ -54,6 +57,25 @@ audioSettings: {
 ```
 
 이 설정은 measure 배열 JSON에 포함하지 않으므로 기존 JSON 형식은 그대로 유지된다.
+
+## Navigation과 Playback Step
+
+Measure 배열은 PDF의 물리 순서를 유지하며 반복 방문을 위해 복제하지 않는다. 자동재생은
+`navigationMarkers`에서 파생한 별도 Playback run을 사용한다. 각 step은 다음 최소 정보를 가진다.
+
+```js
+{
+  measureId: "measure-...",
+  measureIndex: 2,
+  visitIndex: 4,
+  visitCount: 2,
+  enteredBy: "repeat"
+}
+```
+
+`visitCount`는 동일 물리 마디의 재방문을 구분하며 향후 pass별 lyric lane 선택의 입력이 될 수 있다.
+Repeat End와 D.S.의 실행 이력 및 전체곡 반복 cycle은 재생 Session에만 존재하고 JSON이나 `.bsv`에
+저장하지 않는다.
 
 Teacher의 `audioSettings`는 서버가 메모리에 최신값을 보관해 새 Student에도 전달한다. Student
 개인 설정은 Teacher PDF 또는 개인 PDF의 document key별로 브라우저 `localStorage`에 저장하며,
@@ -169,7 +191,7 @@ Measure audio timeline에서 Phrase 시작·종료 시간을 계산할 수 있�
 }
 ```
 
-BPM, Beats, lyric, stable ID와 normalized 좌표는 measures가 유일한 원본이다. `.bsv` v1은
+BPM, Beats, lyric, navigation markers, stable ID와 normalized 좌표는 measures가 유일한 원본이다. `.bsv` v1은
 모든 measure의 유효하고 고유한 ID를 검증한다. 현재 페이지/마디,
 재생·Repeat, 선택/drag 상태, Student 개인 PDF와 보기 방식 같은 Session/Local View 데이터는
 저장하지 않는다. 기존 `.bsv`에 `audioSettings`가 없으면 빈 URL과 0초로 보정한다. 기존
