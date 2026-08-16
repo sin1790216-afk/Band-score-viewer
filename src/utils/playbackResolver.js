@@ -1,8 +1,8 @@
 import {
-  analyzeNavigationMarkers,
   hasNavigationMarker,
   NAVIGATION_MARKER_TYPES,
 } from './navigationMarkers.js';
+import { buildNavigationModel } from './navigationModel.js';
 
 function getSafeMeasureIndex(measures, measureIndex) {
   if (!Array.isArray(measures) || measures.length === 0) return -1;
@@ -16,15 +16,25 @@ function createPlaybackStep({
   enteredBy,
   measure,
   measureIndex,
+  navigationModel,
+  repeatPassBySectionId,
   visitCounts,
   visitIndex,
 }) {
   const measureId = measure?.id || `measure-index-${measureIndex}`;
   const visitCount = (visitCounts[measureId] || 0) + 1;
+  const repeatSection = getRepeatSectionAtMeasure(
+    navigationModel,
+    measureIndex,
+  );
 
   return {
     measureId,
     measureIndex,
+    repeatPass: repeatSection
+      ? repeatPassBySectionId[repeatSection.id] || 1
+      : null,
+    repeatSectionId: repeatSection?.id || null,
     visitCount,
     visitIndex,
     enteredBy,
@@ -39,10 +49,45 @@ function getTransitionGuard(measures) {
       Number(hasNavigationMarker(measure, NAVIGATION_MARKER_TYPES.DAL_SEGNO)),
     0,
   );
+  const repeatPassCount = buildNavigationModel(measures).repeatSections.reduce(
+    (count, section) => count + section.maxPass,
+    0,
+  );
 
   // 각 jump는 한 cycle에 한 번만 실행되므로 최악의 경우에도 전체 악보를
   // jump marker 수만큼 다시 순회하면 종료되어야 한다.
-  return Math.max(1, measures.length * (jumpMarkerCount + 2));
+  return Math.max(
+    1,
+    measures.length * (jumpMarkerCount + repeatPassCount + 2),
+  );
+}
+
+function getRepeatSectionAtMeasure(navigationModel, measureIndex) {
+  return navigationModel.repeatSections.find((section) => {
+    const lastEndingIndex = Math.max(
+      section.endIndex,
+      ...section.endings.map((ending) => ending.endIndex),
+    );
+
+    return measureIndex >= section.startIndex && measureIndex <= lastEndingIndex;
+  });
+}
+
+function getEndingAtMeasure(section, measureIndex) {
+  return section?.endings.find(
+    (ending) =>
+      measureIndex >= ending.startIndex && measureIndex <= ending.endIndex,
+  );
+}
+
+function createInitialRepeatPasses(navigationModel, startMeasureIndex) {
+  return Object.fromEntries(
+    navigationModel.repeatSections.map((section) => {
+      const startingEnding = getEndingAtMeasure(section, startMeasureIndex);
+
+      return [section.id, startingEnding?.passes[0] || 1];
+    }),
+  );
 }
 
 export function createPlaybackRunState(measures, startMeasureIndex = 0) {
@@ -57,15 +102,24 @@ export function createPlaybackRunState(measures, startMeasureIndex = 0) {
       endReason: 'empty-score',
       executedDalSegnoMeasureIds: [],
       executedRepeatEndMeasureIds: [],
+      repeatPassBySectionId: {},
       transitionCountInCycle: 0,
       visitCounts: {},
     };
   }
 
+  const navigationModel = buildNavigationModel(safeMeasures);
+  const repeatPassBySectionId = createInitialRepeatPasses(
+    navigationModel,
+    safeStartIndex,
+  );
+
   const initialStep = createPlaybackStep({
     enteredBy: 'start',
     measure: safeMeasures[safeStartIndex],
     measureIndex: safeStartIndex,
+    navigationModel,
+    repeatPassBySectionId,
     visitCounts: {},
     visitIndex: 0,
   });
@@ -77,16 +131,21 @@ export function createPlaybackRunState(measures, startMeasureIndex = 0) {
     endReason: '',
     executedDalSegnoMeasureIds: [],
     executedRepeatEndMeasureIds: [],
+    repeatPassBySectionId,
     transitionCountInCycle: 0,
     visitCounts: { [initialStep.measureId]: 1 },
   };
 }
 
 function enterMeasure(runState, measures, measureIndex, enteredBy, overrides = {}) {
+  const repeatPassBySectionId =
+    overrides.repeatPassBySectionId || runState.repeatPassBySectionId;
   const nextStep = createPlaybackStep({
     enteredBy,
     measure: measures[measureIndex],
     measureIndex,
+    navigationModel: buildNavigationModel(measures),
+    repeatPassBySectionId,
     visitCounts: runState.visitCounts,
     visitIndex: runState.currentStep.visitIndex + 1,
   });
@@ -99,11 +158,31 @@ function enterMeasure(runState, measures, measureIndex, enteredBy, overrides = {
     endReason: '',
     transitionCountInCycle:
       overrides.transitionCountInCycle ?? runState.transitionCountInCycle + 1,
+    repeatPassBySectionId,
     visitCounts: {
       ...runState.visitCounts,
       [nextStep.measureId]: nextStep.visitCount,
     },
   };
+}
+
+function getNextPlayableMeasureIndex(navigationModel, runState, startIndex) {
+  let nextIndex = startIndex;
+
+  while (nextIndex >= 0) {
+    const section = getRepeatSectionAtMeasure(navigationModel, nextIndex);
+    const ending = getEndingAtMeasure(section, nextIndex);
+
+    if (!ending) return nextIndex;
+
+    const repeatPass = runState.repeatPassBySectionId[section.id] || 1;
+
+    if (ending.passes.includes(repeatPass)) return nextIndex;
+
+    nextIndex = ending.endIndex + 1;
+  }
+
+  return nextIndex;
 }
 
 export function advancePlaybackRun(
@@ -134,7 +213,18 @@ export function advancePlaybackRun(
   }
 
   const currentMeasure = safeMeasures[currentMeasureIndex];
-  const analysis = analyzeNavigationMarkers(safeMeasures);
+  const navigationModel = buildNavigationModel(safeMeasures);
+  const currentRepeatSection = getRepeatSectionAtMeasure(
+    navigationModel,
+    currentMeasureIndex,
+  );
+  const currentEnding = getEndingAtMeasure(
+    currentRepeatSection,
+    currentMeasureIndex,
+  );
+  const currentRepeatPass = currentRepeatSection
+    ? runState.repeatPassBySectionId[currentRepeatSection.id] || 1
+    : 1;
   const hasRepeatEnd = hasNavigationMarker(
     currentMeasure,
     NAVIGATION_MARKER_TYPES.REPEAT_END,
@@ -146,11 +236,42 @@ export function advancePlaybackRun(
   const hasAmbiguousJumpActions = hasRepeatEnd && hasDalSegno;
 
   if (
+    currentRepeatSection?.endings.length > 0 &&
+    currentEnding?.endIndex === currentMeasureIndex &&
+    currentEnding.passes.includes(currentRepeatPass) &&
+    currentRepeatPass < currentRepeatSection.maxPass
+  ) {
+    return enterMeasure(
+      runState,
+      safeMeasures,
+      currentRepeatSection.startIndex,
+      'repeat',
+      {
+        executedRepeatEndMeasureIds: runState.executedRepeatEndMeasureIds.includes(
+          currentRepeatSection.endMeasureId,
+        )
+          ? runState.executedRepeatEndMeasureIds
+          : [
+              ...runState.executedRepeatEndMeasureIds,
+              currentRepeatSection.endMeasureId,
+            ],
+        repeatPassBySectionId: {
+          ...runState.repeatPassBySectionId,
+          [currentRepeatSection.id]: currentRepeatPass + 1,
+        },
+      },
+    );
+  }
+
+  if (
     hasRepeatEnd &&
+    currentRepeatSection?.endings.length === 0 &&
     !hasAmbiguousJumpActions &&
     !runState.executedRepeatEndMeasureIds.includes(currentMeasure.id)
   ) {
-    const repeatStartIndex = analysis.repeatPairsByEndId.get(currentMeasure.id);
+    const repeatStartIndex = navigationModel.repeatPairsByEndId.get(
+      currentMeasure.id,
+    );
 
     if (Number.isInteger(repeatStartIndex) && repeatStartIndex < currentMeasureIndex) {
       return enterMeasure(runState, safeMeasures, repeatStartIndex, 'repeat', {
@@ -166,10 +287,10 @@ export function advancePlaybackRun(
     hasDalSegno &&
     !hasAmbiguousJumpActions &&
     !runState.executedDalSegnoMeasureIds.includes(currentMeasure.id) &&
-    analysis.segnoIndex >= 0 &&
-    analysis.segnoIndex < currentMeasureIndex
+    navigationModel.segnoIndex >= 0 &&
+    navigationModel.segnoIndex < currentMeasureIndex
   ) {
-    return enterMeasure(runState, safeMeasures, analysis.segnoIndex, 'dal-segno', {
+    return enterMeasure(runState, safeMeasures, navigationModel.segnoIndex, 'dal-segno', {
       executedDalSegnoMeasureIds: [
         ...runState.executedDalSegnoMeasureIds,
         currentMeasure.id,
@@ -177,7 +298,11 @@ export function advancePlaybackRun(
     });
   }
 
-  const nextMeasureIndex = currentMeasureIndex + 1;
+  const nextMeasureIndex = getNextPlayableMeasureIndex(
+    navigationModel,
+    runState,
+    currentMeasureIndex + 1,
+  );
 
   if (nextMeasureIndex < safeMeasures.length) {
     return enterMeasure(runState, safeMeasures, nextMeasureIndex, 'next');

@@ -22,6 +22,26 @@ function createMeasures(count, markersByMeasureNumber = {}) {
   }));
 }
 
+function addEndings(measures, repeatStartNumber, repeatEndNumber, ranges) {
+  return measures.map((measure, index) => ({
+    ...measure,
+    navigationEndings:
+      index === repeatStartNumber - 1
+        ? ranges.map(({ end, pass, start }) => ({
+            confidence: 1,
+            endMeasureId: `m${end}`,
+            id: `ending-${repeatStartNumber}-${pass}`,
+            passes: [pass],
+            repeatEndMeasureId: `m${repeatEndNumber}`,
+            repeatStartMeasureId: `m${repeatStartNumber}`,
+            source: 'manual',
+            startMeasureId: `m${start}`,
+            type: 'volta',
+          }))
+        : [],
+  }));
+}
+
 function getMeasureNumbers(steps) {
   return steps.map((step) => step.measureIndex + 1);
 }
@@ -399,5 +419,201 @@ test('T: whole-song repeat keeps markers active and resets their cycle history',
   assert.deepEqual(
     getMeasureNumbers(secondCycleSteps),
     [1, 2, 3, 4, 3, 4, 5, 6, 7, 8, 6, 7, 8, 1],
+  );
+});
+
+test('U: one-measure endings select pass 1 and pass 2 in playback order', () => {
+  const measures = addEndings(
+    createMeasures(8, {
+      3: [NAVIGATION_MARKER_TYPES.REPEAT_START],
+      4: [NAVIGATION_MARKER_TYPES.REPEAT_END],
+    }),
+    3,
+    4,
+    [
+      { end: 4, pass: 1, start: 4 },
+      { end: 5, pass: 2, start: 5 },
+    ],
+  );
+  const result = resolvePlaybackSequence(measures);
+
+  assert.deepEqual(getMeasureNumbers(result.steps), [1, 2, 3, 4, 3, 5, 6, 7, 8]);
+  assert.deepEqual(
+    result.steps.filter((step) => step.repeatSectionId).map((step) => step.repeatPass),
+    [1, 1, 2, 2],
+  );
+});
+
+test('V: multi-measure endings skip the whole non-current pass range', () => {
+  const measures = addEndings(
+    createMeasures(9, {
+      3: [NAVIGATION_MARKER_TYPES.REPEAT_START],
+      6: [NAVIGATION_MARKER_TYPES.REPEAT_END],
+    }),
+    3,
+    6,
+    [
+      { end: 6, pass: 1, start: 5 },
+      { end: 8, pass: 2, start: 7 },
+    ],
+  );
+
+  assert.deepEqual(
+    getMeasureNumbers(resolvePlaybackSequence(measures).steps),
+    [1, 2, 3, 4, 5, 6, 3, 4, 7, 8, 9],
+  );
+});
+
+test('W: maximum ending pass drives three passes without a two-pass constant', () => {
+  const measures = addEndings(
+    createMeasures(8, {
+      3: [NAVIGATION_MARKER_TYPES.REPEAT_START],
+      4: [NAVIGATION_MARKER_TYPES.REPEAT_END],
+    }),
+    3,
+    4,
+    [
+      { end: 4, pass: 1, start: 4 },
+      { end: 5, pass: 2, start: 5 },
+      { end: 6, pass: 3, start: 6 },
+    ],
+  );
+
+  assert.deepEqual(
+    getMeasureNumbers(resolvePlaybackSequence(measures).steps),
+    [1, 2, 3, 4, 3, 5, 3, 6, 7, 8],
+  );
+});
+
+test('X: manual, automatic, and mixed progression preserve the same ending pass', () => {
+  const measures = addEndings(
+    createMeasures(8, {
+      3: [NAVIGATION_MARKER_TYPES.REPEAT_START],
+      4: [NAVIGATION_MARKER_TYPES.REPEAT_END],
+    }),
+    3,
+    4,
+    [
+      { end: 4, pass: 1, start: 4 },
+      { end: 5, pass: 2, start: 5 },
+    ],
+  );
+  const expected = [1, 2, 3, 4, 3, 5, 6, 7, 8];
+  const manual = advanceProgressionToEnd(measures);
+  let mixedProgression = createPlaybackProgression(measures);
+  const mixedSteps = [mixedProgression.runState.currentStep];
+
+  for (let index = 0; index < 4; index += 1) {
+    const result = advancePlaybackProgression(mixedProgression, measures);
+    mixedProgression = result.progression;
+    mixedSteps.push(mixedProgression.runState.currentStep);
+  }
+  while (!mixedProgression.runState.ended) {
+    const result = advancePlaybackProgression(mixedProgression, measures);
+    mixedProgression = result.progression;
+    if (result.didMove) mixedSteps.push(mixedProgression.runState.currentStep);
+  }
+
+  assert.deepEqual(getMeasureNumbers(manual.steps), expected);
+  assert.deepEqual(getMeasureNumbers(mixedSteps), expected);
+});
+
+test('Y: whole-song loop resets ending pass and history rewinds actual visits', () => {
+  const measures = addEndings(
+    createMeasures(8, {
+      3: [NAVIGATION_MARKER_TYPES.REPEAT_START],
+      4: [NAVIGATION_MARKER_TYPES.REPEAT_END],
+    }),
+    3,
+    4,
+    [
+      { end: 4, pass: 1, start: 4 },
+      { end: 5, pass: 2, start: 5 },
+    ],
+  );
+  const looped = advanceProgressionToEnd(measures, { loopAtEnd: true });
+
+  assert.deepEqual(
+    getMeasureNumbers(looped.steps),
+    [1, 2, 3, 4, 3, 5, 6, 7, 8, 1],
+  );
+  assert.deepEqual(
+    Object.values(looped.progression.runState.repeatPassBySectionId),
+    [1],
+  );
+
+  let progression = createPlaybackProgression(measures);
+  for (let index = 0; index < 5; index += 1) {
+    progression = advancePlaybackProgression(progression, measures).progression;
+  }
+  const history = [progression.runState.currentStep.measureIndex + 1];
+  for (let index = 0; index < 3; index += 1) {
+    progression = rewindPlaybackProgression(progression).progression;
+    history.push(progression.runState.currentStep.measureIndex + 1);
+  }
+
+  assert.deepEqual(history, [5, 3, 4, 3]);
+});
+
+test('Z: direct navigation starts a fresh run and D.S. remains unchanged', () => {
+  const endingMeasures = addEndings(
+    createMeasures(8, {
+      3: [NAVIGATION_MARKER_TYPES.REPEAT_START],
+      4: [NAVIGATION_MARKER_TYPES.REPEAT_END],
+    }),
+    3,
+    4,
+    [
+      { end: 4, pass: 1, start: 4 },
+      { end: 5, pass: 2, start: 5 },
+    ],
+  );
+  const direct = createPlaybackProgression(endingMeasures, 4);
+
+  assert.equal(direct.runState.currentStep.measureIndex, 4);
+  assert.equal(direct.runState.currentStep.repeatPass, 2);
+  assert.equal(
+    advancePlaybackProgression(direct, endingMeasures).progression.runState.currentStep
+      .measureIndex,
+    5,
+  );
+
+  const dalSegnoMeasures = createMeasures(8, {
+    6: [NAVIGATION_MARKER_TYPES.SEGNO],
+    8: [NAVIGATION_MARKER_TYPES.DAL_SEGNO],
+  });
+  assert.deepEqual(
+    getMeasureNumbers(resolvePlaybackSequence(dalSegnoMeasures).steps),
+    [1, 2, 3, 4, 5, 6, 7, 8, 6, 7, 8],
+  );
+});
+
+test('AA: two independent repeat sections keep separate pass state', () => {
+  let measures = createMeasures(10, {
+    2: [NAVIGATION_MARKER_TYPES.REPEAT_START],
+    3: [NAVIGATION_MARKER_TYPES.REPEAT_END],
+    6: [NAVIGATION_MARKER_TYPES.REPEAT_START],
+    7: [NAVIGATION_MARKER_TYPES.REPEAT_END],
+  });
+
+  measures = measures.map((measure, index) => ({
+    ...measure,
+    navigationEndings:
+      index === 1
+        ? addEndings(measures, 2, 3, [
+            { end: 3, pass: 1, start: 3 },
+            { end: 4, pass: 2, start: 4 },
+          ])[1].navigationEndings
+        : index === 5
+          ? addEndings(measures, 6, 7, [
+              { end: 7, pass: 1, start: 7 },
+              { end: 8, pass: 2, start: 8 },
+            ])[5].navigationEndings
+          : [],
+  }));
+
+  assert.deepEqual(
+    getMeasureNumbers(resolvePlaybackSequence(measures).steps),
+    [1, 2, 3, 2, 4, 5, 6, 7, 6, 8, 9, 10],
   );
 });

@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { isValidNavigationMarkers } from './navigationMarkers.js';
+import { isValidNavigationEndings } from './navigationEndings.js';
 
 export const MAX_PDF_BYTES = 100 * 1024 * 1024;
 export const MAX_MEASURES = 20_000;
@@ -91,6 +92,7 @@ export function isValidMeasuresState(payload) {
         measure !== null &&
         typeof measure === 'object' &&
         !Array.isArray(measure) &&
+        isValidNavigationEndings(measure.navigationEndings) &&
         isValidNavigationMarkers(measure.navigationMarkers),
     )
   );

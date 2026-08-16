@@ -11,6 +11,7 @@ import { io } from 'socket.io-client';
 
 import './App.css';
 import LocalAudioPlayer from './components/LocalAudioPlayer.jsx';
+import NavigationEditor from './components/NavigationEditor.jsx';
 import ScoreViewer from './components/ScoreViewer.jsx';
 import { decodeBsvProject, encodeBsvProject } from './project/bsvCodec.js';
 import {
@@ -44,10 +45,10 @@ import {
 } from './utils/measureCoordinates.js';
 import { resizeCanonicalMeasure } from './utils/measureResize.js';
 import {
-  getNavigationMarkerValidation,
   NAVIGATION_MARKER_OPTIONS,
   toggleNavigationMarker,
 } from './utils/navigationMarkers.js';
+import { getNavigationModelValidation } from './utils/navigationModel.js';
 import {
   advancePlaybackProgression as advancePlaybackProgressionState,
   createPlaybackProgression,
@@ -621,7 +622,7 @@ function App() {
   );
   const selectedMeasure = measures[selectedMeasureIndex] || null;
   const navigationMarkerValidation = useMemo(
-    () => getNavigationMarkerValidation(measures),
+    () => getNavigationModelValidation(measures),
     [measures],
   );
   const teacherSharedAudioAnchorMeasureIndex =
@@ -1848,6 +1849,16 @@ function App() {
           type,
         ),
       },
+    });
+    playbackProgressionRef.current = null;
+  }
+
+  function replaceNavigationMeasures(nextMeasures) {
+    if (!canEdit || isAutoPlaying || !Array.isArray(nextMeasures)) return;
+
+    dispatchMeasureUpdate({
+      type: PROJECT_ACTIONS.REPLACE_MEASURES,
+      measures: nextMeasures,
     });
     playbackProgressionRef.current = null;
   }
@@ -3763,6 +3774,7 @@ function App() {
             isRepeatEnabled={isRepeatEnabled}
             navigationMarkerOptions={NAVIGATION_MARKER_OPTIONS}
             navigationMarkerValidation={navigationMarkerValidation}
+            measures={measures}
             measureRecognitionState={measureRecognitionState}
             lyricRecognitionState={lyricRecognitionState}
             languagePhraseMutationState={languagePhraseMutationState}
@@ -3791,6 +3803,7 @@ function App() {
             onToggleSelectedMeasureNavigationMarker={
               toggleSelectedMeasureNavigationMarker
             }
+            onReplaceNavigationMeasures={replaceNavigationMeasures}
             onGoToPage={goToPage}
             onGoToMeasure={goToMeasure}
             onGoToPreviousPlaybackStep={goToPreviousPlaybackStep}
@@ -3994,6 +4007,7 @@ function Sidebar({
   jsonInputRef,
   navigationMarkerOptions,
   navigationMarkerValidation,
+  measures,
   measureIndex,
   measureRecognitionState,
   lyricRecognitionState,
@@ -4029,6 +4043,7 @@ function Sidebar({
   onStartAutoplay,
   onStopAutoplay,
   onToggleSelectedMeasureNavigationMarker,
+  onReplaceNavigationMeasures,
   onUpdateAudioSettings,
   onUpdateSelectedMeasureTiming,
   pageNumber,
@@ -4375,6 +4390,11 @@ function Sidebar({
         ) : (
           <small className="sidebar-help">등록모드에서 마디를 선택하세요.</small>
         )}
+        <NavigationEditor
+          disabled={isAutoPlaying}
+          measures={measures}
+          onReplaceMeasures={onReplaceNavigationMeasures}
+        />
       </SidebarSection>
 
       <SidebarSection title="오디오">

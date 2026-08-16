@@ -8,6 +8,10 @@ import {
   MAX_AUDIO_URL_LENGTH,
 } from '../utils/audioSettings.js';
 import { isValidNavigationMarkers } from '../utils/navigationMarkers.js';
+import {
+  collectNavigationEndings,
+  isValidNavigationEndings,
+} from '../utils/navigationEndings.js';
 
 export const BSV_FORMAT = 'band-score-viewer-project';
 export const BSV_SCHEMA_VERSION = 1;
@@ -103,6 +107,13 @@ function assertValidMeasure(measure, index, measureIds) {
       `${index + 1}번 마디의 Navigation Marker가 올바르지 않습니다.`,
     );
   }
+
+  if (!isValidNavigationEndings(measure.navigationEndings)) {
+    fail(
+      'MEASURE_NAVIGATION_ENDINGS_INVALID',
+      `${index + 1}번 마디의 엔딩 데이터가 올바르지 않습니다.`,
+    );
+  }
 }
 
 function assertValidProject(project) {
@@ -152,6 +163,20 @@ function assertValidProject(project) {
   project.measures.forEach((measure, index) =>
     assertValidMeasure(measure, index, measureIds),
   );
+
+  collectNavigationEndings(project.measures).forEach((ending) => {
+    if (
+      !measureIds.has(ending.startMeasureId) ||
+      !measureIds.has(ending.endMeasureId) ||
+      !measureIds.has(ending.repeatStartMeasureId) ||
+      !measureIds.has(ending.repeatEndMeasureId)
+    ) {
+      fail(
+        'MEASURE_NAVIGATION_ENDING_REFERENCE_INVALID',
+        '엔딩이 존재하지 않는 마디를 참조합니다.',
+      );
+    }
+  });
 }
 
 function assertValidPdfAsset(assets) {

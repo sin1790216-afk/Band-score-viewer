@@ -28,6 +28,7 @@ const canonicalMeasure = {
   height: 0.1,
   id: 'measure-existing',
   lyric: '',
+  navigationEndings: [],
   navigationMarkers: [],
   page: 1,
   width: 0.2,
@@ -243,6 +244,32 @@ test('JSON round-trip preserves navigation markers without changing the array fo
     { type: 'repeat-start' },
     { type: 'segno' },
   ]);
+});
+
+test('JSON round-trip preserves generic ending ranges and legacy files default to none', () => {
+  const ending = {
+    confidence: 1,
+    endMeasureId: 'measure-ending-2',
+    id: 'ending-json-1',
+    passes: [1, 3],
+    repeatEndMeasureId: 'measure-ending-2',
+    repeatStartMeasureId: 'measure-existing',
+    source: 'manual',
+    startMeasureId: 'measure-ending-2',
+    type: 'volta',
+  };
+  const measures = [
+    { ...canonicalMeasure, navigationEndings: [ending] },
+    { ...canonicalMeasure, id: 'measure-ending-2' },
+  ];
+  const restored = importMeasuresJson(exportMeasuresJson(measures));
+
+  assert.deepEqual(restored[0].navigationEndings, [ending]);
+
+  const [legacyMeasure] = importMeasuresJson(
+    JSON.stringify([{ ...canonicalMeasure, navigationEndings: undefined }]),
+  );
+  assert.deepEqual(legacyMeasure.navigationEndings, []);
 });
 
 test('JSON export remains a measure array and preserves normalized coordinates', () => {

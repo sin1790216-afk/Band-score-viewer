@@ -14,6 +14,7 @@ import {
   getNavigationMarkerLabel,
   normalizeNavigationMarkers,
 } from '../utils/navigationMarkers.js';
+import { getNavigationEndingBadges } from '../utils/navigationModel.js';
 import {
   getPageLoadIdentity,
   getSurfaceIdentity,
@@ -178,6 +179,10 @@ function ScoreViewer({
     aspectRatio: DEFAULT_PAGE_ASPECT_RATIO,
     identity: '',
   });
+  const navigationEndingBadgesByMeasureId = useMemo(
+    () => (showNavigationMarkers ? getNavigationEndingBadges(measures) : new Map()),
+    [measures, showNavigationMarkers],
+  );
   const [readySurface, setReadySurface] = useState(null);
   const [draftAnnotationStroke, setDraftAnnotationStroke] = useState(null);
 
@@ -744,6 +749,9 @@ function ScoreViewer({
                   currentPageMeasures={shouldRenderHighlights ? currentPageMeasures : []}
                   draggedMeasureIndex={draggedMeasureIndex}
                   mode={mode}
+                  navigationEndingBadgesByMeasureId={
+                    navigationEndingBadgesByMeasureId
+                  }
                   onActivateMeasure={onActivateMeasure}
                   onEndMeasureDrag={onEndMeasureDrag}
                   onEndMeasureResize={onEndMeasureResize}
@@ -861,6 +869,7 @@ function MeasureOverlay({
   currentPageMeasures,
   draggedMeasureIndex,
   mode,
+  navigationEndingBadgesByMeasureId,
   onActivateMeasure,
   onEndMeasureDrag,
   onEndMeasureResize,
@@ -888,6 +897,9 @@ function MeasureOverlay({
         const isAudioMapped = audioMappedMeasureIds.includes(measure.id);
         const navigationMarkers = showNavigationMarkers
           ? normalizeNavigationMarkers(measure.navigationMarkers)
+          : [];
+        const navigationEndingBadges = showNavigationMarkers
+          ? navigationEndingBadgesByMeasureId.get(measure.id) || []
           : [];
 
         if (!highlightRect) return null;
@@ -929,11 +941,16 @@ function MeasureOverlay({
             style={highlightStyle}
             aria-label={`measure ${index + 1}`}
           >
-            {navigationMarkers.length > 0 && (
+            {(navigationMarkers.length > 0 || navigationEndingBadges.length > 0) && (
               <span aria-hidden="true" className="navigation-marker-badges">
                 {navigationMarkers.map((marker) => (
                   <span key={marker.type}>
                     {getNavigationMarkerLabel(marker.type)}
+                  </span>
+                ))}
+                {navigationEndingBadges.map((badge) => (
+                  <span className="navigation-ending-badge" key={badge.id}>
+                    {badge.label}
                   </span>
                 ))}
               </span>

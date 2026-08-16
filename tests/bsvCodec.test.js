@@ -34,6 +34,7 @@ const MEASURE = {
   height: 0.1,
   id: 'measure-bsv-1',
   lyric: '첫 번째 줄\n두 번째 줄',
+  navigationEndings: [],
   navigationMarkers: [{ type: 'segno' }],
   page: 2,
   width: 0.2,
@@ -150,6 +151,35 @@ test('a legacy .bsv without navigation markers receives an empty marker list', a
   const decoded = decodeBsvProject(JSON.stringify(document));
 
   assert.deepEqual(decoded.projectState.measures[0].navigationMarkers, []);
+});
+
+test('.bsv preserves generic ending data and legacy files default to no endings', async () => {
+  const { document } = await createEncodedProject();
+  const owner = document.project.measures[0];
+
+  owner.navigationEndings = [
+    {
+      confidence: 1,
+      endMeasureId: owner.id,
+      id: 'ending-bsv-1',
+      passes: [1],
+      repeatEndMeasureId: owner.id,
+      repeatStartMeasureId: owner.id,
+      source: 'manual',
+      startMeasureId: owner.id,
+      type: 'volta',
+    },
+  ];
+  const decoded = decodeBsvProject(JSON.stringify(document));
+
+  assert.deepEqual(decoded.projectState.measures[0].navigationEndings, owner.navigationEndings);
+
+  delete document.project.measures[0].navigationEndings;
+  assert.deepEqual(
+    decodeBsvProject(JSON.stringify(document)).projectState.measures[0]
+      .navigationEndings,
+    [],
+  );
 });
 
 test('.bsv rejects malformed navigation markers', async () => {

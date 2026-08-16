@@ -8,6 +8,11 @@ import {
   isValidMeasureId,
 } from '../utils/measureIdentity.js';
 import { normalizeNavigationMarkers } from '../utils/navigationMarkers.js';
+import {
+  attachNavigationEndings,
+  collectNavigationEndings,
+  normalizeNavigationEndings,
+} from '../utils/navigationEndings.js';
 
 export const DEFAULT_MEASURE = {
   width: 140,
@@ -15,6 +20,7 @@ export const DEFAULT_MEASURE = {
   bpm: 120,
   beats: 4,
   lyric: '',
+  navigationEndings: [],
   navigationMarkers: [],
 };
 
@@ -63,6 +69,7 @@ export function normalizeMeasure(measure) {
     bpm: getPositiveNumber(nextMeasure.bpm, DEFAULT_MEASURE.bpm),
     beats: getPositiveNumber(nextMeasure.beats, DEFAULT_MEASURE.beats),
     lyric: typeof nextMeasure.lyric === 'string' ? nextMeasure.lyric : '',
+    navigationEndings: normalizeNavigationEndings(nextMeasure.navigationEndings),
     navigationMarkers: normalizeNavigationMarkers(nextMeasure.navigationMarkers),
   };
 }
@@ -205,10 +212,26 @@ export function projectReducer(state, action) {
     case PROJECT_ACTIONS.DELETE_MEASURE:
       if (!state.measures[action.index]) return state;
 
-      return replaceMeasures(
-        state,
-        state.measures.filter((_, index) => index !== action.index),
-      );
+      {
+        const nextMeasures = state.measures.filter(
+          (_, index) => index !== action.index,
+        );
+        const remainingMeasureIds = new Set(
+          nextMeasures.map((measure) => measure.id),
+        );
+        const nextEndings = collectNavigationEndings(state.measures).filter(
+          (ending) =>
+            remainingMeasureIds.has(ending.startMeasureId) &&
+            remainingMeasureIds.has(ending.endMeasureId) &&
+            remainingMeasureIds.has(ending.repeatStartMeasureId) &&
+            remainingMeasureIds.has(ending.repeatEndMeasureId),
+        );
+
+        return replaceMeasures(
+          state,
+          attachNavigationEndings(nextMeasures, nextEndings),
+        );
+      }
 
     default:
       return state;
