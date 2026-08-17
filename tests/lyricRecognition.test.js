@@ -11,6 +11,7 @@ import {
   normalizePdfTextItems,
 } from '../src/utils/lyricRecognition.js';
 import {
+  SCORE_TEXT_CLASSIFICATION_ITEMS,
   TARGET_LYRIC_SYSTEM,
   TARGET_LYRIC_TEXT_ITEMS,
   TARGET_MEASURE,
@@ -350,6 +351,20 @@ test('실제 target metadata에서 다음 system chord, glyph와 lyric이 섞이
   assert.equal(candidate.lyric.includes('& b'), false);
   assert.equal(candidate.lyric.includes('그 대가'), false);
   assert.equal(candidate.lyric.includes('/D'), false);
+});
+
+test('실제 score text fixture에서 navigation과 performance instruction만 lyric에서 제외한다', () => {
+  const result = analyzeLyricCandidates({
+    measures: [TARGET_MEASURE],
+    systems: [TARGET_LYRIC_SYSTEM, TARGET_NEXT_SYSTEM],
+    textItems: SCORE_TEXT_CLASSIFICATION_ITEMS,
+  });
+
+  assert.equal(result.candidates[0].lyric, 'This is ou - r page -');
+  assert.equal(result.candidates[0].lyric.includes('To Coda'), false);
+  assert.equal(result.candidates[0].lyric.includes('2x only'), false);
+  assert.equal(result.stats.rejectedNavigationCount, 1);
+  assert.equal(result.stats.rejectedPerformanceInstructionCount, 1);
 });
 
 test('큰 title metadata와 page number는 lyric candidate가 되지 않는다', () => {

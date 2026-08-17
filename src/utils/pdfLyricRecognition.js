@@ -39,6 +39,8 @@ export async function recognizeLyricsInPdf(
       rejectedChordCount: 0,
       rejectedMetadataCount: 0,
       rejectedMusicGlyphCount: 0,
+      rejectedNavigationCount: 0,
+      rejectedPerformanceInstructionCount: 0,
       twoLineMeasureCount: 0,
     };
 

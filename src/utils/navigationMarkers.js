@@ -1,15 +1,41 @@
 export const NAVIGATION_MARKER_TYPES = Object.freeze({
+  CODA: 'coda',
   DAL_SEGNO: 'dal-segno',
+  DAL_SEGNO_AL_CODA: 'dal-segno-al-coda',
+  DAL_SEGNO_AL_FINE: 'dal-segno-al-fine',
+  FINE: 'fine',
   REPEAT_END: 'repeat-end',
   REPEAT_START: 'repeat-start',
   SEGNO: 'segno',
+  TO_CODA: 'to-coda',
 });
 
 export const NAVIGATION_MARKER_OPTIONS = Object.freeze([
   { description: '반복 시작', label: '||:', shortLabel: '||:', type: NAVIGATION_MARKER_TYPES.REPEAT_START },
   { description: '반복 끝', label: ':||', shortLabel: ':||', type: NAVIGATION_MARKER_TYPES.REPEAT_END },
-  { label: 'Segno', shortLabel: 'Segno', type: NAVIGATION_MARKER_TYPES.SEGNO },
+  { displayKind: 'symbol', label: 'Segno', shortLabel: 'Segno', type: NAVIGATION_MARKER_TYPES.SEGNO },
   { label: 'D.S.', shortLabel: 'D.S.', type: NAVIGATION_MARKER_TYPES.DAL_SEGNO },
+  { label: 'D.S. al Coda', shortLabel: 'D.S. al Coda', type: NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA },
+  { label: 'To Coda', shortLabel: 'To Coda', type: NAVIGATION_MARKER_TYPES.TO_CODA },
+  { displayKind: 'symbol', label: 'Coda', shortLabel: 'Coda', type: NAVIGATION_MARKER_TYPES.CODA },
+  { label: 'D.S. al Fine', shortLabel: 'D.S. al Fine', type: NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_FINE },
+  { label: 'Fine', shortLabel: 'Fine', type: NAVIGATION_MARKER_TYPES.FINE },
+]);
+
+export const NAVIGATION_TARGET_MARKER_TYPES = Object.freeze([
+  NAVIGATION_MARKER_TYPES.SEGNO,
+  NAVIGATION_MARKER_TYPES.CODA,
+]);
+
+export const NAVIGATION_COMMAND_MARKER_TYPES = Object.freeze([
+  NAVIGATION_MARKER_TYPES.DAL_SEGNO,
+  NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA,
+  NAVIGATION_MARKER_TYPES.TO_CODA,
+  NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_FINE,
+]);
+
+export const NAVIGATION_STOP_MARKER_TYPES = Object.freeze([
+  NAVIGATION_MARKER_TYPES.FINE,
 ]);
 
 const VALID_NAVIGATION_MARKER_TYPES = new Set(
@@ -95,8 +121,13 @@ export function analyzeNavigationMarkers(measures) {
   const safeMeasures = Array.isArray(measures) ? measures : [];
   const issues = [];
   const repeatPairsByEndId = new Map();
+  const codaIndexes = [];
+  const dalSegnoAlCodaIndexes = [];
+  const dalSegnoAlFineIndexes = [];
   const segnoIndexes = [];
   const dalSegnoIndexes = [];
+  const fineIndexes = [];
+  const toCodaIndexes = [];
   let activeRepeatStart = null;
   let repeatRegionIsAmbiguous = false;
 
@@ -104,23 +135,52 @@ export function analyzeNavigationMarkers(measures) {
     const markerTypes = getMeasureMarkerTypes(measure);
     const measureNumber = measureIndex + 1;
 
-    if (
-      markerTypes.has(NAVIGATION_MARKER_TYPES.REPEAT_END) &&
-      markerTypes.has(NAVIGATION_MARKER_TYPES.DAL_SEGNO)
-    ) {
+    const jumpActionTypes = [
+      NAVIGATION_MARKER_TYPES.REPEAT_END,
+      ...NAVIGATION_COMMAND_MARKER_TYPES,
+    ].filter((type) => markerTypes.has(type));
+
+    if (jumpActionTypes.length > 1) {
       issues.push({
         code: 'multiple-jump-actions',
         measureId: measure?.id || '',
         measureIndex,
-        message: `${measureNumber}마디에 Repeat End와 D.S.를 함께 사용할 수 없습니다.`,
+        message: `${measureNumber}마디에 여러 Navigation 명령을 함께 사용할 수 없습니다.`,
+      });
+    }
+
+    if (
+      markerTypes.has(NAVIGATION_MARKER_TYPES.FINE) &&
+      jumpActionTypes.length > 0
+    ) {
+      issues.push({
+        code: 'multiple-navigation-actions',
+        measureId: measure?.id || '',
+        measureIndex,
+        message: `${measureNumber}마디에 Fine과 다른 Navigation 명령을 함께 사용할 수 없습니다.`,
       });
     }
 
     if (markerTypes.has(NAVIGATION_MARKER_TYPES.SEGNO)) {
       segnoIndexes.push(measureIndex);
     }
+    if (markerTypes.has(NAVIGATION_MARKER_TYPES.CODA)) {
+      codaIndexes.push(measureIndex);
+    }
     if (markerTypes.has(NAVIGATION_MARKER_TYPES.DAL_SEGNO)) {
       dalSegnoIndexes.push(measureIndex);
+    }
+    if (markerTypes.has(NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA)) {
+      dalSegnoAlCodaIndexes.push(measureIndex);
+    }
+    if (markerTypes.has(NAVIGATION_MARKER_TYPES.TO_CODA)) {
+      toCodaIndexes.push(measureIndex);
+    }
+    if (markerTypes.has(NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_FINE)) {
+      dalSegnoAlFineIndexes.push(measureIndex);
+    }
+    if (markerTypes.has(NAVIGATION_MARKER_TYPES.FINE)) {
+      fineIndexes.push(measureIndex);
     }
 
     if (markerTypes.has(NAVIGATION_MARKER_TYPES.REPEAT_START)) {
@@ -175,31 +235,136 @@ export function analyzeNavigationMarkers(measures) {
     });
   }
 
-  dalSegnoIndexes.forEach((measureIndex) => {
+  if (codaIndexes.length > 1) {
+    issues.push({
+      code: 'multiple-codas',
+      measureId: '',
+      measureIndex: -1,
+      message: 'MVP에서는 Coda 목적지를 하나만 사용할 수 있습니다.',
+    });
+  }
+
+  if (fineIndexes.length > 1) {
+    issues.push({
+      code: 'multiple-fines',
+      measureId: '',
+      measureIndex: -1,
+      message: 'MVP에서는 Fine을 하나만 사용할 수 있습니다.',
+    });
+  }
+
+  const segnoCommandIndexes = [
+    ...dalSegnoIndexes,
+    ...dalSegnoAlCodaIndexes,
+    ...dalSegnoAlFineIndexes,
+  ];
+
+  segnoCommandIndexes.forEach((measureIndex) => {
     const segnoIndex = segnoIndexes.length === 1 ? segnoIndexes[0] : -1;
+    const markerTypes = getMeasureMarkerTypes(safeMeasures[measureIndex]);
+    const commandLabel = markerTypes.has(
+      NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA,
+    )
+      ? 'D.S. al Coda'
+      : markerTypes.has(NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_FINE)
+        ? 'D.S. al Fine'
+        : 'D.S.';
 
     if (segnoIndex < 0) {
       issues.push({
         code: 'segno-missing',
         measureId: safeMeasures[measureIndex]?.id || '',
         measureIndex,
-        message: `${measureIndex + 1}마디의 D.S.에 유효한 Segno가 없습니다.`,
+        message: `${measureIndex + 1}마디의 ${commandLabel}에 유효한 Segno가 없습니다.`,
       });
     } else if (segnoIndex >= measureIndex) {
       issues.push({
         code: 'segno-not-before-dal-segno',
         measureId: safeMeasures[measureIndex]?.id || '',
         measureIndex,
-        message: `${measureIndex + 1}마디의 D.S.보다 앞에 Segno를 지정해주세요.`,
+        message: `${measureIndex + 1}마디의 ${commandLabel}보다 앞에 Segno를 지정해주세요.`,
+      });
+    }
+  });
+
+  dalSegnoAlCodaIndexes.forEach((measureIndex) => {
+    if (codaIndexes.length !== 1) {
+      issues.push({
+        code: 'coda-target-invalid',
+        measureId: safeMeasures[measureIndex]?.id || '',
+        measureIndex,
+        message: `${measureIndex + 1}마디의 D.S. al Coda에 유효한 Coda 목적지가 없습니다.`,
+      });
+    } else if (codaIndexes[0] <= measureIndex) {
+      issues.push({
+        code: 'coda-not-after-command',
+        measureId: safeMeasures[measureIndex]?.id || '',
+        measureIndex,
+        message: `${measureIndex + 1}마디의 D.S. al Coda보다 뒤에 Coda를 지정해주세요.`,
+      });
+    }
+    if (!toCodaIndexes.some((index) => index < measureIndex)) {
+      issues.push({
+        code: 'to-coda-missing',
+        measureId: safeMeasures[measureIndex]?.id || '',
+        measureIndex,
+        message: `${measureIndex + 1}마디의 D.S. al Coda보다 앞에 To Coda를 지정해주세요.`,
+      });
+    }
+  });
+
+  toCodaIndexes.forEach((measureIndex) => {
+    if (codaIndexes.length !== 1) {
+      issues.push({
+        code: 'coda-target-invalid',
+        measureId: safeMeasures[measureIndex]?.id || '',
+        measureIndex,
+        message: `${measureIndex + 1}마디의 To Coda에 유효한 Coda 목적지가 없습니다.`,
+      });
+    } else if (codaIndexes[0] === measureIndex) {
+      issues.push({
+        code: 'coda-target-self',
+        measureId: safeMeasures[measureIndex]?.id || '',
+        measureIndex,
+        message: `${measureIndex + 1}마디의 To Coda와 Coda 목적지를 같은 마디에 지정할 수 없습니다.`,
+      });
+    }
+  });
+
+  dalSegnoAlFineIndexes.forEach((measureIndex) => {
+    if (fineIndexes.length !== 1) {
+      issues.push({
+        code: 'fine-target-invalid',
+        measureId: safeMeasures[measureIndex]?.id || '',
+        measureIndex,
+        message: `${measureIndex + 1}마디의 D.S. al Fine에 유효한 Fine이 없습니다.`,
+      });
+    } else if (
+      segnoIndexes.length === 1 &&
+      (fineIndexes[0] < segnoIndexes[0] || fineIndexes[0] >= measureIndex)
+    ) {
+      issues.push({
+        code: 'fine-not-on-return-path',
+        measureId: safeMeasures[measureIndex]?.id || '',
+        measureIndex,
+        message: `${measureIndex + 1}마디의 D.S. al Fine 반환 경로에 Fine을 지정해주세요.`,
       });
     }
   });
 
   return {
+    codaIndex: codaIndexes.length === 1 ? codaIndexes[0] : -1,
+    codaIndexes,
+    dalSegnoAlCodaIndexes,
+    dalSegnoAlFineIndexes,
     dalSegnoIndexes,
+    fineIndex: fineIndexes.length === 1 ? fineIndexes[0] : -1,
+    fineIndexes,
     issues,
     repeatPairsByEndId,
     segnoIndex: segnoIndexes.length === 1 ? segnoIndexes[0] : -1,
+    segnoIndexes,
+    toCodaIndexes,
   };
 }
 

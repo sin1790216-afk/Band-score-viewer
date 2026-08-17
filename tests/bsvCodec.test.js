@@ -144,6 +144,36 @@ test('.bsv preserves normalized coordinates, BPM, Beats, and multiline lyrics', 
   assert.deepEqual(measure.navigationMarkers, [{ type: 'segno' }]);
 });
 
+test('.bsv round-trip preserves Coda/Fine navigation marker types', async () => {
+  const markerTypes = [
+    'dal-segno-al-coda',
+    'to-coda',
+    'coda',
+    'dal-segno-al-fine',
+    'fine',
+  ];
+  const projectState = createInitialProjectState({
+    ...createProjectState(),
+    measures: [
+      {
+        ...MEASURE,
+        navigationMarkers: markerTypes.map((type) => ({ type })),
+      },
+    ],
+  });
+  const encoded = await encodeBsvProject({
+    now: TEST_TIMESTAMP,
+    pdfBlob: new Blob([PDF_BYTES], { type: PDF_MIME_TYPE }),
+    projectState,
+  });
+  const decoded = decodeBsvProject(encoded.text);
+
+  assert.deepEqual(
+    decoded.projectState.measures[0].navigationMarkers,
+    markerTypes.map((type) => ({ type })),
+  );
+});
+
 test('a legacy .bsv without navigation markers receives an empty marker list', async () => {
   const { document } = await createEncodedProject();
 

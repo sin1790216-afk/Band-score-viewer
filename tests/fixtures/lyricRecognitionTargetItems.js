@@ -128,3 +128,71 @@ export const TARGET_MEASURE = {
   x: 0.07,
   y: 0.3028773346794548,
 };
+
+// 실제 악보에서 확인된 navigation/performance/영문 음절 분리 형태의
+// 최소 text-item metadata만 보존한다. 원본 PDF는 fixture에 포함하지 않는다.
+export const SCORE_TEXT_CLASSIFICATION_ITEMS = [
+  item({
+    baselineY: 0.3875768408551069,
+    fontFamily: 'sans-serif',
+    fontName: 'g_score_instruction',
+    height: 0.01154394299287411,
+    text: 'To Coda',
+    width: 0.052,
+    x: 0.13,
+  }),
+  item({
+    baselineY: 0.3875768408551069,
+    fontFamily: 'sans-serif',
+    fontName: 'g_score_instruction',
+    height: 0.01154394299287411,
+    text: '(2x only)',
+    width: 0.061,
+    x: 0.21,
+  }),
+  item({
+    baselineY: 0.402,
+    fontFamily: 'sans-serif',
+    fontName: 'g_english_lyric',
+    height: 0.01154394299287411,
+    text: 'This',
+    width: 0.03,
+    x: 0.13,
+  }),
+  item({
+    baselineY: 0.402,
+    fontFamily: 'sans-serif',
+    fontName: 'g_english_lyric',
+    height: 0.01154394299287411,
+    text: 'is',
+    width: 0.012,
+    x: 0.187,
+  }),
+  item({
+    baselineY: 0.402,
+    fontFamily: 'sans-serif',
+    fontName: 'g_english_lyric',
+    height: 0.01154394299287411,
+    text: 'ou',
+    width: 0.016,
+    x: 0.235,
+  }),
+  item({
+    baselineY: 0.402,
+    fontFamily: 'sans-serif',
+    fontName: 'g_english_lyric',
+    height: 0.01154394299287411,
+    text: '-',
+    width: 0.006,
+    x: 0.268,
+  }),
+  item({
+    baselineY: 0.402,
+    fontFamily: 'sans-serif',
+    fontName: 'g_english_lyric',
+    height: 0.01154394299287411,
+    text: 'r page -',
+    width: 0.07,
+    x: 0.291,
+  }),
+];

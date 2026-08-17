@@ -102,6 +102,117 @@ test('C: D.S. returns to Segno once and then continues to the end', () => {
   assert.deepEqual(result.runState.executedDalSegnoMeasureIds, ['m8']);
 });
 
+test('C2: D.S. al Coda arms To Coda only after the Segno jump', () => {
+  const measures = createMeasures(11, {
+    3: [NAVIGATION_MARKER_TYPES.SEGNO],
+    5: [NAVIGATION_MARKER_TYPES.TO_CODA],
+    8: [NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA],
+    10: [NAVIGATION_MARKER_TYPES.CODA],
+  });
+  const result = resolvePlaybackSequence(measures);
+
+  assert.deepEqual(
+    getMeasureNumbers(result.steps),
+    [1, 2, 3, 4, 5, 6, 7, 8, 3, 4, 5, 10, 11],
+  );
+  assert.deepEqual(result.runState.executedDalSegnoAlCodaMeasureIds, ['m8']);
+  assert.deepEqual(result.runState.executedCodaJumpMeasureIds, ['m5']);
+  assert.equal(result.runState.codaArmed, false);
+});
+
+test('C3: Coda jump 후 만나는 To Coda는 다시 jump하지 않는다', () => {
+  const measures = createMeasures(12, {
+    3: [NAVIGATION_MARKER_TYPES.SEGNO],
+    5: [NAVIGATION_MARKER_TYPES.TO_CODA],
+    8: [NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA],
+    10: [NAVIGATION_MARKER_TYPES.CODA],
+    11: [NAVIGATION_MARKER_TYPES.TO_CODA],
+  });
+
+  assert.deepEqual(
+    getMeasureNumbers(resolvePlaybackSequence(measures).steps),
+    [1, 2, 3, 4, 5, 6, 7, 8, 3, 4, 5, 10, 11, 12],
+  );
+});
+
+test('C4: D.S. al Fine 이후에만 Fine에서 종료한다', () => {
+  const measures = createMeasures(8, {
+    3: [NAVIGATION_MARKER_TYPES.SEGNO],
+    6: [NAVIGATION_MARKER_TYPES.FINE],
+    8: [NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_FINE],
+  });
+  const result = resolvePlaybackSequence(measures);
+
+  assert.deepEqual(
+    getMeasureNumbers(result.steps),
+    [1, 2, 3, 4, 5, 6, 7, 8, 3, 4, 5, 6],
+  );
+  assert.equal(result.runState.endReason, 'fine');
+  assert.deepEqual(result.runState.executedDalSegnoAlFineMeasureIds, ['m8']);
+});
+
+test('C5: invalid Coda/Fine target은 physical-next로 안전하게 진행한다', () => {
+  const noCoda = createMeasures(5, {
+    2: [NAVIGATION_MARKER_TYPES.SEGNO],
+    3: [NAVIGATION_MARKER_TYPES.TO_CODA],
+    4: [NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA],
+  });
+  const noFine = createMeasures(5, {
+    2: [NAVIGATION_MARKER_TYPES.SEGNO],
+    4: [NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_FINE],
+  });
+
+  assert.deepEqual(
+    getMeasureNumbers(resolvePlaybackSequence(noCoda).steps),
+    [1, 2, 3, 4, 5],
+  );
+  assert.deepEqual(
+    getMeasureNumbers(resolvePlaybackSequence(noFine).steps),
+    [1, 2, 3, 4, 5],
+  );
+});
+
+test('C6: manual/automatic과 history는 동일한 Coda 방문 순서를 사용한다', () => {
+  const measures = createMeasures(11, {
+    3: [NAVIGATION_MARKER_TYPES.SEGNO],
+    5: [NAVIGATION_MARKER_TYPES.TO_CODA],
+    8: [NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA],
+    10: [NAVIGATION_MARKER_TYPES.CODA],
+  });
+  const resolved = resolvePlaybackSequence(measures);
+  const progressed = advanceProgressionToEnd(measures);
+  let progression = progressed.progression;
+
+  progression = rewindPlaybackProgression(progression).progression;
+  progression = rewindPlaybackProgression(progression).progression;
+
+  assert.deepEqual(
+    getMeasureNumbers(progressed.steps),
+    getMeasureNumbers(resolved.steps),
+  );
+  assert.equal(progression.runState.currentStep.measureIndex + 1, 5);
+  assert.equal(progression.runState.currentStep.enteredBy, 'next');
+});
+
+test('C7: whole-song repeat는 Coda/Fine 실행 상태를 새 cycle에서 초기화한다', () => {
+  const measures = createMeasures(11, {
+    3: [NAVIGATION_MARKER_TYPES.SEGNO],
+    5: [NAVIGATION_MARKER_TYPES.TO_CODA],
+    8: [NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA],
+    10: [NAVIGATION_MARKER_TYPES.CODA],
+  });
+  const result = advanceProgressionToEnd(measures, { loopAtEnd: true });
+
+  assert.equal(result.progression.runState.cycleIndex, 1);
+  assert.equal(result.progression.runState.codaArmed, false);
+  assert.equal(result.progression.runState.fineArmed, false);
+  assert.deepEqual(result.progression.runState.executedCodaJumpMeasureIds, []);
+  assert.deepEqual(
+    result.progression.runState.executedDalSegnoAlCodaMeasureIds,
+    [],
+  );
+});
+
 test('D: repeat and D.S. produce the exact required combined sequence', () => {
   const measures = createMeasures(8, {
     3: [NAVIGATION_MARKER_TYPES.REPEAT_START],

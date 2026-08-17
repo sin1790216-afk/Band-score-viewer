@@ -141,7 +141,11 @@
 ## 재생과 Vocal
 
 - [ ] 등록모드에서 선택 마디의 Repeat Start/End, Segno, D.S.를 토글하고 Teacher 악보 배지를 확인한다.
+- [ ] Segno와 Coda는 font에 의존하지 않는 악보 기호로, D.S. al Coda/To Coda/D.S. al Fine/Fine은 텍스트로 표시된다.
 - [ ] M3 Repeat Start, M4 Repeat End, M6 Segno, M8 D.S.에서 자동재생 순서가 `1-2-3-4-3-4-5-6-7-8-6-7-8`인지 확인한다.
+- [ ] M3 Segno, M5 To Coda, M8 D.S. al Coda, M10 Coda에서 `1-2-3-4-5-6-7-8-3-4-5-10-11` 순서로 진행한다.
+- [ ] M3 Segno, M6 Fine, M8 D.S. al Fine에서 첫 Fine은 통과하고 반환 후 Fine에서 종료한다.
+- [ ] Coda/Fine 목적지가 없거나 중복된 구성은 경고를 표시하고 무한 반복 없이 물리적 다음 마디로 진행한다.
 - [ ] Repeat End와 D.S.를 두 번째 방문했을 때 다시 jump하지 않고 곡이 종료되는지 확인한다.
 - [ ] Marker가 없는 기존 JSON/`.bsv`가 빈 Marker로 열리고, 새 Marker는 JSON/`.bsv` 왕복 후 유지되는지 확인한다.
 - [ ] 자동재생 중 수동 마디 이동 후 대상 마디의 전체 BPM/Beats 시간으로 새 run이 시작되는지 확인한다.
@@ -165,6 +169,9 @@
 - [ ] 같은 system의 다른 lyric baseline과 다음 staff system의 baseline은 반드시 새 Phrase가 된다.
 - [ ] `-`, `–`, `_`와 음가 연장 기호만 있는 lyric은 Phrase 텍스트에 포함되지 않는다.
 - [ ] 가사 편집과 PDF 가사 자동인식 적용 직후 Vocal Phrase가 별도 재분석 없이 갱신된다.
+- [ ] `To Coda`, `D.S. al Coda`, `Fine`, `(2x only)`가 가사 자동인식 및 Vocal text에 포함되지 않는다.
+- [ ] `This is ou - r page -`는 원본 lyric을 보존하면서 표시용 문자열에서 `This is our page`가 된다.
+- [ ] `K-pop`, `X-ray`, `mother-in-law`와 한국어/영어 혼합 가사는 의미 있는 문자를 잃지 않는다.
 
 ## 명령 검증
 

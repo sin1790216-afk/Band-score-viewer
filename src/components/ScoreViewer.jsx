@@ -11,10 +11,10 @@ import {
 } from '../utils/measureCoordinates.js';
 import { MEASURE_RESIZE_DIRECTIONS } from '../utils/measureResize.js';
 import {
-  getNavigationMarkerLabel,
   normalizeNavigationMarkers,
 } from '../utils/navigationMarkers.js';
 import { getNavigationEndingBadges } from '../utils/navigationModel.js';
+import NavigationMarkerLabel from './NavigationMarkerLabel.jsx';
 import {
   getPageLoadIdentity,
   getSurfaceIdentity,
@@ -945,7 +945,7 @@ function MeasureOverlay({
               <span aria-hidden="true" className="navigation-marker-badges">
                 {navigationMarkers.map((marker) => (
                   <span key={marker.type}>
-                    {getNavigationMarkerLabel(marker.type)}
+                    <NavigationMarkerLabel type={marker.type} />
                   </span>
                 ))}
                 {navigationEndingBadges.map((badge) => (

@@ -9,6 +9,9 @@ const HANGUL_TRAILING_EXTRACTION_SEPARATOR_PATTERN =
 const HANGUL_LEADING_EXTRACTION_SEPARATOR_PATTERN =
   /[\uFE63\uFF0D](?=[\uAC00-\uD7A3])/gu;
 const MIN_ISOLATED_SYLLABLE_RUN = 5;
+const LATIN_WORD_PATTERN = /[A-Za-z]/u;
+const LATIN_CONTINUATION_PATTERN = /([A-Za-z]+)\s+[-\u2010-\u2015\uFE63\uFF0D]\s+([A-Za-z]+)/gu;
+const TRAILING_LATIN_MELISMA_PATTERN = /\s+[-\u2010-\u2015\uFE63\uFF0D]\s*$/u;
 
 function normalizeUnicode(value) {
   return value.normalize('NFC');
@@ -85,15 +88,36 @@ function removeEmbeddedHangulExtractionSeparators(line) {
     .replace(HANGUL_LEADING_EXTRACTION_SEPARATOR_PATTERN, '');
 }
 
+function normalizeLatinLyricSeparators(line) {
+  const joinedContinuations = line.replace(
+    LATIN_CONTINUATION_PATTERN,
+    (match, previous, next) => {
+      const isSeparatedInitials =
+        previous.length === 1 &&
+        next.length === 1 &&
+        previous === previous.toUpperCase() &&
+        next === next.toUpperCase();
+
+      return isSeparatedInitials ? match : `${previous}${next}`;
+    },
+  );
+
+  return LATIN_WORD_PATTERN.test(joinedContinuations)
+    ? joinedContinuations.replace(TRAILING_LATIN_MELISMA_PATTERN, '').trimEnd()
+    : joinedContinuations;
+}
+
 export function normalizeVocalExtractionArtifacts(text) {
   if (typeof text !== 'string') return '';
 
   return normalizeUnicode(text)
     .split('\n')
     .map((line) =>
-      removeIsolatedLyricSeparators(
-        removeEmbeddedHangulExtractionSeparators(
-          collapseIsolatedHangulSyllables(line),
+      normalizeLatinLyricSeparators(
+        removeIsolatedLyricSeparators(
+          removeEmbeddedHangulExtractionSeparators(
+            collapseIsolatedHangulSyllables(line),
+          ),
         ),
       ),
     )

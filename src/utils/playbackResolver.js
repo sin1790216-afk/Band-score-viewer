@@ -42,11 +42,17 @@ function createPlaybackStep({
 }
 
 function getTransitionGuard(measures) {
+  const jumpMarkerTypes = [
+    NAVIGATION_MARKER_TYPES.REPEAT_END,
+    NAVIGATION_MARKER_TYPES.DAL_SEGNO,
+    NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA,
+    NAVIGATION_MARKER_TYPES.TO_CODA,
+    NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_FINE,
+  ];
   const jumpMarkerCount = measures.reduce(
     (count, measure) =>
       count +
-      Number(hasNavigationMarker(measure, NAVIGATION_MARKER_TYPES.REPEAT_END)) +
-      Number(hasNavigationMarker(measure, NAVIGATION_MARKER_TYPES.DAL_SEGNO)),
+      jumpMarkerTypes.filter((type) => hasNavigationMarker(measure, type)).length,
     0,
   );
   const repeatPassCount = buildNavigationModel(measures).repeatSections.reduce(
@@ -97,11 +103,16 @@ export function createPlaybackRunState(measures, startMeasureIndex = 0) {
   if (safeStartIndex < 0) {
     return {
       currentStep: null,
+      codaArmed: false,
       cycleIndex: 0,
       ended: true,
       endReason: 'empty-score',
+      executedCodaJumpMeasureIds: [],
+      executedDalSegnoAlCodaMeasureIds: [],
+      executedDalSegnoAlFineMeasureIds: [],
       executedDalSegnoMeasureIds: [],
       executedRepeatEndMeasureIds: [],
+      fineArmed: false,
       repeatPassBySectionId: {},
       transitionCountInCycle: 0,
       visitCounts: {},
@@ -125,12 +136,17 @@ export function createPlaybackRunState(measures, startMeasureIndex = 0) {
   });
 
   return {
+    codaArmed: false,
     currentStep: initialStep,
     cycleIndex: 0,
     ended: false,
     endReason: '',
+    executedCodaJumpMeasureIds: [],
+    executedDalSegnoAlCodaMeasureIds: [],
+    executedDalSegnoAlFineMeasureIds: [],
     executedDalSegnoMeasureIds: [],
     executedRepeatEndMeasureIds: [],
+    fineArmed: false,
     repeatPassBySectionId,
     transitionCountInCycle: 0,
     visitCounts: { [initialStep.measureId]: 1 },
@@ -233,7 +249,39 @@ export function advancePlaybackRun(
     currentMeasure,
     NAVIGATION_MARKER_TYPES.DAL_SEGNO,
   );
-  const hasAmbiguousJumpActions = hasRepeatEnd && hasDalSegno;
+  const hasDalSegnoAlCoda = hasNavigationMarker(
+    currentMeasure,
+    NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA,
+  );
+  const hasToCoda = hasNavigationMarker(
+    currentMeasure,
+    NAVIGATION_MARKER_TYPES.TO_CODA,
+  );
+  const hasDalSegnoAlFine = hasNavigationMarker(
+    currentMeasure,
+    NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_FINE,
+  );
+  const hasFine = hasNavigationMarker(
+    currentMeasure,
+    NAVIGATION_MARKER_TYPES.FINE,
+  );
+  const jumpActionCount = [
+    hasRepeatEnd,
+    hasDalSegno,
+    hasDalSegnoAlCoda,
+    hasToCoda,
+    hasDalSegnoAlFine,
+  ].filter(Boolean).length;
+  const hasAmbiguousJumpActions = jumpActionCount > 1;
+
+  if (hasFine && runState.fineArmed) {
+    return {
+      ...runState,
+      ended: true,
+      endReason: 'fine',
+      fineArmed: false,
+    };
+  }
 
   if (
     currentRepeatSection?.endings.length > 0 &&
@@ -281,6 +329,79 @@ export function advancePlaybackRun(
         ],
       });
     }
+  }
+
+  if (
+    hasToCoda &&
+    !hasAmbiguousJumpActions &&
+    runState.codaArmed &&
+    !runState.executedCodaJumpMeasureIds.includes(currentMeasure.id) &&
+    navigationModel.codaIndex >= 0 &&
+    navigationModel.codaIndex !== currentMeasureIndex
+  ) {
+    return enterMeasure(
+      runState,
+      safeMeasures,
+      navigationModel.codaIndex,
+      'to-coda',
+      {
+        codaArmed: false,
+        executedCodaJumpMeasureIds: [
+          ...runState.executedCodaJumpMeasureIds,
+          currentMeasure.id,
+        ],
+      },
+    );
+  }
+
+  if (
+    hasDalSegnoAlCoda &&
+    !hasAmbiguousJumpActions &&
+    !runState.executedDalSegnoAlCodaMeasureIds.includes(currentMeasure.id) &&
+    navigationModel.segnoIndex >= 0 &&
+    navigationModel.segnoIndex < currentMeasureIndex &&
+    navigationModel.codaIndex > currentMeasureIndex &&
+    navigationModel.toCodaIndexes.some(
+      (index) => index >= navigationModel.segnoIndex && index < currentMeasureIndex,
+    )
+  ) {
+    return enterMeasure(
+      runState,
+      safeMeasures,
+      navigationModel.segnoIndex,
+      'dal-segno-al-coda',
+      {
+        codaArmed: true,
+        executedDalSegnoAlCodaMeasureIds: [
+          ...runState.executedDalSegnoAlCodaMeasureIds,
+          currentMeasure.id,
+        ],
+      },
+    );
+  }
+
+  if (
+    hasDalSegnoAlFine &&
+    !hasAmbiguousJumpActions &&
+    !runState.executedDalSegnoAlFineMeasureIds.includes(currentMeasure.id) &&
+    navigationModel.segnoIndex >= 0 &&
+    navigationModel.segnoIndex < currentMeasureIndex &&
+    navigationModel.fineIndex >= navigationModel.segnoIndex &&
+    navigationModel.fineIndex < currentMeasureIndex
+  ) {
+    return enterMeasure(
+      runState,
+      safeMeasures,
+      navigationModel.segnoIndex,
+      'dal-segno-al-fine',
+      {
+        executedDalSegnoAlFineMeasureIds: [
+          ...runState.executedDalSegnoAlFineMeasureIds,
+          currentMeasure.id,
+        ],
+        fineArmed: true,
+      },
+    );
   }
 
   if (

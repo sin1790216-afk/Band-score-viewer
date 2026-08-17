@@ -30,7 +30,8 @@ JSON 파일은 measure 객체 배열이다. 기존 핵심 필드는 유지된다
 - `bpm`, `beats`: 자동재생 시간 계산 값. 누락되거나 유효하지 않으면 각각 120, 4로 정규화
 - `lyric`: 여러 줄을 포함할 수 있는 문자열. 누락되면 빈 문자열로 정규화
 - `navigationMarkers`: 해당 물리 마디에 붙는 수동 악보 이동 표식. 현재
-  `repeat-start`, `repeat-end`, `segno`, `dal-segno`를 지원하며 누락되면 빈 배열로 정규화
+  `repeat-start`, `repeat-end`, `segno`, `dal-segno`, `dal-segno-al-coda`, `to-coda`,
+  `coda`, `dal-segno-al-fine`, `fine`을 지원하며 누락되면 빈 배열로 정규화
 - `navigationEndings`: 도돌이표 시작 마디가 소유하는 Generic Volta 시작 anchor. 누락되면 빈 배열로 정규화
 - `coordinateSpace`: 현재 canonical 좌표 형식
 - `coordinateStatus`: 좌표 변환 신뢰 상태
@@ -103,7 +104,9 @@ Measure 배열은 PDF의 물리 순서를 유지하며 반복 방문을 위해 �
 `visitCount`는 동일 물리 마디의 재방문을 구분하고 `repeatPass`는 해당 도돌이표의 현재
 pass를 나타낸다. 괄호의 최대 pass가 반복 횟수를 결정하며, 현재 pass에 속하지 않는 derived
 range는 전체를 건너뛴다. Repeat pass, Repeat End와 D.S. 실행 이력, 전체곡 반복 cycle은 재생
-Session에만 존재하고 JSON이나 `.bsv`에 저장하지 않는다.
+Session에만 존재하고 JSON이나 `.bsv`에 저장하지 않는다. D.S. al Coda의 armed/jump 이력과
+D.S. al Fine의 armed/stop 상태도 같은 Playback run에만 존재하며 프로젝트에는 marker 위치만
+저장한다.
 
 Teacher의 `audioSettings`는 서버가 메모리에 최신값을 보관해 새 Student에도 전달한다. Student
 개인 설정은 Teacher PDF 또는 개인 PDF의 document key별로 브라우저 `localStorage`에 저장하며,

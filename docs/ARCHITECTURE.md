@@ -70,7 +70,9 @@ canonical `x/y/width/height`로 저장된다.
 `buildNavigationModel()`은 각 anchor의 선택적 legacy explicit end, 도돌이표 끝과 다음 anchor를
 이용해 Resolver용 range를 파생한다. `src/utils/playbackResolver.js`는 이 derived Repeat section과
 range로 현재 playback run의 다음 Physical Measure를 결정한다. 괄호별 `passes`와 section별
-runtime pass로 Volta를 선택하고, Repeat End와 D.S. 실행 이력은 run에만 둔다. 기존 사이드바 `반복재생`은
+runtime pass로 Volta를 선택한다. Navigation은 Segno/Coda 목적지, D.S./D.S. al Coda/To Coda/
+D.S. al Fine 명령, Fine 정지 표식을 canonical marker로 구분한다. Repeat End와 명령 실행 이력,
+Coda/Fine armed 상태는 run에만 둔다. 기존 사이드바 `반복재생`은
 곡 끝에서 새 cycle을 시작하는 별도 Session 옵션이다. App은 Resolver가 반환한 마디만 기존
 `sync:update` 경로로 발행하므로 Student와 Vocal은 Resolver를 독립 실행하지 않는다.
 
@@ -84,6 +86,11 @@ placeholder도 경계로 사용한다. `displayMeasureIndex`로 현재와 다음
 않고, Phrase 재계산에 필요한 `lyricGeometry`만 measures의 선택 metadata로 Socket과
 JSON, `.bsv`에서 함께 보존한다. geometry가 없는 기존 데이터의 Vocal 표시는 한 마디
 가사로 제한해 곡 전체 수준의 파생 Phrase를 렌더하지 않는다.
+
+PDF text layer는 가사 연결 전에 Navigation Instruction, Performance Instruction, Chord,
+Metadata, Lyric Candidate로 분류한다. 악보 진행 문구와 `(2x only)` 같은 연주 지시문은 lyric
+후보에서 제외하되 영어 및 혼합 가사는 유지한다. 이 분류 결과를 marker로 자동 적용하는 기능은
+아직 없으며, 향후 detector가 canonical navigation marker를 생성하는 입력 경계로만 사용한다.
 
 Student 필기는 `ScoreViewer`의 현재 PDF surface에서 pointer 좌표를 `0..1` 범위로
 정규화하고, 같은 canvas stack 위의 전용 SVG overlay에 렌더한다. 필기 데이터는 PDF 출처와

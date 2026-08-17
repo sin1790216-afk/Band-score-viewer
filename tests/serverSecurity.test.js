@@ -54,6 +54,23 @@ test('measures socket state accepts only bounded arrays of measure objects', () 
   assert.equal(
     isValidMeasuresState([
       {
+        navigationMarkers: [
+          { type: 'dal-segno-al-coda' },
+          { type: 'to-coda' },
+          { type: 'coda' },
+          { type: 'dal-segno-al-fine' },
+          { type: 'fine' },
+        ],
+        page: 1,
+        x: 0,
+        y: 0,
+      },
+    ]),
+    true,
+  );
+  assert.equal(
+    isValidMeasuresState([
+      {
         navigationEndings: [
           {
             confidence: 1,

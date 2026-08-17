@@ -150,6 +150,37 @@ test('project state stores BPM, Beats, and multiline lyrics without changing coo
   assert.equal(lyricState.measures[0].y, canonicalMeasure.y);
 });
 
+test('JSON round-trip preserves new navigation commands and ignores unknown marker types', () => {
+  const markerTypes = [
+    'segno',
+    'dal-segno-al-coda',
+    'to-coda',
+    'coda',
+    'dal-segno-al-fine',
+    'fine',
+  ];
+  const restored = importMeasuresJson(
+    JSON.stringify([
+      {
+        ...canonicalMeasure,
+        navigationMarkers: [
+          ...markerTypes.map((type) => ({ type })),
+          { type: 'unknown-navigation-command' },
+        ],
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    restored[0].navigationMarkers,
+    markerTypes.map((type) => ({ type })),
+  );
+  assert.deepEqual(
+    JSON.parse(exportMeasuresJson(restored))[0].navigationMarkers,
+    markerTypes.map((type) => ({ type })),
+  );
+});
+
 test('global BPM applies to every measure and keeps coordinates and per-measure editing', () => {
   const measures = Array.from({ length: 10 }, (_, index) => ({
     ...canonicalMeasure,

@@ -9,8 +9,8 @@
 
 ## 악보 진행 기호
 
-- 현재 도돌이표, Generic N개 괄호, Segno와 D.S.는 수동 Marker/anchor 편집을 지원한다. 괄호 시작점에서 재생용 range를 파생하며 기존 explicit Range 파일은 호환 경로로 유지한다.
-- Coda, To Coda, Fine, D.C., D.S. al Coda/Fine과 Navigation Symbol 자동인식은 아직 지원하지 않는다.
+- 현재 도돌이표, Generic N개 괄호, Segno, D.S., Coda, To Coda, Fine과 D.S. al Coda/Fine은 수동 Marker/anchor 편집과 PlaybackResolver 실행을 지원한다. 괄호 시작점에서 재생용 range를 파생하며 기존 explicit Range 파일은 호환 경로로 유지한다.
+- D.C. Playback, `(2x only)`의 repeat pass 의미 적용과 Navigation Symbol 자동인식은 아직 지원하지 않는다.
 - repeat pass와 여러 절 lyric lane의 자동 선택은 아직 연결되지 않았다.
 
 ## Vocal Phrase
@@ -18,6 +18,7 @@
 - 자동인식 가사는 PDF text geometry의 lyric baseline 변경을 기본 경계로 사용하고, 같은 baseline의 대표 간격 또는 마디 경계 gap 분포의 중앙값·MAD 대비 큰 수평 공백에서 추가 분리한다. 고정 픽셀 기준은 사용하지 않는다.
 - 기존 JSON이나 수동 입력처럼 `lyricGeometry`가 없는 가사는 정교한 Phrase 경계를 복원할 수 없어 Vocal에서 현재 마디 lyric만 표시한다. 자동 가사 인식을 다시 적용하면 Phrase 표시가 복원된다.
 - PDF text item 분할 품질에 따라 경계가 과도하거나 부족할 수 있다. 문장부호, 쉼 구조, 한국어 문맥 분석은 아직 사용하지 않는다.
+- Navigation/Performance/Chord/Metadata 분류는 명확한 악보 지시문의 Vocal 오염을 줄이는 보수적 규칙이다. 모든 언어의 임의 악상 용어를 완전하게 판별하는 범용 NLP는 아니다.
 
 ## 한 페이지 보기 렌더 경합
 

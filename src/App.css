@@ -1123,6 +1123,33 @@ html:-webkit-full-screen #root{
     color:#fff;
 }
 
+.navigation-symbol{
+    align-items:center;
+    display:inline-flex;
+    justify-content:center;
+    line-height:1;
+    vertical-align:middle;
+}
+
+.navigation-symbol svg{
+    fill:none;
+    height:1.2em;
+    overflow:visible;
+    stroke:currentColor;
+    stroke-linecap:round;
+    stroke-linejoin:round;
+    stroke-width:1.8;
+    width:1.2em;
+}
+
+.navigation-symbol circle{
+    fill:currentColor;
+}
+
+.navigation-symbol circle:first-child{
+    fill:none;
+}
+
 .navigation-marker-warning{
     color:#7a1010;
     line-height:1.3;

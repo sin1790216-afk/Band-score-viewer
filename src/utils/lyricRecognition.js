@@ -1,20 +1,24 @@
-const CHORD_PATTERN = /^[A-Ga-g](?:#|b|♯|♭)?(?:(?:maj|min|dim|aug|sus|add|m|M)?\d*(?:sus\d*|add\d*)?(?:\([^)]*\))?)?(?:\/[A-Ga-g](?:#|b|♯|♭)?)?$/;
-const CHORD_FRAGMENT_PATTERN = /^(?:(?:m|M|maj|min|dim|aug|sus|add)\d*(?:\([^)]*\))?(?:\/[A-Ga-g](?:#|b|♯|♭)?)?|\d+(?:sus\d*|add\d*)?(?:\([^)]*\))?|\/[A-Ga-g](?:#|b|♯|♭)?|[mM]\/[A-Ga-g](?:#|b|♯|♭)?)$/;
-const BPM_PATTERN = /^(?:bpm\s*)?=?\s*\d+(?:\.\d+)?$/i;
+import {
+  classifyScoreTextItem,
+  isChordSymbolText,
+  SCORE_TEXT_CATEGORIES,
+} from './scoreTextClassification.js';
+
 const LETTER_PATTERN = /\p{L}/u;
 const HANGUL_PATTERN = /[\uAC00-\uD7A3]/u;
 const LATIN_WORD_PATTERN = /[A-Za-z]{2,}/u;
-const MEASURE_NUMBER_PATTERN = /^\d+[.)]?$/;
 const NOTATION_GLYPH_PATTERN = /^[œŒjJqQwW\s]+$/;
 const MUSICAL_SYMBOL_PATTERN = /[\u2669-\u266f\u{1D100}-\u{1D1FF}]/u;
 const LEGACY_NOTATION_GLYPH_PATTERN = /[œŒ∑Ó‰˙]/u;
-const WEB_ADDRESS_PATTERN = /^(?:https?:\/\/|www\.)?[^\s.]+(?:\.[^\s.]+)+(?:\/\S*)?$/i;
 const LYRIC_REGION_START_STAFF_SPACES = 0.35;
 const NEXT_SYSTEM_CHORD_RESERVE_STAFF_SPACES = 2.5;
 const STAFF_FONT_ZONE_MARGIN_STAFF_SPACES = 1.5;
 const MAX_LYRIC_TEXT_HEIGHT_STAFF_SPACES = 4;
 const MIN_FONT_PROFILE_ITEM_COUNT = 2;
 const MIN_LINE_PURITY = 0.58;
+const ISOLATED_LYRIC_SEPARATOR_PATTERN = /^[-\u2010-\u2015\uFE63\uFF0D]$/u;
+const LATIN_TEXT_ITEM_PATTERN = /^[A-Za-z]+(?:\s+[A-Za-z]+)*$/u;
+const LATIN_WORD_GAP_HEIGHT_RATIO = 2;
 
 function multiplyTransforms(left, right) {
   return [
@@ -111,28 +115,11 @@ function buildFontProfiles(textItems, systems) {
   return profiles;
 }
 
-export function isChordSymbolText(value) {
-  const text = normalizeChunk(value);
-
-  return Boolean(
-    text && (CHORD_PATTERN.test(text) || CHORD_FRAGMENT_PATTERN.test(text)),
-  );
-}
+export { isChordSymbolText } from './scoreTextClassification.js';
 
 export function isLyricText(value) {
-  const text = normalizeChunk(value);
-
-  if (!text || !LETTER_PATTERN.test(text)) return false;
-  if (
-    MEASURE_NUMBER_PATTERN.test(text) ||
-    BPM_PATTERN.test(text) ||
-    NOTATION_GLYPH_PATTERN.test(text) ||
-    WEB_ADDRESS_PATTERN.test(text) ||
-    isChordSymbolText(text)
-  ) {
-    return false;
-  }
-  return true;
+  return classifyScoreTextItem(value).category ===
+    SCORE_TEXT_CATEGORIES.LYRIC_CANDIDATE;
 }
 
 function findSystemForMeasure(measure, systems) {
@@ -180,19 +167,37 @@ function groupTextLines(items, staffSpacing) {
 
 function getItemRejectionReason(item, fontProfile, system) {
   const text = normalizeChunk(item.text);
+  const classification = classifyScoreTextItem(item, {
+    allowLyricContinuationSeparator: true,
+    fontRole: fontProfile?.isChordFont ? 'chord' : '',
+    isNotation: fontProfile?.isNotationFont || hasDirectNotationContent(text),
+    system,
+  });
 
+  if (classification.category === SCORE_TEXT_CATEGORIES.NAVIGATION) {
+    return 'navigation-instruction';
+  }
+  if (
+    classification.category ===
+    SCORE_TEXT_CATEGORIES.PERFORMANCE_INSTRUCTION
+  ) {
+    return 'performance-instruction';
+  }
+  if (classification.category === SCORE_TEXT_CATEGORIES.CHORD) {
+    return 'chord-like';
+  }
   if (fontProfile?.isNotationFont || hasDirectNotationContent(text)) {
     return 'music-glyph-font';
   }
-  if (fontProfile?.isChordFont) return 'chord-like';
-  if (
-    MEASURE_NUMBER_PATTERN.test(text) ||
-    BPM_PATTERN.test(text) ||
-    WEB_ADDRESS_PATTERN.test(text)
-  ) {
-    return 'metadata';
+  if (classification.category === SCORE_TEXT_CATEGORIES.METADATA) {
+    return classification.reason || 'metadata';
   }
-  if (!LETTER_PATTERN.test(text)) return 'isolated-symbol';
+  if (
+    !LETTER_PATTERN.test(text) &&
+    classification.category !== SCORE_TEXT_CATEGORIES.LYRIC_CANDIDATE
+  ) {
+    return 'isolated-symbol';
+  }
   if (
     Number(item.height) >
     system.staffSpacing * MAX_LYRIC_TEXT_HEIGHT_STAFF_SPACES
@@ -269,8 +274,17 @@ function getLineRejectionReason(line, system) {
 }
 
 function toRejectedItem(item, reason) {
+  const classification = reason === 'navigation-instruction'
+    ? SCORE_TEXT_CATEGORIES.NAVIGATION
+    : reason === 'performance-instruction'
+      ? SCORE_TEXT_CATEGORIES.PERFORMANCE_INSTRUCTION
+      : reason === 'chord-like' || reason === 'chord-line'
+        ? SCORE_TEXT_CATEGORIES.CHORD
+        : SCORE_TEXT_CATEGORIES.METADATA;
+
   return {
     baselineY: item.baselineY,
+    classification,
     fontFamily: item.fontFamily,
     fontName: item.fontName,
     height: item.height,
@@ -442,9 +456,21 @@ function joinLineItems(items) {
       if (index === 0) return text;
 
       const previous = sortedItems[index - 1];
+      const previousText = normalizeChunk(previous.text);
       const gap = item.x - (previous.x + previous.width);
-      const naturalWordGap = Math.max(previous.height, item.height) * 3;
-      const separator = gap > naturalWordGap ? ' ' : '';
+      const representativeHeight = Math.max(previous.height, item.height);
+      const naturalWordGap = representativeHeight * 3;
+      const isLyricSeparatorBoundary =
+        ISOLATED_LYRIC_SEPARATOR_PATTERN.test(previousText) ||
+        ISOLATED_LYRIC_SEPARATOR_PATTERN.test(text);
+      const isLatinWordBoundary =
+        LATIN_TEXT_ITEM_PATTERN.test(previousText) &&
+        LATIN_TEXT_ITEM_PATTERN.test(text) &&
+        gap > representativeHeight * LATIN_WORD_GAP_HEIGHT_RATIO;
+      const separator =
+        gap > naturalWordGap || isLyricSeparatorBoundary || isLatinWordBoundary
+          ? ' '
+          : '';
 
       return `${line}${separator}${text}`;
     }, '');
@@ -504,18 +530,6 @@ export function normalizePdfTextItems(
 }
 
 function getPageItemRejectionReason(item, fontProfile, systems) {
-  if (fontProfile?.isNotationFont || hasDirectNotationContent(item.text)) {
-    return 'music-glyph-font';
-  }
-  if (fontProfile?.isChordFont) return 'chord-like';
-  if (
-    MEASURE_NUMBER_PATTERN.test(item.text) ||
-    BPM_PATTERN.test(item.text) ||
-    WEB_ADDRESS_PATTERN.test(item.text)
-  ) {
-    return 'metadata';
-  }
-
   const nearestSystem = systems.reduce((nearest, system) => {
     const distance = Math.abs(item.baselineY - system.staffBottom);
 
@@ -523,6 +537,31 @@ function getPageItemRejectionReason(item, fontProfile, systems) {
       ? { distance, system }
       : nearest;
   }, null)?.system;
+  const classification = classifyScoreTextItem(item, {
+    fontRole: fontProfile?.isChordFont ? 'chord' : '',
+    isNotation:
+      fontProfile?.isNotationFont || hasDirectNotationContent(item.text),
+    system: nearestSystem,
+  });
+
+  if (classification.category === SCORE_TEXT_CATEGORIES.NAVIGATION) {
+    return 'navigation-instruction';
+  }
+  if (
+    classification.category ===
+    SCORE_TEXT_CATEGORIES.PERFORMANCE_INSTRUCTION
+  ) {
+    return 'performance-instruction';
+  }
+  if (classification.category === SCORE_TEXT_CATEGORIES.CHORD) {
+    return 'chord-like';
+  }
+  if (fontProfile?.isNotationFont || hasDirectNotationContent(item.text)) {
+    return 'music-glyph-font';
+  }
+  if (classification.category === SCORE_TEXT_CATEGORIES.METADATA) {
+    return classification.reason || 'metadata';
+  }
 
   if (
     nearestSystem &&
@@ -572,6 +611,8 @@ export function analyzeLyricCandidates({ measures, systems, textItems }) {
         rejectedChordCount: 0,
         rejectedMetadataCount: 0,
         rejectedMusicGlyphCount: 0,
+        rejectedNavigationCount: 0,
+        rejectedPerformanceInstructionCount: 0,
         twoLineMeasureCount: 0,
       },
     };
@@ -718,6 +759,10 @@ export function analyzeLyricCandidates({ measures, systems, textItems }) {
         (pageRejectionCounts['metadata-size'] || 0),
       rejectedMusicGlyphCount:
         pageRejectionCounts['music-glyph-font'] || 0,
+      rejectedNavigationCount:
+        pageRejectionCounts['navigation-instruction'] || 0,
+      rejectedPerformanceInstructionCount:
+        pageRejectionCounts['performance-instruction'] || 0,
       twoLineMeasureCount: candidates.filter(
         (candidate) => candidate.lyricGeometry.lines.length >= 2,
       ).length,

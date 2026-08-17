@@ -12,6 +12,7 @@ import { io } from 'socket.io-client';
 import './App.css';
 import LocalAudioPlayer from './components/LocalAudioPlayer.jsx';
 import NavigationEditor from './components/NavigationEditor.jsx';
+import NavigationMarkerLabel from './components/NavigationMarkerLabel.jsx';
 import ScoreViewer from './components/ScoreViewer.jsx';
 import { decodeBsvProject, encodeBsvProject } from './project/bsvCodec.js';
 import {
@@ -4376,7 +4377,7 @@ function Sidebar({
                     title={accessibleLabel}
                     type="button"
                   >
-                    {option.label}
+                    <NavigationMarkerLabel type={option.type} />
                   </button>
                 );
               })}

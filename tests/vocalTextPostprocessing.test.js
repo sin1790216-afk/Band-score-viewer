@@ -38,6 +38,25 @@ test('영어와 숫자 및 기호가 포함된 가사는 그대로 유지한다'
   assert.equal(normalizeVocalExtractionArtifacts(text), text);
 });
 
+test('영어 음절 분리 하이픈은 표시용 문자열에서만 연결한다', () => {
+  assert.equal(
+    normalizeVocalExtractionArtifacts('This is ou - r page -'),
+    'This is our page',
+  );
+  assert.equal(
+    createVocalDisplayText('우리의 This is ou - r page -'),
+    '우리의 This is our page',
+  );
+});
+
+test('영어 단어 내부의 의미 있는 하이픈은 보존한다', () => {
+  assert.equal(
+    normalizeVocalExtractionArtifacts('K-pop X-ray mother-in-law'),
+    'K-pop X-ray mother-in-law',
+  );
+  assert.equal(normalizeVocalExtractionArtifacts('A - B'), 'A - B');
+});
+
 test('독립된 악보용 separator만 제거하고 의미 있는 하이픈은 보존한다', () => {
   assert.equal(
     normalizeVocalExtractionArtifacts('웃었던 -\n- 도사...'),
