@@ -26,6 +26,7 @@ import {
   getNavigationIssuesByMarker,
   NAVIGATION_VOLTA_MARKER_TYPE,
 } from '../utils/navigationValidation.js';
+import { NAVIGATION_TEXT_MATCH_STATUS } from '../utils/navigationTextDetection.js';
 import NavigationMarkerLabel from './NavigationMarkerLabel.jsx';
 import NavigationWarningBadge from './NavigationWarningBadge.jsx';
 import {
@@ -152,6 +153,7 @@ function ScoreViewer({
   draggedMeasureIndex,
   measures,
   mode,
+  navigationTextCandidates = [],
   navigationValidationIssues = [],
   onAddAnnotationStroke,
   onActivateMeasure,
@@ -273,6 +275,13 @@ function ScoreViewer({
         (stroke) => Number(stroke.page) === pdfPageNumber,
       ),
     [annotationStrokes, pdfPageNumber],
+  );
+  const currentPageNavigationTextCandidates = useMemo(
+    () =>
+      navigationTextCandidates.filter(
+        (candidate) => Number(candidate.pageNumber) === pdfPageNumber,
+      ),
+    [navigationTextCandidates, pdfPageNumber],
   );
 
   const measureViewer = useCallback(() => {
@@ -774,6 +783,9 @@ function ScoreViewer({
                     navigationEndingBadgesByMeasureId
                   }
                   navigationIssuesByMarker={navigationIssuesByMarker}
+                  navigationTextCandidates={
+                    isSurfaceReady ? currentPageNavigationTextCandidates : []
+                  }
                   onActivateMeasure={onActivateMeasure}
                   onEndMeasureDrag={onEndMeasureDrag}
                   onEndMeasureResize={onEndMeasureResize}
@@ -893,6 +905,7 @@ function MeasureOverlay({
   mode,
   navigationEndingBadgesByMeasureId,
   navigationIssuesByMarker,
+  navigationTextCandidates,
   onActivateMeasure,
   onEndMeasureDrag,
   onEndMeasureResize,
@@ -1038,6 +1051,36 @@ function MeasureOverlay({
               </span>
             )}
           </Fragment>
+        );
+      })}
+      {navigationTextCandidates.map((candidate) => {
+        if (
+          candidate.matchStatus ===
+          NAVIGATION_TEXT_MATCH_STATUS.MATCHED_EXISTING_MARKER
+        ) {
+          return null;
+        }
+
+        const candidateRect = calculateHighlightRect(candidate.bounds);
+
+        if (!candidateRect) return null;
+
+        return (
+          <span
+            aria-label={`${candidate.rawText} Navigation 후보`}
+            className={`navigation-text-candidate confidence-${candidate.confidence}`}
+            key={candidate.id}
+            style={{
+              height: candidateRect.height,
+              left: candidateRect.left,
+              top: candidateRect.top,
+              width: candidateRect.width,
+            }}
+          >
+            <span className="navigation-text-candidate-label">
+              <NavigationMarkerLabel type={candidate.type} /> 후보
+            </span>
+          </span>
         );
       })}
     </div>

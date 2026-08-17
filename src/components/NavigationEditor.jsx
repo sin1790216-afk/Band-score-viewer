@@ -7,6 +7,17 @@ import {
   updateNavigationEndingAnchor,
 } from '../utils/navigationModel.js';
 import { getNavigationEndingLabel } from '../utils/navigationEndings.js';
+import {
+  NAVIGATION_TEXT_CONFIDENCE,
+  NAVIGATION_TEXT_MATCH_STATUS,
+} from '../utils/navigationTextDetection.js';
+import NavigationMarkerLabel from './NavigationMarkerLabel.jsx';
+
+const CONFIDENCE_LABELS = Object.freeze({
+  [NAVIGATION_TEXT_CONFIDENCE.HIGH]: '높음',
+  [NAVIGATION_TEXT_CONFIDENCE.LOW]: '낮음',
+  [NAVIGATION_TEXT_CONFIDENCE.MEDIUM]: '중간',
+});
 
 function parseMeasureNumber(value, measureCount) {
   const measureNumber = Number(value);
@@ -23,8 +34,12 @@ function getNextPass(section) {
 }
 
 export default function NavigationEditor({
+  canDetectTextCandidates,
   disabled,
   measures,
+  navigationTextCandidates = [],
+  navigationTextDetectionState,
+  onDetectTextCandidates,
   onReplaceMeasures,
 }) {
   const navigationModel = useMemo(() => buildNavigationModel(measures), [measures]);
@@ -98,6 +113,51 @@ export default function NavigationEditor({
 
   return (
     <div className="navigation-direct-editor">
+      <section className="navigation-text-candidate-summary">
+        <button
+          disabled={
+            disabled ||
+            !canDetectTextCandidates ||
+            navigationTextDetectionState?.status === 'running'
+          }
+          onClick={onDetectTextCandidates}
+          type="button"
+        >
+          {navigationTextDetectionState?.status === 'running'
+            ? 'Navigation 후보 찾는 중'
+            : 'Navigation 후보 찾기'}
+        </button>
+        {navigationTextDetectionState?.message && (
+          <small
+            aria-live="polite"
+            className={`navigation-text-candidate-status ${
+              navigationTextDetectionState.status
+            }`}
+          >
+            {navigationTextDetectionState.message}
+          </small>
+        )}
+        {navigationTextCandidates.length > 0 && (
+          <div className="navigation-text-candidate-list">
+            {navigationTextCandidates.map((candidate) => (
+              <div className="navigation-text-candidate-row" key={candidate.id}>
+                <span>
+                  {candidate.measureIndex >= 0
+                    ? `M${candidate.measureIndex + 1}`
+                    : '위치 불확실'}
+                </span>
+                <span><NavigationMarkerLabel type={candidate.type} /></span>
+                <span>{CONFIDENCE_LABELS[candidate.confidence] || candidate.confidence}</span>
+                {candidate.matchStatus ===
+                  NAVIGATION_TEXT_MATCH_STATUS.MATCHED_EXISTING_MARKER && (
+                  <span className="navigation-text-candidate-matched">이미 지정됨</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       {navigationModel.repeatSections.length === 0 && (
         <small className="sidebar-help">
           마디를 선택해 ||:와 :|| 도돌이표를 지정하세요.

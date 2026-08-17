@@ -67,8 +67,14 @@ import {
   prepareRecognizedMeasures,
 } from './utils/measureRecognitionRuntime.js';
 import { recognizeMeasuresInPdf } from './utils/pdfMeasureRecognition.js';
+import { detectNavigationTextInPdf } from './utils/pdfNavigationTextDetection.js';
 import { applyLyricCandidates } from './utils/lyricRecognition.js';
 import { recognizeLyricsInPdf } from './utils/pdfLyricRecognition.js';
+import {
+  createNavigationTextMeasureIdentity,
+  isNavigationTextCandidateStateCurrent,
+  reconcileNavigationTextCandidates,
+} from './utils/navigationTextDetection.js';
 import {
   createVocalViewModel,
   getMeaningfulLyric,
@@ -183,6 +189,19 @@ function createInitialLyricRecognitionState() {
   return {
     candidates: [],
     message: '',
+    status: 'idle',
+  };
+}
+
+function createInitialNavigationTextDetectionState({
+  measureIdentity = '',
+  pdfIdentity = '',
+} = {}) {
+  return {
+    candidates: [],
+    measureIdentity,
+    message: '',
+    pdfIdentity,
     status: 'idle',
   };
 }
@@ -309,6 +328,7 @@ function App() {
   const measureIndexRef = useRef(0);
   const measureRecognitionVersionRef = useRef(0);
   const lyricRecognitionVersionRef = useRef(0);
+  const navigationTextDetectionVersionRef = useRef(0);
   const pageNumberRef = useRef(1);
   const pdfObjectUrlRef = useRef('');
   const teacherPdfObjectUrlRef = useRef('');
@@ -353,6 +373,8 @@ function App() {
   const [lyricRecognitionState, setLyricRecognitionState] = useState(
     createInitialLyricRecognitionState,
   );
+  const [navigationTextDetectionState, setNavigationTextDetectionState] =
+    useState(createInitialNavigationTextDetectionState);
   const [languagePhraseState, setLanguagePhraseState] = useState(null);
   const [languagePhraseMutationState, setLanguagePhraseMutationState] = useState({
     message: '',
@@ -634,6 +656,39 @@ function App() {
     () => validateNavigationModel(measures),
     [measures],
   );
+  const navigationTextMeasureIdentity = useMemo(
+    () => createNavigationTextMeasureIdentity(measures),
+    [measures],
+  );
+  const navigationTextPdfIdentity = teacherPdfObjectUrlRef.current || '';
+  const navigationTextStateIsCurrent =
+    isNavigationTextCandidateStateCurrent(navigationTextDetectionState, {
+      measureIdentity: navigationTextMeasureIdentity,
+      pdfIdentity: navigationTextPdfIdentity,
+    });
+  const navigationTextCandidates = useMemo(
+    () =>
+      navigationTextStateIsCurrent
+        ? reconcileNavigationTextCandidates(
+            navigationTextDetectionState.candidates,
+            measures,
+          )
+        : [],
+    [
+      measures,
+      navigationTextDetectionState.candidates,
+      navigationTextStateIsCurrent,
+    ],
+  );
+  const navigationTextDetectionUiState = navigationTextStateIsCurrent
+    ? {
+        ...navigationTextDetectionState,
+        candidates: navigationTextCandidates,
+      }
+    : createInitialNavigationTextDetectionState({
+        measureIdentity: navigationTextMeasureIdentity,
+        pdfIdentity: navigationTextPdfIdentity,
+      });
   const teacherSharedAudioAnchorMeasureIndex =
     getAudioTimelineAnchorMeasureIndex(
       sharedAudioMetadata?.timelineAnchor,
@@ -983,6 +1038,7 @@ function App() {
     stopAutoplay();
     measureRecognitionVersionRef.current += 1;
     lyricRecognitionVersionRef.current += 1;
+    navigationTextDetectionVersionRef.current += 1;
     dragStateRef.current = null;
     resizeStateRef.current = null;
     measuresRef.current = [];
@@ -1102,6 +1158,7 @@ function App() {
     stopAutoplay();
     measureRecognitionVersionRef.current += 1;
     lyricRecognitionVersionRef.current += 1;
+    navigationTextDetectionVersionRef.current += 1;
     setMeasureRecognitionState({
       currentPage: 0,
       message: '',
@@ -1247,6 +1304,7 @@ function App() {
     stopAutoplay();
     measureRecognitionVersionRef.current += 1;
     lyricRecognitionVersionRef.current += 1;
+    navigationTextDetectionVersionRef.current += 1;
     setMeasureRecognitionState({
       currentPage: 0,
       message: '',
@@ -1314,6 +1372,7 @@ function App() {
 
     stopAutoplay();
     lyricRecognitionVersionRef.current += 1;
+    navigationTextDetectionVersionRef.current += 1;
     setLyricRecognitionState(createInitialLyricRecognitionState());
     const recognitionVersion = measureRecognitionVersionRef.current + 1;
 
@@ -1426,6 +1485,142 @@ function App() {
       window.alert(
         `마디 자동인식에 실패했습니다.\n${error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.'}`,
       );
+    }
+  }
+
+  async function detectPdfNavigationText() {
+    const pdfBlob = teacherPdfBlobRef.current;
+
+    if (
+      !canEdit ||
+      !pdfBlob ||
+      measuresRef.current.length === 0 ||
+      navigationTextDetectionState.status === 'running' ||
+      measureRecognitionState.status === 'running'
+    ) {
+      return;
+    }
+
+    const detectionVersion = navigationTextDetectionVersionRef.current + 1;
+    const requestedMeasureIdentity = createNavigationTextMeasureIdentity(
+      measuresRef.current,
+    );
+    const requestedPdfIdentity = teacherPdfObjectUrlRef.current || '';
+
+    navigationTextDetectionVersionRef.current = detectionVersion;
+    setNavigationTextDetectionState({
+      candidates: [],
+      measureIdentity: requestedMeasureIdentity,
+      message: 'PDF Navigation 텍스트를 분석하고 있습니다.',
+      pdfIdentity: requestedPdfIdentity,
+      status: 'running',
+    });
+
+    try {
+      const result = await detectNavigationTextInPdf(
+        pdfBlob,
+        measuresRef.current,
+        {
+          onPageDiagnostics: import.meta.env.DEV
+            ? (diagnostics) => {
+                console.info('[NavigationTextDetection] page', diagnostics);
+              }
+            : undefined,
+          onProgress: ({ currentPage, totalPages: detectionTotalPages }) => {
+            if (
+              navigationTextDetectionVersionRef.current !== detectionVersion
+            ) {
+              return;
+            }
+
+            setNavigationTextDetectionState({
+              candidates: [],
+              measureIdentity: requestedMeasureIdentity,
+              message: `${currentPage} / ${detectionTotalPages} 페이지 Navigation 분석 중`,
+              pdfIdentity: requestedPdfIdentity,
+              status: 'running',
+            });
+          },
+        },
+      );
+
+      if (
+        navigationTextDetectionVersionRef.current !== detectionVersion ||
+        teacherPdfBlobRef.current !== pdfBlob ||
+        teacherPdfObjectUrlRef.current !== requestedPdfIdentity ||
+        createNavigationTextMeasureIdentity(measuresRef.current) !==
+          requestedMeasureIdentity
+      ) {
+        return;
+      }
+
+      if (import.meta.env.DEV) {
+        const runtimeDiagnostics = {
+          candidates: result.candidates,
+          diagnostics: result.diagnostics,
+          extractedTextItemCount: result.extractedTextItemCount,
+        };
+
+        window.__BSV_NAVIGATION_TEXT_DETECTION_DEBUG__ = runtimeDiagnostics;
+        result.candidates.forEach((candidate) => {
+          console.info('[NavigationTextDetection]', {
+            associatedMeasure:
+              candidate.measureIndex >= 0
+                ? `M${candidate.measureIndex + 1}`
+                : null,
+            canonicalType: candidate.type,
+            classification: candidate.evidence.classification.category,
+            confidence: candidate.confidence,
+            evidence: candidate.evidence,
+            page: candidate.pageNumber,
+            raw: candidate.rawText,
+          });
+        });
+      }
+
+      if (result.extractedTextItemCount === 0) {
+        setNavigationTextDetectionState({
+          candidates: [],
+          measureIdentity: requestedMeasureIdentity,
+          message:
+            '이 PDF에서 추출 가능한 텍스트를 찾지 못했습니다. 스캔 PDF/OCR 탐지는 지원하지 않습니다.',
+          pdfIdentity: requestedPdfIdentity,
+          status: 'error',
+        });
+        return;
+      }
+
+      const unmappedCount = result.candidates.filter(
+        (candidate) => !candidate.measureId,
+      ).length;
+      const unmappedMessage = unmappedCount
+        ? ` 위치 불확실 ${unmappedCount}개.`
+        : '';
+
+      setNavigationTextDetectionState({
+        candidates: result.candidates,
+        measureIdentity: requestedMeasureIdentity,
+        message: result.candidates.length
+          ? `텍스트 Navigation 후보 ${result.candidates.length}개를 찾았습니다.${unmappedMessage}`
+          : '지원하는 텍스트 Navigation 후보를 찾지 못했습니다.',
+        pdfIdentity: requestedPdfIdentity,
+        status: 'complete',
+      });
+    } catch (error) {
+      if (navigationTextDetectionVersionRef.current !== detectionVersion) {
+        return;
+      }
+
+      console.error('[NavigationTextDetection] failed', error);
+      setNavigationTextDetectionState({
+        candidates: [],
+        measureIdentity: requestedMeasureIdentity,
+        message: `Navigation 후보 탐지에 실패했습니다. ${
+          error instanceof Error ? error.message : ''
+        }`.trim(),
+        pdfIdentity: requestedPdfIdentity,
+        status: 'error',
+      });
     }
   }
 
@@ -3171,6 +3366,25 @@ function App() {
   }, [measures]);
 
   useEffect(() => {
+    setNavigationTextDetectionState((previousState) => {
+      if (
+        isNavigationTextCandidateStateCurrent(previousState, {
+          measureIdentity: navigationTextMeasureIdentity,
+          pdfIdentity: navigationTextPdfIdentity,
+        })
+      ) {
+        return previousState;
+      }
+
+      navigationTextDetectionVersionRef.current += 1;
+      return createInitialNavigationTextDetectionState({
+        measureIdentity: navigationTextMeasureIdentity,
+        pdfIdentity: navigationTextPdfIdentity,
+      });
+    });
+  }, [navigationTextMeasureIdentity, navigationTextPdfIdentity]);
+
+  useEffect(() => {
     audioSettingsRef.current = audioSettings;
   }, [audioSettings]);
 
@@ -3880,6 +4094,9 @@ function App() {
             canRecognizeLyrics={Boolean(
               teacherPdfBlobRef.current && measures.length
             )}
+            canDetectNavigationText={Boolean(
+              teacherPdfBlobRef.current && measures.length
+            )}
             canResolveLanguagePhrases={measures.some((measure) =>
               getMeaningfulLyric(measure),
             )}
@@ -3893,6 +4110,8 @@ function App() {
             navigationMarkerOptions={NAVIGATION_MARKER_OPTIONS}
             navigationMarkerValidation={navigationMarkerValidation}
             navigationRepeatPolicyOptions={NAVIGATION_REPEAT_POLICY_OPTIONS}
+            navigationTextCandidates={navigationTextCandidates}
+            navigationTextDetectionState={navigationTextDetectionUiState}
             measures={measures}
             measureRecognitionState={measureRecognitionState}
             lyricRecognitionState={lyricRecognitionState}
@@ -3910,6 +4129,7 @@ function App() {
             onOpenPdf={openPdf}
             onRecognizeMeasures={recognizePdfMeasures}
             onRecognizeLyrics={recognizePdfLyrics}
+            onDetectNavigationText={detectPdfNavigationText}
             onApplyRecognizedLyrics={applyRecognizedLyrics}
             onCancelRecognizedLyrics={cancelRecognizedLyrics}
             onResolveLanguagePhrases={resolveLanguagePhrases}
@@ -4024,6 +4244,7 @@ function App() {
             measures={measures}
             mode={overlayMode}
             navigationValidationIssues={navigationMarkerValidation.issues}
+            navigationTextCandidates={canEdit ? navigationTextCandidates : []}
             onAddAnnotationStroke={addStudentAnnotationStroke}
             onActivateMeasure={
               canEditStudentAudioTimeline ? activateStudentAudioMeasure : null
@@ -4123,6 +4344,7 @@ function Sidebar({
   bsvInputRef,
   canEdit,
   canEndSession,
+  canDetectNavigationText,
   canOpenAudioLink,
   canRecognizeMeasures,
   canRecognizeLyrics,
@@ -4135,6 +4357,8 @@ function Sidebar({
   navigationMarkerOptions,
   navigationMarkerValidation,
   navigationRepeatPolicyOptions,
+  navigationTextCandidates,
+  navigationTextDetectionState,
   measures,
   measureIndex,
   measureRecognitionState,
@@ -4145,6 +4369,7 @@ function Sidebar({
   onApplyGlobalBpm,
   onApplyRecognizedLyrics,
   onCancelRecognizedLyrics,
+  onDetectNavigationText,
   onEndClassSession,
   onAdvancePlayback,
   onGoToMeasure,
@@ -4567,8 +4792,12 @@ function Sidebar({
           <small className="sidebar-help">등록모드에서 마디를 선택하세요.</small>
         )}
         <NavigationEditor
+          canDetectTextCandidates={canDetectNavigationText}
           disabled={isAutoPlaying}
           measures={measures}
+          navigationTextCandidates={navigationTextCandidates}
+          navigationTextDetectionState={navigationTextDetectionState}
+          onDetectTextCandidates={onDetectNavigationText}
           onReplaceMeasures={onReplaceNavigationMeasures}
         />
       </SidebarSection>
