@@ -434,6 +434,7 @@ function simulateDalSegnoCandidate({
     simulationState = advancePlaybackRun(simulationState, measures, {
       disablePathPlanning: true,
       ignoreTransitionGuard: true,
+      suppressDiagnostics: true,
     });
 
     if (
@@ -560,10 +561,13 @@ function resolveDalSegnoJump({
   navigationDecisionOverride,
   navigationModel,
   runState,
+  suppressDiagnostics,
   stateOverrides,
   wasAutoPlaying,
 }) {
-  logNavigationRuntimeMarkers(measures);
+  if (!suppressDiagnostics) {
+    logNavigationRuntimeMarkers(measures);
+  }
 
   if (
     navigationDecisionOverride?.commandMeasureId === commandMeasure.id &&
@@ -614,12 +618,15 @@ function resolveDalSegnoJump({
         repeatDecisions,
         repeatSectionIds,
         runState,
+        suppressDiagnostics: true,
         stateOverrides,
         target,
       }),
   });
 
-  logNavigationPlan(plan);
+  if (!suppressDiagnostics) {
+    logNavigationPlan(plan);
+  }
   const diagnosticBase = getTransitionDiagnosticBase({
     commandDetected: commandType,
     currentMeasure: commandMeasure,
@@ -644,26 +651,30 @@ function resolveDalSegnoJump({
       },
     });
 
-    logPlaybackTransition({
-      ...diagnosticBase,
-      codaArmedAfter: nextRunState.codaArmed,
-      decision: `${commandType}-jump`,
-      plannerDecision: plan.repeatDecisions,
-      plannerStatus: plan.status,
-      toMeasure: nextRunState.currentStep.measureIndex + 1,
-    });
+    if (!suppressDiagnostics) {
+      logPlaybackTransition({
+        ...diagnosticBase,
+        codaArmedAfter: nextRunState.codaArmed,
+        decision: `${commandType}-jump`,
+        plannerDecision: plan.repeatDecisions,
+        plannerStatus: plan.status,
+        toMeasure: nextRunState.currentStep.measureIndex + 1,
+      });
+    }
     return nextRunState;
   }
 
   if (plan.status === NAVIGATION_PATH_PLAN_STATUS.AMBIGUOUS) {
-    logPlaybackTransition({
-      ...diagnosticBase,
-      codaArmedAfter: runState.codaArmed,
-      decision: 'await-teacher',
-      plannerDecision: null,
-      plannerStatus: plan.status,
-      toMeasure: commandMeasureIndex + 1,
-    });
+    if (!suppressDiagnostics) {
+      logPlaybackTransition({
+        ...diagnosticBase,
+        codaArmedAfter: runState.codaArmed,
+        decision: 'await-teacher',
+        plannerDecision: null,
+        plannerStatus: plan.status,
+        toMeasure: commandMeasureIndex + 1,
+      });
+    }
     return {
       ...runState,
       lastNavigationPlan: plan,
@@ -686,14 +697,16 @@ function resolveDalSegnoJump({
     loopAtEnd,
   );
 
-  logPlaybackTransition({
-    ...diagnosticBase,
-    codaArmedAfter: nextRunState.codaArmed,
-    decision: 'physical-next-fallback',
-    plannerDecision: null,
-    plannerStatus: plan.status,
-    toMeasure: nextRunState.currentStep?.measureIndex + 1 || null,
-  });
+  if (!suppressDiagnostics) {
+    logPlaybackTransition({
+      ...diagnosticBase,
+      codaArmedAfter: nextRunState.codaArmed,
+      decision: 'physical-next-fallback',
+      plannerDecision: null,
+      plannerStatus: plan.status,
+      toMeasure: nextRunState.currentStep?.measureIndex + 1 || null,
+    });
+  }
   return nextRunState;
 }
 
@@ -705,6 +718,7 @@ export function advancePlaybackRun(
     ignoreTransitionGuard = false,
     loopAtEnd = false,
     navigationDecisionOverride = null,
+    suppressDiagnostics = false,
     wasAutoPlaying = false,
   } = {},
 ) {
@@ -820,7 +834,7 @@ export function advancePlaybackRun(
       },
     );
 
-    if (!disablePathPlanning) {
+    if (!disablePathPlanning && !suppressDiagnostics) {
       logPlaybackTransition({
         ...getTransitionDiagnosticBase({
           commandDetected: NAVIGATION_MARKER_TYPES.TO_CODA,
@@ -905,6 +919,7 @@ export function advancePlaybackRun(
       navigationDecisionOverride,
       navigationModel,
       runState,
+      suppressDiagnostics,
       stateOverrides: { codaArmed: true },
       wasAutoPlaying,
     });
@@ -927,6 +942,7 @@ export function advancePlaybackRun(
       navigationDecisionOverride,
       navigationModel,
       runState,
+      suppressDiagnostics,
       stateOverrides: { fineArmed: true },
       wasAutoPlaying,
     });
@@ -949,6 +965,7 @@ export function advancePlaybackRun(
       navigationDecisionOverride,
       navigationModel,
       runState,
+      suppressDiagnostics,
       stateOverrides: {},
       wasAutoPlaying,
     });
@@ -1067,6 +1084,36 @@ export function rewindPlaybackProgression(progression) {
       runState: previousRunState,
     },
   };
+}
+
+export function getNavigationPathPlansForValidation(measures) {
+  const safeMeasures = Array.isArray(measures) ? measures : [];
+  const plans = [];
+  const seenCommandMeasureIds = new Set();
+  let runState = createPlaybackRunState(safeMeasures);
+  const guard = getTransitionGuard(safeMeasures) + 1;
+  let transitionCount = 0;
+
+  while (
+    runState.currentStep &&
+    !runState.ended &&
+    !runState.pendingNavigationDecision &&
+    transitionCount <= guard
+  ) {
+    runState = advancePlaybackRun(runState, safeMeasures, {
+      suppressDiagnostics: true,
+    });
+    const plan = runState.lastNavigationPlan;
+
+    if (plan && !seenCommandMeasureIds.has(plan.command.measureId)) {
+      plans.push(plan);
+      seenCommandMeasureIds.add(plan.command.measureId);
+    }
+
+    transitionCount += 1;
+  }
+
+  return plans;
 }
 
 export function resolvePlaybackSequence(measures, { startMeasureIndex = 0 } = {}) {

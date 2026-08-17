@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -14,7 +21,13 @@ import {
   normalizeNavigationMarkers,
 } from '../utils/navigationMarkers.js';
 import { getNavigationEndingBadges } from '../utils/navigationModel.js';
+import {
+  getNavigationIssueMarkerKey,
+  getNavigationIssuesByMarker,
+  NAVIGATION_VOLTA_MARKER_TYPE,
+} from '../utils/navigationValidation.js';
 import NavigationMarkerLabel from './NavigationMarkerLabel.jsx';
+import NavigationWarningBadge from './NavigationWarningBadge.jsx';
 import {
   getPageLoadIdentity,
   getSurfaceIdentity,
@@ -139,6 +152,7 @@ function ScoreViewer({
   draggedMeasureIndex,
   measures,
   mode,
+  navigationValidationIssues = [],
   onAddAnnotationStroke,
   onActivateMeasure,
   onDebugSnapshot,
@@ -182,6 +196,13 @@ function ScoreViewer({
   const navigationEndingBadgesByMeasureId = useMemo(
     () => (showNavigationMarkers ? getNavigationEndingBadges(measures) : new Map()),
     [measures, showNavigationMarkers],
+  );
+  const navigationIssuesByMarker = useMemo(
+    () =>
+      showNavigationMarkers
+        ? getNavigationIssuesByMarker(navigationValidationIssues)
+        : new Map(),
+    [navigationValidationIssues, showNavigationMarkers],
   );
   const [readySurface, setReadySurface] = useState(null);
   const [draftAnnotationStroke, setDraftAnnotationStroke] = useState(null);
@@ -752,6 +773,7 @@ function ScoreViewer({
                   navigationEndingBadgesByMeasureId={
                     navigationEndingBadgesByMeasureId
                   }
+                  navigationIssuesByMarker={navigationIssuesByMarker}
                   onActivateMeasure={onActivateMeasure}
                   onEndMeasureDrag={onEndMeasureDrag}
                   onEndMeasureResize={onEndMeasureResize}
@@ -870,6 +892,7 @@ function MeasureOverlay({
   draggedMeasureIndex,
   mode,
   navigationEndingBadgesByMeasureId,
+  navigationIssuesByMarker,
   onActivateMeasure,
   onEndMeasureDrag,
   onEndMeasureResize,
@@ -911,75 +934,110 @@ function MeasureOverlay({
           width: highlightRect.width,
         };
 
+        const hasNavigationBadges =
+          navigationMarkers.length > 0 || navigationEndingBadges.length > 0;
+
         return (
-          <button
-            type="button"
-            className={`highlight ${index === selectedMeasureIndex ? 'selected' : ''} ${
-              index === draggedMeasureIndex ? 'dragging' : ''
-            } ${index === resizedMeasureIndex ? 'resizing' : ''} ${
-              showAudioMeasureTargets ? 'audio-target' : ''
-            } ${isAudioMapped ? 'audio-mapped' : ''} ${
-              index === audioTargetMeasureIndex ? 'audio-target-selected' : ''
-            } ${index === currentMeasureIndex ? 'current-measure' : ''}`}
-            key={measure.id}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (mode === REGISTER_MODE) {
-                onSelectMeasure(index);
-              } else {
-                onActivateMeasure?.(index);
+          <Fragment key={measure.id}>
+            <button
+              type="button"
+              className={`highlight ${index === selectedMeasureIndex ? 'selected' : ''} ${
+                index === draggedMeasureIndex ? 'dragging' : ''
+              } ${index === resizedMeasureIndex ? 'resizing' : ''} ${
+                showAudioMeasureTargets ? 'audio-target' : ''
+              } ${isAudioMapped ? 'audio-mapped' : ''} ${
+                index === audioTargetMeasureIndex ? 'audio-target-selected' : ''
+              } ${index === currentMeasureIndex ? 'current-measure' : ''}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (mode === REGISTER_MODE) {
+                  onSelectMeasure(index);
+                } else {
+                  onActivateMeasure?.(index);
+                }
+              }}
+              onPointerDown={
+                mode === REGISTER_MODE
+                  ? (event) => onStartMeasureDrag(index, event, highlightRect)
+                  : undefined
               }
-            }}
-            onPointerDown={
-              mode === REGISTER_MODE
-                ? (event) => onStartMeasureDrag(index, event, highlightRect)
-                : undefined
-            }
-            onPointerMove={mode === REGISTER_MODE ? onMoveMeasure : undefined}
-            onPointerUp={mode === REGISTER_MODE ? onEndMeasureDrag : undefined}
-            onPointerCancel={mode === REGISTER_MODE ? onEndMeasureDrag : undefined}
-            style={highlightStyle}
-            aria-label={`measure ${index + 1}`}
-          >
-            {(navigationMarkers.length > 0 || navigationEndingBadges.length > 0) && (
-              <span aria-hidden="true" className="navigation-marker-badges">
-                {navigationMarkers.map((marker) => (
-                  <span key={marker.type}>
-                    <NavigationMarkerLabel type={marker.type} />
-                  </span>
-                ))}
-                {navigationEndingBadges.map((badge) => (
-                  <span className="navigation-ending-badge" key={badge.id}>
-                    {badge.label}
-                  </span>
-                ))}
+              onPointerMove={mode === REGISTER_MODE ? onMoveMeasure : undefined}
+              onPointerUp={mode === REGISTER_MODE ? onEndMeasureDrag : undefined}
+              onPointerCancel={mode === REGISTER_MODE ? onEndMeasureDrag : undefined}
+              style={highlightStyle}
+              aria-label={`measure ${index + 1}`}
+            >
+              {mode === REGISTER_MODE && index === selectedMeasureIndex && (
+                <>
+                  {RESIZE_HANDLES.map((handle) => (
+                    <span
+                      aria-label={handle.label}
+                      className={handle.className}
+                      key={handle.direction}
+                      onPointerDown={(event) =>
+                        onStartMeasureResize(
+                          index,
+                          handle.direction,
+                          event,
+                          highlightRect,
+                        )
+                      }
+                      onPointerMove={onResizeMeasure}
+                      onPointerUp={onEndMeasureResize}
+                      onPointerCancel={onEndMeasureResize}
+                      role="button"
+                      tabIndex={-1}
+                    />
+                  ))}
+                </>
+              )}
+            </button>
+            {hasNavigationBadges && (
+              <span
+                className="navigation-marker-badges"
+                style={{
+                  left: highlightRect.left,
+                  maxWidth: highlightRect.width,
+                  top: highlightRect.top,
+                }}
+              >
+                {navigationMarkers.map((marker) => {
+                  const issues = navigationIssuesByMarker.get(
+                    getNavigationIssueMarkerKey(measure.id, marker.type),
+                  ) || [];
+
+                  return (
+                    <span className="navigation-marker-item" key={marker.type}>
+                      <span aria-hidden="true" className="navigation-marker-label">
+                        <NavigationMarkerLabel type={marker.type} />
+                      </span>
+                      <NavigationWarningBadge issues={issues} />
+                    </span>
+                  );
+                })}
+                {navigationEndingBadges.map((badge) => {
+                  const issues = navigationIssuesByMarker.get(
+                    getNavigationIssueMarkerKey(
+                      measure.id,
+                      NAVIGATION_VOLTA_MARKER_TYPE,
+                    ),
+                  ) || [];
+
+                  return (
+                    <span
+                      className="navigation-marker-item navigation-ending-badge"
+                      key={badge.id}
+                    >
+                      <span aria-hidden="true" className="navigation-marker-label">
+                        {badge.label}
+                      </span>
+                      <NavigationWarningBadge issues={issues} />
+                    </span>
+                  );
+                })}
               </span>
             )}
-            {mode === REGISTER_MODE && index === selectedMeasureIndex && (
-              <>
-                {RESIZE_HANDLES.map((handle) => (
-                  <span
-                    aria-label={handle.label}
-                    className={handle.className}
-                    key={handle.direction}
-                    onPointerDown={(event) =>
-                      onStartMeasureResize(
-                        index,
-                        handle.direction,
-                        event,
-                        highlightRect,
-                      )
-                    }
-                    onPointerMove={onResizeMeasure}
-                    onPointerUp={onEndMeasureResize}
-                    onPointerCancel={onEndMeasureResize}
-                    role="button"
-                    tabIndex={-1}
-                  />
-                ))}
-              </>
-            )}
-          </button>
+          </Fragment>
         );
       })}
     </div>

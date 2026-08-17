@@ -54,7 +54,7 @@ import {
   supportsNavigationRepeatPolicy,
   toggleNavigationMarker,
 } from './utils/navigationMarkers.js';
-import { getNavigationModelValidation } from './utils/navigationModel.js';
+import { validateNavigationModel } from './utils/navigationValidation.js';
 import {
   advancePlaybackProgression as advancePlaybackProgressionState,
   createPlaybackProgression,
@@ -631,7 +631,7 @@ function App() {
   );
   const selectedMeasure = measures[selectedMeasureIndex] || null;
   const navigationMarkerValidation = useMemo(
-    () => getNavigationModelValidation(measures),
+    () => validateNavigationModel(measures),
     [measures],
   );
   const teacherSharedAudioAnchorMeasureIndex =
@@ -4023,6 +4023,7 @@ function App() {
             draggedMeasureIndex={draggedMeasureIndex}
             measures={measures}
             mode={overlayMode}
+            navigationValidationIssues={navigationMarkerValidation.issues}
             onAddAnnotationStroke={addStudentAnnotationStroke}
             onActivateMeasure={
               canEditStudentAudioTimeline ? activateStudentAudioMeasure : null
