@@ -6,11 +6,12 @@ import {
   detectScoreLayout,
 } from './measureRecognition.js';
 import { normalizePdfTextItems } from './lyricRecognition.js';
+import { detectNavigationGraphicCandidates } from './navigationGraphicDetection.js';
 import { detectNavigationTextCandidates } from './navigationTextDetection.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = `${import.meta.env.BASE_URL}pdf.worker.min.mjs`;
 
-export async function detectNavigationTextInPdf(
+export async function detectNavigationCandidatesInPdf(
   pdfBlob,
   measures,
   { onPageDiagnostics, onProgress } = {},
@@ -59,9 +60,13 @@ export async function detectNavigationTextInPdf(
         await page.render({ canvasContext: context, viewport: renderViewport })
           .promise;
 
-        const layout = detectScoreLayout(
-          context.getImageData(0, 0, canvas.width, canvas.height),
+        const imageData = context.getImageData(
+          0,
+          0,
+          canvas.width,
+          canvas.height,
         );
+        const layout = detectScoreLayout(imageData);
         const textContent = await page.getTextContent();
         const normalizedTextItems = normalizePdfTextItems(
           textContent.items,
@@ -69,23 +74,37 @@ export async function detectNavigationTextInPdf(
           textContent.styles,
           pageNumber,
         );
-        const pageResult = detectNavigationTextCandidates({
+        const textResult = detectNavigationTextCandidates({
           measures,
           pageNumber,
           systems: layout.systems,
           textItems: normalizedTextItems,
         });
+        const graphicResult = detectNavigationGraphicCandidates({
+          imageData,
+          measures,
+          pageNumber,
+          systems: layout.systems,
+          textItems: normalizedTextItems,
+        });
+        const pageCandidates = [
+          ...textResult.candidates,
+          ...graphicResult.candidates,
+        ];
         const pageDiagnostics = {
-          ...pageResult.diagnostics,
+          candidateCount: pageCandidates.length,
+          graphic: graphicResult.diagnostics,
+          pageNumber,
           raster: {
             height: canvas.height,
             renderScale,
             width: canvas.width,
           },
+          text: textResult.diagnostics,
         };
 
         extractedTextItemCount += normalizedTextItems.length;
-        candidates.push(...pageResult.candidates);
+        candidates.push(...pageCandidates);
         diagnostics.push(pageDiagnostics);
         onPageDiagnostics?.(pageDiagnostics);
       } finally {
@@ -95,8 +114,17 @@ export async function detectNavigationTextInPdf(
       }
     }
 
+    candidates.sort(
+      (left, right) =>
+        left.measureIndex - right.measureIndex ||
+        left.pageNumber - right.pageNumber ||
+        left.type.localeCompare(right.type),
+    );
+
     return { candidates, diagnostics, extractedTextItemCount };
   } finally {
     await loadingTask.destroy();
   }
 }
+
+export const detectNavigationTextInPdf = detectNavigationCandidatesInPdf;

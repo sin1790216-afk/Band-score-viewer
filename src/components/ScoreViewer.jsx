@@ -26,7 +26,10 @@ import {
   getNavigationIssuesByMarker,
   NAVIGATION_VOLTA_MARKER_TYPE,
 } from '../utils/navigationValidation.js';
-import { NAVIGATION_TEXT_MATCH_STATUS } from '../utils/navigationTextDetection.js';
+import {
+  getNavigationTextCandidateLabel,
+  NAVIGATION_TEXT_MATCH_STATUS,
+} from '../utils/navigationTextDetection.js';
 import NavigationMarkerLabel from './NavigationMarkerLabel.jsx';
 import NavigationWarningBadge from './NavigationWarningBadge.jsx';
 import {
@@ -1067,7 +1070,7 @@ function MeasureOverlay({
 
         return (
           <span
-            aria-label={`${candidate.rawText} Navigation 후보`}
+            aria-label={`${getNavigationTextCandidateLabel(candidate)} Navigation 후보`}
             className={`navigation-text-candidate confidence-${candidate.confidence}`}
             key={candidate.id}
             style={{
@@ -1078,7 +1081,7 @@ function MeasureOverlay({
             }}
           >
             <span className="navigation-text-candidate-label">
-              <NavigationMarkerLabel type={candidate.type} /> 후보
+              {getNavigationTextCandidateLabel(candidate)} 후보
             </span>
           </span>
         );

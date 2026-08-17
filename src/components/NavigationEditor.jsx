@@ -8,15 +8,21 @@ import {
 } from '../utils/navigationModel.js';
 import { getNavigationEndingLabel } from '../utils/navigationEndings.js';
 import {
+  getNavigationTextCandidateLabel,
   NAVIGATION_TEXT_CONFIDENCE,
   NAVIGATION_TEXT_MATCH_STATUS,
 } from '../utils/navigationTextDetection.js';
-import NavigationMarkerLabel from './NavigationMarkerLabel.jsx';
 
 const CONFIDENCE_LABELS = Object.freeze({
   [NAVIGATION_TEXT_CONFIDENCE.HIGH]: '높음',
   [NAVIGATION_TEXT_CONFIDENCE.LOW]: '낮음',
   [NAVIGATION_TEXT_CONFIDENCE.MEDIUM]: '중간',
+});
+
+const SOURCE_LABELS = Object.freeze({
+  'pdf-graphics': '그래픽',
+  'pdf-hybrid': '혼합',
+  'pdf-text': '텍스트',
 });
 
 function parseMeasureNumber(value, measureCount) {
@@ -146,8 +152,11 @@ export default function NavigationEditor({
                     ? `M${candidate.measureIndex + 1}`
                     : '위치 불확실'}
                 </span>
-                <span><NavigationMarkerLabel type={candidate.type} /></span>
-                <span>{CONFIDENCE_LABELS[candidate.confidence] || candidate.confidence}</span>
+                <span>{getNavigationTextCandidateLabel(candidate)}</span>
+                <span>
+                  {SOURCE_LABELS[candidate.source] || candidate.source} /{' '}
+                  {CONFIDENCE_LABELS[candidate.confidence] || candidate.confidence}
+                </span>
                 {candidate.matchStatus ===
                   NAVIGATION_TEXT_MATCH_STATUS.MATCHED_EXISTING_MARKER && (
                   <span className="navigation-text-candidate-matched">이미 지정됨</span>

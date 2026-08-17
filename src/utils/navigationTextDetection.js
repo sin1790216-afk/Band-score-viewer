@@ -3,6 +3,7 @@ import {
   hasNavigationMarker,
   NAVIGATION_MARKER_TYPES,
 } from './navigationMarkers.js';
+import { collectNavigationEndings } from './navigationEndings.js';
 import { NORMALIZED_COORDINATE_SPACE } from './measureCoordinates.js';
 import {
   classifyScoreTextItem,
@@ -11,6 +12,7 @@ import {
 } from './scoreTextClassification.js';
 
 export const NAVIGATION_TEXT_CANDIDATE_SOURCE = 'pdf-text';
+const VOLTA_ANCHOR_CANDIDATE_TYPE = 'volta-anchor';
 
 export const NAVIGATION_TEXT_CONFIDENCE = Object.freeze({
   HIGH: 'high',
@@ -583,14 +585,22 @@ export function detectNavigationTextCandidates({
 
 export function reconcileNavigationTextCandidates(candidates, measures) {
   const safeMeasures = Array.isArray(measures) ? measures : [];
+  const navigationEndings = collectNavigationEndings(safeMeasures);
 
   return (Array.isArray(candidates) ? candidates : []).map((candidate) => {
     const measure = safeMeasures[candidate.measureIndex];
     const isSameMeasure =
       measure &&
       (!candidate.measureId || !measure.id || measure.id === candidate.measureId);
-    const matched =
-      isSameMeasure && hasNavigationMarker(measure, candidate.type);
+    const matched = isSameMeasure && (
+      candidate.type === VOLTA_ANCHOR_CANDIDATE_TYPE
+        ? navigationEndings.some(
+            (ending) =>
+              ending.startMeasureId === measure.id &&
+              JSON.stringify(ending.passes) === JSON.stringify(candidate.passes),
+          )
+        : hasNavigationMarker(measure, candidate.type)
+    );
 
     return {
       ...candidate,
@@ -626,5 +636,9 @@ export function isNavigationTextCandidateStateCurrent(
 }
 
 export function getNavigationTextCandidateLabel(candidate) {
+  if (candidate?.type === VOLTA_ANCHOR_CANDIDATE_TYPE) {
+    return `${(candidate.passes || []).join(',')}. 괄호`;
+  }
+
   return getNavigationMarkerLabel(candidate?.type);
 }

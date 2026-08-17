@@ -1464,6 +1464,7 @@ html:-webkit-full-screen #root{
     border:1px dashed rgba(33, 92, 150, 0.88);
     box-sizing:border-box;
     color:#fff;
+    pointer-events:none;
     position:absolute;
     z-index:1;
 }

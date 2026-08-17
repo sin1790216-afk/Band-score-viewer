@@ -67,7 +67,7 @@ import {
   prepareRecognizedMeasures,
 } from './utils/measureRecognitionRuntime.js';
 import { recognizeMeasuresInPdf } from './utils/pdfMeasureRecognition.js';
-import { detectNavigationTextInPdf } from './utils/pdfNavigationTextDetection.js';
+import { detectNavigationCandidatesInPdf } from './utils/pdfNavigationTextDetection.js';
 import { applyLyricCandidates } from './utils/lyricRecognition.js';
 import { recognizeLyricsInPdf } from './utils/pdfLyricRecognition.js';
 import {
@@ -1511,19 +1511,19 @@ function App() {
     setNavigationTextDetectionState({
       candidates: [],
       measureIdentity: requestedMeasureIdentity,
-      message: 'PDF Navigation 텍스트를 분석하고 있습니다.',
+      message: 'PDF Navigation 텍스트와 기호를 분석하고 있습니다.',
       pdfIdentity: requestedPdfIdentity,
       status: 'running',
     });
 
     try {
-      const result = await detectNavigationTextInPdf(
+      const result = await detectNavigationCandidatesInPdf(
         pdfBlob,
         measuresRef.current,
         {
           onPageDiagnostics: import.meta.env.DEV
             ? (diagnostics) => {
-                console.info('[NavigationTextDetection] page', diagnostics);
+                console.info('[NavigationCandidateDetection] page', diagnostics);
               }
             : undefined,
           onProgress: ({ currentPage, totalPages: detectionTotalPages }) => {
@@ -1563,27 +1563,51 @@ function App() {
 
         window.__BSV_NAVIGATION_TEXT_DETECTION_DEBUG__ = runtimeDiagnostics;
         result.candidates.forEach((candidate) => {
-          console.info('[NavigationTextDetection]', {
+          const logLabel = candidate.source === 'pdf-text'
+            ? '[NavigationTextDetection]'
+            : '[NavigationGraphicDetection]';
+
+          console.info(logLabel, {
             associatedMeasure:
               candidate.measureIndex >= 0
                 ? `M${candidate.measureIndex + 1}`
                 : null,
             canonicalType: candidate.type,
-            classification: candidate.evidence.classification.category,
+            classification: candidate.evidence.classification?.category || null,
             confidence: candidate.confidence,
             evidence: candidate.evidence,
             page: candidate.pageNumber,
+            passes: candidate.passes || null,
             raw: candidate.rawText,
+            source: candidate.source,
           });
+
+          if (
+            candidate.source === 'pdf-graphics' &&
+            candidate.type.startsWith('repeat-')
+          ) {
+            console.info(
+              '[RepeatDetectionDebug]',
+              JSON.stringify({
+                candidate: candidate.type,
+                evidence: candidate.evidence,
+                measure: candidate.measureIndex + 1,
+                page: candidate.pageNumber,
+              }),
+            );
+          }
         });
       }
 
-      if (result.extractedTextItemCount === 0) {
+      if (
+        result.extractedTextItemCount === 0 &&
+        result.candidates.length === 0
+      ) {
         setNavigationTextDetectionState({
           candidates: [],
           measureIdentity: requestedMeasureIdentity,
           message:
-            '이 PDF에서 추출 가능한 텍스트를 찾지 못했습니다. 스캔 PDF/OCR 탐지는 지원하지 않습니다.',
+            '지원하는 Navigation 텍스트나 기호 후보를 찾지 못했습니다. 스캔 문자 OCR은 지원하지 않습니다.',
           pdfIdentity: requestedPdfIdentity,
           status: 'error',
         });
@@ -1601,8 +1625,8 @@ function App() {
         candidates: result.candidates,
         measureIdentity: requestedMeasureIdentity,
         message: result.candidates.length
-          ? `텍스트 Navigation 후보 ${result.candidates.length}개를 찾았습니다.${unmappedMessage}`
-          : '지원하는 텍스트 Navigation 후보를 찾지 못했습니다.',
+          ? `Navigation 후보 ${result.candidates.length}개를 찾았습니다.${unmappedMessage}`
+          : '지원하는 Navigation 후보를 찾지 못했습니다.',
         pdfIdentity: requestedPdfIdentity,
         status: 'complete',
       });
