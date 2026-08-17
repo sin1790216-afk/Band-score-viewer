@@ -40,13 +40,18 @@ export function normalizeNavigationEndings(endings) {
 
     const passes = normalizePasses(ending.passes);
 
+    const explicitEndMeasureId = isValidMeasureId(ending.explicitEndMeasureId)
+      ? ending.explicitEndMeasureId
+      : isValidMeasureId(ending.endMeasureId)
+        ? ending.endMeasureId
+        : null;
+
     if (
       typeof ending.id !== 'string' ||
       ending.id.trim().length === 0 ||
       seenIds.has(ending.id) ||
       ending.type !== NAVIGATION_ENDING_TYPE ||
       !isValidMeasureId(ending.startMeasureId) ||
-      !isValidMeasureId(ending.endMeasureId) ||
       !isValidMeasureId(ending.repeatStartMeasureId) ||
       !isValidMeasureId(ending.repeatEndMeasureId) ||
       passes.length === 0
@@ -62,7 +67,6 @@ export function normalizeNavigationEndings(endings) {
       id: ending.id,
       type: NAVIGATION_ENDING_TYPE,
       startMeasureId: ending.startMeasureId,
-      endMeasureId: ending.endMeasureId,
       passes,
       repeatStartMeasureId: ending.repeatStartMeasureId,
       repeatEndMeasureId: ending.repeatEndMeasureId,
@@ -71,6 +75,7 @@ export function normalizeNavigationEndings(endings) {
         Number.isFinite(confidence) && confidence >= 0 && confidence <= 1
           ? confidence
           : 1,
+      ...(explicitEndMeasureId ? { explicitEndMeasureId } : {}),
     };
 
     seenIds.add(normalizedEnding.id);
@@ -95,6 +100,7 @@ export function isValidNavigationEndings(endings, { allowMissing = true } = {}) 
           [
             'confidence',
             'endMeasureId',
+            'explicitEndMeasureId',
             'id',
             'passes',
             'repeatEndMeasureId',
@@ -104,6 +110,12 @@ export function isValidNavigationEndings(endings, { allowMissing = true } = {}) 
             'type',
           ].includes(key),
         ) &&
+        (ending.endMeasureId === undefined || isValidMeasureId(ending.endMeasureId)) &&
+        (ending.explicitEndMeasureId === undefined ||
+          isValidMeasureId(ending.explicitEndMeasureId)) &&
+        (ending.endMeasureId === undefined ||
+          ending.explicitEndMeasureId === undefined ||
+          ending.endMeasureId === ending.explicitEndMeasureId) &&
         (ending.source === undefined || VALID_NAVIGATION_SOURCES.has(ending.source)) &&
         (ending.confidence === undefined ||
           (Number.isFinite(Number(ending.confidence)) &&
@@ -141,7 +153,7 @@ export function attachNavigationEndings(measures, endings) {
 }
 
 export function createManualNavigationEnding({
-  endMeasureId,
+  explicitEndMeasureId,
   id = createNavigationEndingId(),
   pass,
   repeatEndMeasureId,
@@ -151,7 +163,7 @@ export function createManualNavigationEnding({
   return normalizeNavigationEndings([
     {
       confidence: 1,
-      endMeasureId,
+      ...(explicitEndMeasureId ? { explicitEndMeasureId } : {}),
       id,
       passes: [pass],
       repeatEndMeasureId,
@@ -161,6 +173,57 @@ export function createManualNavigationEnding({
       type: NAVIGATION_ENDING_TYPE,
     },
   ])[0] || null;
+}
+
+export function deriveNavigationEndingRanges({
+  endings,
+  measureIndexById,
+  repeatEndIndex,
+}) {
+  const anchors = normalizeNavigationEndings(endings)
+    .map((ending) => ({
+      ending,
+      explicitEndIndex: ending.explicitEndMeasureId
+        ? measureIndexById.get(ending.explicitEndMeasureId)
+        : null,
+      startIndex: measureIndexById.get(ending.startMeasureId),
+    }))
+    .sort((left, right) => {
+      if (!Number.isInteger(left.startIndex)) return 1;
+      if (!Number.isInteger(right.startIndex)) return -1;
+      return left.startIndex - right.startIndex;
+    });
+
+  return anchors.map((anchor, index) => {
+    const nextStartIndex = anchors[index + 1]?.startIndex;
+    let endIndex = anchor.startIndex;
+    let rangeSource = 'point';
+
+    if (Number.isInteger(anchor.explicitEndIndex)) {
+      endIndex = anchor.explicitEndIndex;
+      rangeSource = 'explicit';
+    } else if (
+      Number.isInteger(anchor.startIndex) &&
+      anchor.startIndex <= repeatEndIndex
+    ) {
+      endIndex = repeatEndIndex;
+      rangeSource = 'repeat-end';
+    } else if (
+      Number.isInteger(anchor.startIndex) &&
+      Number.isInteger(nextStartIndex) &&
+      nextStartIndex > anchor.startIndex
+    ) {
+      endIndex = nextStartIndex - 1;
+      rangeSource = 'next-anchor';
+    }
+
+    return {
+      ...anchor.ending,
+      endIndex,
+      rangeSource,
+      startIndex: anchor.startIndex,
+    };
+  });
 }
 
 export function getNavigationEndingLabel(ending) {

@@ -1,37 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { formatMeasureRange, parseMeasureRange } from '../utils/measureRange.js';
 import {
   addNavigationEnding,
-  addRepeatSection,
   buildNavigationModel,
-  clearPointNavigationMarker,
   removeNavigationEnding,
-  setPointNavigationMarker,
-  updateNavigationEndingRange,
-  updateRepeatSectionRange,
+  updateNavigationEndingAnchor,
 } from '../utils/navigationModel.js';
-import {
-  getNavigationEndingLabel,
-} from '../utils/navigationEndings.js';
-import {
-  hasNavigationMarker,
-  NAVIGATION_MARKER_TYPES,
-} from '../utils/navigationMarkers.js';
+import { getNavigationEndingLabel } from '../utils/navigationEndings.js';
 
-const POINT_MARKERS = [
-  { label: 'Segno', type: NAVIGATION_MARKER_TYPES.SEGNO },
-  { label: 'D.S.', type: NAVIGATION_MARKER_TYPES.DAL_SEGNO },
-];
+function parseMeasureNumber(value, measureCount) {
+  const measureNumber = Number(value);
 
-function getPointMarkerNumber(measures, type) {
-  const index = measures.findIndex((measure) => hasNavigationMarker(measure, type));
-
-  return index >= 0 ? String(index + 1) : '';
+  return Number.isSafeInteger(measureNumber) &&
+    measureNumber >= 1 &&
+    measureNumber <= measureCount
+    ? measureNumber
+    : null;
 }
 
-function rangesOverlap(leftStart, leftEnd, rightStart, rightEnd) {
-  return leftStart <= rightEnd && rightStart <= leftEnd;
+function getNextPass(section) {
+  return Math.max(0, ...section.endings.flatMap((ending) => ending.passes)) + 1;
 }
 
 export default function NavigationEditor({
@@ -41,303 +29,186 @@ export default function NavigationEditor({
 }) {
   const navigationModel = useMemo(() => buildNavigationModel(measures), [measures]);
   const [endingDrafts, setEndingDrafts] = useState({});
-  const [newSectionDraft, setNewSectionDraft] = useState({ end: '', start: '' });
-  const [pointDrafts, setPointDrafts] = useState({});
-  const [repeatDrafts, setRepeatDrafts] = useState({});
+  const [pendingDrafts, setPendingDrafts] = useState({});
+  const [pendingSections, setPendingSections] = useState({});
   const [validationMessage, setValidationMessage] = useState('');
 
   useEffect(() => {
-    setRepeatDrafts(
-      Object.fromEntries(
-        navigationModel.repeatSections.map((section) => [
-          section.id,
-          {
-            end: String(section.endIndex + 1),
-            start: String(section.startIndex + 1),
-          },
-        ]),
-      ),
-    );
     setEndingDrafts(
       Object.fromEntries(
         navigationModel.repeatSections.flatMap((section) =>
           section.endings.map((ending) => [
             ending.id,
-            formatMeasureRange(ending.startIndex + 1, ending.endIndex + 1),
+            String(ending.startIndex + 1),
           ]),
         ),
       ),
     );
-    setPointDrafts(
-      Object.fromEntries(
-        POINT_MARKERS.map(({ type }) => [
-          type,
-          getPointMarkerNumber(measures, type),
-        ]),
-      ),
-    );
-  }, [measures, navigationModel.repeatSections]);
+  }, [navigationModel.repeatSections]);
 
   function commit(nextMeasures) {
     if (!nextMeasures) {
       setValidationMessage('입력한 마디 번호를 확인해주세요.');
-      return;
+      return false;
     }
 
     setValidationMessage('');
     onReplaceMeasures(nextMeasures);
-  }
-
-  function parsePoint(value) {
-    const range = parseMeasureRange(value, measures.length);
-
-    return range && range.start === range.end ? range.start : null;
-  }
-
-  function submitPointMarker(event, type) {
-    event.preventDefault();
-    const measureNumber = parsePoint(pointDrafts[type]);
-
-    if (!measureNumber) {
-      setValidationMessage('Marker에는 1부터 전체 마디 수 사이의 번호 하나를 입력하세요.');
-      return;
-    }
-
-    commit(setPointNavigationMarker(measures, type, measureNumber));
-  }
-
-  function submitRepeatSection(event, section) {
-    event.preventDefault();
-    const draft = repeatDrafts[section.id];
-    const start = parsePoint(draft?.start);
-    const end = parsePoint(draft?.end);
-    const overlapsAnotherSection = navigationModel.repeatSections.some(
-      (candidate) =>
-        candidate.id !== section.id &&
-        start &&
-        end &&
-        rangesOverlap(start, end, candidate.startIndex + 1, candidate.endIndex + 1),
-    );
-
-    if (!start || !end || start > end || overlapsAnotherSection) {
-      setValidationMessage('반복 시작/끝 번호와 다른 반복 구간의 겹침을 확인해주세요.');
-      return;
-    }
-
-    commit(updateRepeatSectionRange(measures, section, start, end));
-  }
-
-  function submitNewRepeatSection(event) {
-    event.preventDefault();
-    const start = parsePoint(newSectionDraft.start);
-    const end = parsePoint(newSectionDraft.end);
-    const overlapsExistingSection = navigationModel.repeatSections.some(
-      (section) =>
-        start &&
-        end &&
-        rangesOverlap(start, end, section.startIndex + 1, section.endIndex + 1),
-    );
-
-    if (!start || !end || start > end || overlapsExistingSection) {
-      setValidationMessage('새 반복 구간의 시작/끝 번호를 확인해주세요.');
-      return;
-    }
-
-    setNewSectionDraft({ end: '', start: '' });
-    commit(addRepeatSection(measures, start, end));
+    return true;
   }
 
   function submitEnding(event, ending) {
     event.preventDefault();
-    const range = parseMeasureRange(endingDrafts[ending.id], measures.length);
+    const measureNumber = parseMeasureNumber(
+      endingDrafts[ending.id],
+      measures.length,
+    );
 
-    if (!range) {
-      setValidationMessage('엔딩은 4 또는 5-7 형식의 유효한 범위로 입력하세요.');
+    if (!measureNumber) {
+      setValidationMessage('괄호가 시작되는 마디 번호 하나를 입력하세요.');
       return;
     }
 
-    commit(
-      updateNavigationEndingRange(
-        measures,
-        ending.id,
-        range.start,
-        range.end,
-      ),
+    commit(updateNavigationEndingAnchor(measures, ending.id, measureNumber));
+  }
+
+  function submitPendingEnding(event, section) {
+    event.preventDefault();
+    const measureNumber = parseMeasureNumber(
+      pendingDrafts[section.id],
+      measures.length,
     );
+
+    if (!measureNumber) {
+      setValidationMessage('괄호가 시작되는 마디 번호 하나를 입력하세요.');
+      return;
+    }
+
+    if (commit(addNavigationEnding(measures, section, measureNumber))) {
+      setPendingDrafts((current) => ({ ...current, [section.id]: '' }));
+      setPendingSections((current) => ({ ...current, [section.id]: false }));
+    }
+  }
+
+  function beginAddingEnding(sectionId) {
+    setValidationMessage('');
+    setPendingDrafts((current) => ({ ...current, [sectionId]: '' }));
+    setPendingSections((current) => ({ ...current, [sectionId]: true }));
   }
 
   return (
     <div className="navigation-direct-editor">
-      <strong>숫자로 지정</strong>
+      {navigationModel.repeatSections.length === 0 && (
+        <small className="sidebar-help">
+          마디를 선택해 ||:와 :|| 도돌이표를 지정하세요.
+        </small>
+      )}
 
-      {navigationModel.repeatSections.map((section, sectionIndex) => (
-        <section className="repeat-section-editor" key={section.id}>
-          <strong>반복 구간 {sectionIndex + 1}</strong>
-          <form
-            className="navigation-point-grid"
-            onSubmit={(event) => submitRepeatSection(event, section)}
-          >
-            <label>
-              <span title="반복 시작">||:</span>
-              <input
-                aria-label={`반복 구간 ${sectionIndex + 1} 반복 시작 마디`}
-                disabled={disabled}
-                inputMode="numeric"
-                min="1"
-                onChange={(event) =>
-                  setRepeatDrafts((current) => ({
-                    ...current,
-                    [section.id]: {
-                      ...current[section.id],
-                      start: event.target.value,
-                    },
-                  }))
-                }
-                type="number"
-                value={repeatDrafts[section.id]?.start || ''}
-              />
-            </label>
-            <label>
-              <span title="반복 끝">:||</span>
-              <input
-                aria-label={`반복 구간 ${sectionIndex + 1} 반복 끝 마디`}
-                disabled={disabled}
-                inputMode="numeric"
-                min="1"
-                onChange={(event) =>
-                  setRepeatDrafts((current) => ({
-                    ...current,
-                    [section.id]: {
-                      ...current[section.id],
-                      end: event.target.value,
-                    },
-                  }))
-                }
-                type="number"
-                value={repeatDrafts[section.id]?.end || ''}
-              />
-            </label>
-            <button disabled={disabled} type="submit">적용</button>
-          </form>
+      {navigationModel.repeatSections.map((section, sectionIndex) => {
+        const sectionLabel = navigationModel.repeatSections.length === 1
+          ? '도돌이표'
+          : `도돌이표 ${sectionIndex + 1}`;
 
-          <div className="ending-editor-list">
-            <span>엔딩</span>
-            {section.endings.map((ending) => (
-              <form
-                className="ending-editor-row"
-                key={ending.id}
-                onSubmit={(event) => submitEnding(event, ending)}
-              >
-                <label>
-                  <span>{getNavigationEndingLabel(ending)}</span>
-                  <input
-                    aria-label={`${getNavigationEndingLabel(ending)} 엔딩 마디 범위`}
+        return (
+          <section className="repeat-section-editor" key={section.id}>
+            <strong>{sectionLabel}</strong>
+            <div className="repeat-section-summary" aria-label={`${sectionLabel} 위치`}>
+              <span>||: M{section.startIndex + 1}</span>
+              <span>:|| M{section.endIndex + 1}</span>
+            </div>
+
+            <div className="ending-editor-list">
+              <span>괄호</span>
+              {section.endings.map((ending) => (
+                <form
+                  className="ending-editor-row"
+                  key={ending.id}
+                  onSubmit={(event) => submitEnding(event, ending)}
+                >
+                  <label>
+                    <span>{getNavigationEndingLabel(ending)}</span>
+                    <input
+                      aria-label={`${getNavigationEndingLabel(ending)} 괄호 시작 마디`}
+                      disabled={disabled}
+                      inputMode="numeric"
+                      min="1"
+                      onChange={(event) =>
+                        setEndingDrafts((current) => ({
+                          ...current,
+                          [ending.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="시작 마디"
+                      type="number"
+                      value={endingDrafts[ending.id] || ''}
+                    />
+                  </label>
+                  <button disabled={disabled} type="submit">적용</button>
+                  <button
                     disabled={disabled}
-                    inputMode="numeric"
-                    onChange={(event) =>
-                      setEndingDrafts((current) => ({
+                    onClick={() => commit(removeNavigationEnding(measures, ending.id))}
+                    type="button"
+                  >
+                    삭제
+                  </button>
+                </form>
+              ))}
+
+              {pendingSections[section.id] && (
+                <form
+                  className="ending-editor-row"
+                  onSubmit={(event) => submitPendingEnding(event, section)}
+                >
+                  <label>
+                    <span>{getNextPass(section)}.</span>
+                    <input
+                      aria-label={`${getNextPass(section)}. 괄호 시작 마디`}
+                      autoFocus
+                      disabled={disabled}
+                      inputMode="numeric"
+                      min="1"
+                      onChange={(event) =>
+                        setPendingDrafts((current) => ({
+                          ...current,
+                          [section.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="시작 마디"
+                      type="number"
+                      value={pendingDrafts[section.id] || ''}
+                    />
+                  </label>
+                  <button disabled={disabled} type="submit">적용</button>
+                  <button
+                    disabled={disabled}
+                    onClick={() =>
+                      setPendingSections((current) => ({
                         ...current,
-                        [ending.id]: event.target.value,
+                        [section.id]: false,
                       }))
                     }
-                    placeholder="5-7"
-                    type="text"
-                    value={endingDrafts[ending.id] || ''}
-                  />
-                </label>
-                <button disabled={disabled} type="submit">적용</button>
-                <button
-                  disabled={disabled}
-                  onClick={() => commit(removeNavigationEnding(measures, ending.id))}
-                  type="button"
-                >
-                  삭제
-                </button>
-              </form>
-            ))}
-          </div>
-          <button
-            disabled={disabled || measures.length === 0}
-            onClick={() => commit(addNavigationEnding(measures, section))}
-            type="button"
-          >
-            + 엔딩
-          </button>
-        </section>
-      ))}
+                    type="button"
+                  >
+                    취소
+                  </button>
+                </form>
+              )}
+            </div>
 
-      <form className="repeat-section-add" onSubmit={submitNewRepeatSection}>
-        <strong>반복 구간 추가</strong>
-        <label>
-          <span title="반복 시작">||:</span>
-          <input
-            aria-label="새 반복 시작 마디"
-            disabled={disabled}
-            inputMode="numeric"
-            min="1"
-            onChange={(event) =>
-              setNewSectionDraft((current) => ({
-                ...current,
-                start: event.target.value,
-              }))
-            }
-            type="number"
-            value={newSectionDraft.start}
-          />
-        </label>
-        <label>
-          <span title="반복 끝">:||</span>
-          <input
-            aria-label="새 반복 끝 마디"
-            disabled={disabled}
-            inputMode="numeric"
-            min="1"
-            onChange={(event) =>
-              setNewSectionDraft((current) => ({
-                ...current,
-                end: event.target.value,
-              }))
-            }
-            type="number"
-            value={newSectionDraft.end}
-          />
-        </label>
-        <button disabled={disabled || measures.length === 0} type="submit">
-          + 반복 구간
-        </button>
-      </form>
-
-      <div className="point-marker-editor">
-        {POINT_MARKERS.map(({ label, type }) => (
-          <form key={type} onSubmit={(event) => submitPointMarker(event, type)}>
-            <label>
-              <span>{label}</span>
-              <input
-                aria-label={`${label} 마디`}
-                disabled={disabled}
-                inputMode="numeric"
-                min="1"
-                onChange={(event) =>
-                  setPointDrafts((current) => ({
-                    ...current,
-                    [type]: event.target.value,
-                  }))
-                }
-                type="number"
-                value={pointDrafts[type] || ''}
-              />
-            </label>
-            <button disabled={disabled} type="submit">적용</button>
             <button
-              disabled={disabled || !pointDrafts[type]}
-              onClick={() => commit(clearPointNavigationMarker(measures, type))}
+              disabled={
+                disabled ||
+                measures.length === 0 ||
+                pendingSections[section.id]
+              }
+              onClick={() => beginAddingEnding(section.id)}
               type="button"
             >
-              해제
+              + 괄호
             </button>
-          </form>
-        ))}
-      </div>
+          </section>
+        );
+      })}
 
       {validationMessage && (
         <small className="navigation-marker-warning" role="status">

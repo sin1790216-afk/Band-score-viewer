@@ -7,6 +7,7 @@ import {
   attachNavigationEndings,
   collectNavigationEndings,
   createManualNavigationEnding,
+  deriveNavigationEndingRanges,
   getNavigationEndingLabel,
 } from './navigationEndings.js';
 
@@ -32,34 +33,47 @@ export function buildNavigationModel(measures) {
 
     if (!startMeasure || !Number.isInteger(endIndex)) return;
 
-    const sectionEndings = endings
-      .filter(
-        (ending) =>
-          ending.repeatStartMeasureId === startMeasure.id &&
-          ending.repeatEndMeasureId === endMeasureId,
-      )
+    const sectionAnchors = endings.filter(
+      (ending) =>
+        ending.repeatStartMeasureId === startMeasure.id &&
+        ending.repeatEndMeasureId === endMeasureId,
+    );
+    const sectionEndings = deriveNavigationEndingRanges({
+      endings: sectionAnchors,
+      measureIndexById,
+      repeatEndIndex: endIndex,
+    })
       .flatMap((ending) => {
-        const endingStartIndex = measureIndexById.get(ending.startMeasureId);
-        const endingEndIndex = measureIndexById.get(ending.endMeasureId);
-
         if (
-          !Number.isInteger(endingStartIndex) ||
-          !Number.isInteger(endingEndIndex) ||
-          endingStartIndex > endingEndIndex ||
-          endingEndIndex < startIndex
+          !Number.isInteger(ending.startIndex) ||
+          !Number.isInteger(ending.endIndex) ||
+          ending.startIndex > ending.endIndex ||
+          ending.startIndex < startIndex ||
+          (ending.explicitEndMeasureId &&
+            !measureIndexById.has(ending.explicitEndMeasureId))
         ) {
           issues.push({
             code: 'ending-range-invalid',
             measureId: ending.startMeasureId,
-            measureIndex: endingStartIndex ?? -1,
-            message: `${getNavigationEndingLabel(ending)} 엔딩 범위가 올바르지 않습니다.`,
+            measureIndex: ending.startIndex ?? -1,
+            message: `${getNavigationEndingLabel(ending)} 괄호 위치가 올바르지 않습니다.`,
           });
           return [];
         }
 
-        return [{ ...ending, endIndex: endingEndIndex, startIndex: endingStartIndex }];
+        return [ending];
       })
       .sort((left, right) => left.startIndex - right.startIndex);
+    sectionEndings.forEach((ending, index) => {
+      if (sectionEndings[index - 1]?.startIndex === ending.startIndex) {
+        issues.push({
+          code: 'ending-anchor-duplicate',
+          measureId: ending.startMeasureId,
+          measureIndex: ending.startIndex,
+          message: `${getNavigationEndingLabel(ending)} 괄호 시작점이 다른 괄호와 겹칩니다.`,
+        });
+      }
+    });
     const passValues = sectionEndings.flatMap((ending) => ending.passes);
 
     repeatSections.push({
@@ -85,7 +99,7 @@ export function buildNavigationModel(measures) {
         code: 'ending-repeat-section-missing',
         measureId: ending.startMeasureId,
         measureIndex: measureIndexById.get(ending.startMeasureId) ?? -1,
-        message: `${getNavigationEndingLabel(ending)} 엔딩의 반복 구간을 찾을 수 없습니다.`,
+        message: `${getNavigationEndingLabel(ending)} 괄호의 도돌이표를 찾을 수 없습니다.`,
       });
     }
   });
@@ -213,7 +227,9 @@ export function updateRepeatSectionRange(
   return attachNavigationEndings(withMovedMarkers, endings);
 }
 
-export function addNavigationEnding(measures, section) {
+export function addNavigationEnding(measures, section, startMeasureNumber) {
+  if (!Array.isArray(measures) || !section) return null;
+
   const endings = collectNavigationEndings(measures);
   const sectionEndings = endings.filter(
     (ending) =>
@@ -221,25 +237,17 @@ export function addNavigationEnding(measures, section) {
       ending.repeatEndMeasureId === section.endMeasureId,
   );
   const nextPass = Math.max(0, ...sectionEndings.flatMap((ending) => ending.passes)) + 1;
-  const furthestEndingIndex = Math.max(
-    section.endIndex - 1,
-    ...sectionEndings.map((ending) =>
-      measures.findIndex((measure) => measure.id === ending.endMeasureId),
-    ),
-  );
-  const defaultIndex = Math.min(furthestEndingIndex + 1, measures.length - 1);
-  const defaultMeasureId = measures[defaultIndex]?.id;
+  const startMeasure = measures[startMeasureNumber - 1];
   const ending = createManualNavigationEnding({
-    endMeasureId: defaultMeasureId,
     pass: nextPass,
     repeatEndMeasureId: section.endMeasureId,
     repeatStartMeasureId: section.startMeasureId,
-    startMeasureId: defaultMeasureId,
+    startMeasureId: startMeasure?.id,
   });
 
   return ending
     ? attachNavigationEndings(measures, [...endings, ending])
-    : measures;
+    : null;
 }
 
 export function updateNavigationEndingRange(
@@ -261,11 +269,35 @@ export function updateNavigationEndingRange(
       ending.id === endingId
         ? {
             ...ending,
-            endMeasureId: endMeasure.id,
+            explicitEndMeasureId: endMeasure.id,
             startMeasureId: startMeasure.id,
           }
         : ending,
     ),
+  );
+}
+
+export function updateNavigationEndingAnchor(
+  measures,
+  endingId,
+  startMeasureNumber,
+) {
+  const startMeasure = measures[startMeasureNumber - 1];
+
+  if (!startMeasure) return null;
+
+  return attachNavigationEndings(
+    measures,
+    collectNavigationEndings(measures).map((ending) => {
+      if (ending.id !== endingId) return ending;
+
+      const { explicitEndMeasureId: _explicitEndMeasureId, ...pointAnchor } = ending;
+
+      return {
+        ...pointAnchor,
+        startMeasureId: startMeasure.id,
+      };
+    }),
   );
 }
 

@@ -7,6 +7,12 @@
 - content band는 인접 system 중간 경계로 코드·오선·가사를 포함한다. 디지털 PDF 가사는 text layer에서 추출하지만 스캔·사진 PDF의 OCR과 코드 자동 입력은 지원하지 않는다.
 - 실제 악보마다 자동인식 후 Teacher 등록모드의 선택·드래그·8방향 resize·삭제로 확인하고 보정해야 한다.
 
+## 악보 진행 기호
+
+- 현재 도돌이표, Generic N개 괄호, Segno와 D.S.는 수동 Marker/anchor 편집을 지원한다. 괄호 시작점에서 재생용 range를 파생하며 기존 explicit Range 파일은 호환 경로로 유지한다.
+- Coda, To Coda, Fine, D.C., D.S. al Coda/Fine과 Navigation Symbol 자동인식은 아직 지원하지 않는다.
+- repeat pass와 여러 절 lyric lane의 자동 선택은 아직 연결되지 않았다.
+
 ## Vocal Phrase
 
 - 자동인식 가사는 PDF text geometry의 lyric baseline 변경을 기본 경계로 사용하고, 같은 baseline의 대표 간격 또는 마디 경계 gap 분포의 중앙값·MAD 대비 큰 수평 공백에서 추가 분리한다. 고정 픽셀 기준은 사용하지 않는다.

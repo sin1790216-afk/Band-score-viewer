@@ -53,6 +53,28 @@ test('measures socket state accepts only bounded arrays of measure objects', () 
   );
   assert.equal(
     isValidMeasuresState([
+      {
+        navigationEndings: [
+          {
+            confidence: 1,
+            id: 'e-point',
+            passes: [1],
+            repeatEndMeasureId: 'm2',
+            repeatStartMeasureId: 'm1',
+            source: 'manual',
+            startMeasureId: 'm2',
+            type: 'volta',
+          },
+        ],
+        page: 1,
+        x: 0,
+        y: 0,
+      },
+    ]),
+    true,
+  );
+  assert.equal(
+    isValidMeasuresState([
       { navigationMarkers: [{ type: 'invalid' }], page: 1, x: 0, y: 0 },
     ]),
     false,

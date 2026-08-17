@@ -246,7 +246,7 @@ test('JSON round-trip preserves navigation markers without changing the array fo
   ]);
 });
 
-test('JSON round-trip preserves generic ending ranges and legacy files default to none', () => {
+test('JSON round-trip migrates legacy bracket ranges and defaults to no brackets', () => {
   const ending = {
     confidence: 1,
     endMeasureId: 'measure-ending-2',
@@ -264,12 +264,73 @@ test('JSON round-trip preserves generic ending ranges and legacy files default t
   ];
   const restored = importMeasuresJson(exportMeasuresJson(measures));
 
-  assert.deepEqual(restored[0].navigationEndings, [ending]);
+  assert.deepEqual(restored[0].navigationEndings, [
+    {
+      confidence: 1,
+      explicitEndMeasureId: 'measure-ending-2',
+      id: 'ending-json-1',
+      passes: [1, 3],
+      repeatEndMeasureId: 'measure-ending-2',
+      repeatStartMeasureId: 'measure-existing',
+      source: 'manual',
+      startMeasureId: 'measure-ending-2',
+      type: 'volta',
+    },
+  ]);
 
   const [legacyMeasure] = importMeasuresJson(
     JSON.stringify([{ ...canonicalMeasure, navigationEndings: undefined }]),
   );
   assert.deepEqual(legacyMeasure.navigationEndings, []);
+});
+
+test('JSON round-trip preserves point anchors without storing derived ranges', () => {
+  const pointAnchor = {
+    confidence: 1,
+    id: 'ending-json-point',
+    passes: [1],
+    repeatEndMeasureId: 'measure-ending-2',
+    repeatStartMeasureId: 'measure-existing',
+    source: 'manual',
+    startMeasureId: 'measure-ending-2',
+    type: 'volta',
+  };
+  const restored = importMeasuresJson(
+    exportMeasuresJson([
+      { ...canonicalMeasure, navigationEndings: [pointAnchor] },
+      { ...canonicalMeasure, id: 'measure-ending-2' },
+    ]),
+  );
+
+  assert.deepEqual(restored[0].navigationEndings, [pointAnchor]);
+  assert.equal('endMeasureId' in restored[0].navigationEndings[0], false);
+  assert.equal('explicitEndMeasureId' in restored[0].navigationEndings[0], false);
+});
+
+test('deleting an unrelated measure preserves a point anchor without a stored end', () => {
+  const pointAnchor = {
+    confidence: 1,
+    id: 'ending-delete-point',
+    passes: [1],
+    repeatEndMeasureId: 'measure-ending-2',
+    repeatStartMeasureId: 'measure-existing',
+    source: 'manual',
+    startMeasureId: 'measure-ending-2',
+    type: 'volta',
+  };
+  const state = createInitialProjectState({
+    measures: [
+      { ...canonicalMeasure, navigationEndings: [pointAnchor] },
+      { ...canonicalMeasure, id: 'measure-ending-2' },
+      { ...canonicalMeasure, id: 'measure-unrelated' },
+    ],
+  });
+  const nextState = projectReducer(state, {
+    type: PROJECT_ACTIONS.DELETE_MEASURE,
+    index: 2,
+  });
+
+  assert.deepEqual(nextState.measures[0].navigationEndings, [pointAnchor]);
 });
 
 test('JSON export remains a measure array and preserves normalized coordinates', () => {

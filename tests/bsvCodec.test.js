@@ -153,7 +153,7 @@ test('a legacy .bsv without navigation markers receives an empty marker list', a
   assert.deepEqual(decoded.projectState.measures[0].navigationMarkers, []);
 });
 
-test('.bsv preserves generic ending data and legacy files default to no endings', async () => {
+test('.bsv migrates legacy ending ranges and legacy files default to no brackets', async () => {
   const { document } = await createEncodedProject();
   const owner = document.project.measures[0];
 
@@ -172,7 +172,19 @@ test('.bsv preserves generic ending data and legacy files default to no endings'
   ];
   const decoded = decodeBsvProject(JSON.stringify(document));
 
-  assert.deepEqual(decoded.projectState.measures[0].navigationEndings, owner.navigationEndings);
+  assert.deepEqual(decoded.projectState.measures[0].navigationEndings, [
+    {
+      confidence: 1,
+      explicitEndMeasureId: owner.id,
+      id: 'ending-bsv-1',
+      passes: [1],
+      repeatEndMeasureId: owner.id,
+      repeatStartMeasureId: owner.id,
+      source: 'manual',
+      startMeasureId: owner.id,
+      type: 'volta',
+    },
+  ]);
 
   delete document.project.measures[0].navigationEndings;
   assert.deepEqual(
@@ -180,6 +192,31 @@ test('.bsv preserves generic ending data and legacy files default to no endings'
       .navigationEndings,
     [],
   );
+});
+
+test('.bsv round-trip preserves a point-based volta anchor without a derived end', async () => {
+  const pointAnchor = {
+    confidence: 1,
+    id: 'ending-bsv-point',
+    passes: [1],
+    repeatEndMeasureId: MEASURE.id,
+    repeatStartMeasureId: MEASURE.id,
+    source: 'manual',
+    startMeasureId: MEASURE.id,
+    type: 'volta',
+  };
+  const projectState = createInitialProjectState({
+    ...createProjectState(),
+    measures: [{ ...MEASURE, navigationEndings: [pointAnchor] }],
+  });
+  const encoded = await encodeBsvProject({
+    now: TEST_TIMESTAMP,
+    pdfBlob: new Blob([PDF_BYTES], { type: PDF_MIME_TYPE }),
+    projectState,
+  });
+  const decoded = decodeBsvProject(encoded.text);
+
+  assert.deepEqual(decoded.projectState.measures[0].navigationEndings, [pointAnchor]);
 });
 
 test('.bsv rejects malformed navigation markers', async () => {

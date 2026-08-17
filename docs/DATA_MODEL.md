@@ -31,7 +31,7 @@ JSON 파일은 measure 객체 배열이다. 기존 핵심 필드는 유지된다
 - `lyric`: 여러 줄을 포함할 수 있는 문자열. 누락되면 빈 문자열로 정규화
 - `navigationMarkers`: 해당 물리 마디에 붙는 수동 악보 이동 표식. 현재
   `repeat-start`, `repeat-end`, `segno`, `dal-segno`를 지원하며 누락되면 빈 배열로 정규화
-- `navigationEndings`: 반복 시작 마디가 소유하는 Generic Volta 범위. 누락되면 빈 배열로 정규화
+- `navigationEndings`: 도돌이표 시작 마디가 소유하는 Generic Volta 시작 anchor. 누락되면 빈 배열로 정규화
 - `coordinateSpace`: 현재 canonical 좌표 형식
 - `coordinateStatus`: 좌표 변환 신뢰 상태
 - `coordinateWidth`, `coordinateHeight`: 기존 JSON 필드 호환을 위해 정규화 기준인 `1`을 유지
@@ -62,14 +62,13 @@ audioSettings: {
 
 ## Navigation과 Playback Step
 
-Ending은 `ending1`, `ending2` 같은 고정 필드가 아니라 다음 collection 항목으로 저장한다.
+괄호는 `ending1`, `ending2` 같은 고정 필드가 아니라 다음 collection anchor로 저장한다.
 
 ```js
 {
   id: "ending-...",
   type: "volta",
   startMeasureId: "measure-...",
-  endMeasureId: "measure-...",
   passes: [1],
   repeatStartMeasureId: "measure-...",
   repeatEndMeasureId: "measure-...",
@@ -78,10 +77,13 @@ Ending은 `ending1`, `ending2` 같은 고정 필드가 아니라 다음 collecti
 }
 ```
 
-한 마디 Ending도 시작과 끝 ID가 같은 range다. Repeat section과 모든 범위는 배열 index가 아닌
-stable measure ID로 연결한다. 수동 입력은 `manual/1` provenance를 사용하고, 향후 PDF 자동인식은
-같은 구조에 `detected` source를 기록할 수 있다. PlaybackResolver는 provenance와 무관하게 이
-canonical model만 사용한다.
+사용자와 향후 PDF detector는 악보에 표시된 괄호 시작점만 canonical data로 기록한다. 도돌이표
+구간과 모든 anchor는 배열 index가 아닌 stable measure ID로 연결한다. 첫 괄호는 시작점부터 관련
+`:||`까지, 이후 괄호는 다음 anchor 직전까지 Resolver range로 파생하며 마지막 괄호는 시작점만으로
+충분하다. 기존 Range 프로젝트의 `endMeasureId`는 load 시 선택적 `explicitEndMeasureId` override로
+정규화해 기존 재생 순서를 보존한다. 이 derived range는 Project State에 중복 저장하지 않는다.
+수동 입력은 `manual/1` provenance를 사용하고, 향후 PDF 자동인식은 같은 anchor 구조에 `detected`
+source를 기록할 수 있다.
 
 Measure 배열은 PDF의 물리 순서를 유지하며 반복 방문을 위해 복제하지 않는다. 자동재생은
 `navigationMarkers`에서 파생한 별도 Playback run을 사용한다. 각 step은 다음 최소 정보를 가진다.
@@ -98,8 +100,8 @@ Measure 배열은 PDF의 물리 순서를 유지하며 반복 방문을 위해 �
 }
 ```
 
-`visitCount`는 동일 물리 마디의 재방문을 구분하고 `repeatPass`는 해당 Repeat section의 현재
-pass를 나타낸다. Ending의 최대 pass가 반복 횟수를 결정하며, 현재 pass에 속하지 않는 Ending
+`visitCount`는 동일 물리 마디의 재방문을 구분하고 `repeatPass`는 해당 도돌이표의 현재
+pass를 나타낸다. 괄호의 최대 pass가 반복 횟수를 결정하며, 현재 pass에 속하지 않는 derived
 range는 전체를 건너뛴다. Repeat pass, Repeat End와 D.S. 실행 이력, 전체곡 반복 cycle은 재생
 Session에만 존재하고 JSON이나 `.bsv`에 저장하지 않는다.
 

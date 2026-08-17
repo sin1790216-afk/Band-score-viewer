@@ -222,9 +222,10 @@ export function projectReducer(state, action) {
         const nextEndings = collectNavigationEndings(state.measures).filter(
           (ending) =>
             remainingMeasureIds.has(ending.startMeasureId) &&
-            remainingMeasureIds.has(ending.endMeasureId) &&
             remainingMeasureIds.has(ending.repeatStartMeasureId) &&
-            remainingMeasureIds.has(ending.repeatEndMeasureId),
+            remainingMeasureIds.has(ending.repeatEndMeasureId) &&
+            (!ending.explicitEndMeasureId ||
+              remainingMeasureIds.has(ending.explicitEndMeasureId)),
         );
 
         return replaceMeasures(

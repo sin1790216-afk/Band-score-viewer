@@ -6,6 +6,7 @@ import {
   addRepeatSection,
   buildNavigationModel,
   setPointNavigationMarker,
+  updateNavigationEndingAnchor,
   updateNavigationEndingRange,
   updateRepeatSectionRange,
 } from '../src/utils/navigationModel.js';
@@ -48,13 +49,13 @@ test('numeric repeat editing and selected-marker state share the same measure so
   );
 });
 
-test('generic endings use stable IDs, range endpoints, pass arrays, and provenance', () => {
+test('generic volta anchors use stable IDs, point positions, pass arrays, and provenance', () => {
   let measures = addRepeatSection(createMeasures(8), 3, 4);
   let section = buildNavigationModel(measures).repeatSections[0];
 
-  measures = addNavigationEnding(measures, section);
+  measures = addNavigationEnding(measures, section, 4);
   section = buildNavigationModel(measures).repeatSections[0];
-  measures = addNavigationEnding(measures, section);
+  measures = addNavigationEnding(measures, section, 5);
   const endings = collectNavigationEndings(measures);
 
   assert.deepEqual(endings.map((ending) => ending.passes), [[1], [2]]);
@@ -67,12 +68,42 @@ test('generic endings use stable IDs, range endpoints, pass arrays, and provenan
   );
   assert.equal(endings[0].repeatStartMeasureId, 'm3');
   assert.equal(endings[0].repeatEndMeasureId, 'm4');
+  assert.equal(endings[0].explicitEndMeasureId, undefined);
+  assert.deepEqual(
+    buildNavigationModel(measures).repeatSections[0].endings.map(
+      ({ endIndex, startIndex }) => [startIndex, endIndex],
+    ),
+    [[3, 3], [4, 4]],
+  );
 
-  measures = updateNavigationEndingRange(measures, endings[0].id, 4, 6);
+  measures = updateNavigationEndingAnchor(measures, endings[0].id, 6);
   const [updatedEnding] = collectNavigationEndings(measures);
 
-  assert.equal(updatedEnding.startMeasureId, 'm4');
-  assert.equal(updatedEnding.endMeasureId, 'm6');
+  assert.equal(updatedEnding.startMeasureId, 'm6');
+  assert.equal(updatedEnding.explicitEndMeasureId, undefined);
+});
+
+test('legacy explicit ending ranges stay available as an internal compatibility override', () => {
+  let measures = addRepeatSection(createMeasures(8), 3, 4);
+  let section = buildNavigationModel(measures).repeatSections[0];
+
+  measures = addNavigationEnding(measures, section, 4);
+  section = buildNavigationModel(measures).repeatSections[0];
+  measures = updateNavigationEndingRange(
+    measures,
+    section.endings[0].id,
+    4,
+    6,
+  );
+
+  const [anchor] = collectNavigationEndings(measures);
+  const [range] = buildNavigationModel(measures).repeatSections[0].endings;
+
+  assert.equal(anchor.startMeasureId, 'm4');
+  assert.equal(anchor.explicitEndMeasureId, 'm6');
+  assert.equal(range.startIndex, 3);
+  assert.equal(range.endIndex, 5);
+  assert.equal(range.rangeSource, 'explicit');
 });
 
 test('multiple repeat sections keep their endings associated independently', () => {
@@ -81,9 +112,9 @@ test('multiple repeat sections keep their endings associated independently', () 
   measures = addRepeatSection(measures, 7, 8);
   let model = buildNavigationModel(measures);
 
-  measures = addNavigationEnding(measures, model.repeatSections[0]);
+  measures = addNavigationEnding(measures, model.repeatSections[0], 3);
   model = buildNavigationModel(measures);
-  measures = addNavigationEnding(measures, model.repeatSections[1]);
+  measures = addNavigationEnding(measures, model.repeatSections[1], 8);
   model = buildNavigationModel(measures);
 
   assert.equal(model.repeatSections.length, 2);

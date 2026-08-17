@@ -111,7 +111,7 @@ function assertValidMeasure(measure, index, measureIds) {
   if (!isValidNavigationEndings(measure.navigationEndings)) {
     fail(
       'MEASURE_NAVIGATION_ENDINGS_INVALID',
-      `${index + 1}번 마디의 엔딩 데이터가 올바르지 않습니다.`,
+      `${index + 1}번 마디의 괄호 데이터가 올바르지 않습니다.`,
     );
   }
 }
@@ -167,13 +167,14 @@ function assertValidProject(project) {
   collectNavigationEndings(project.measures).forEach((ending) => {
     if (
       !measureIds.has(ending.startMeasureId) ||
-      !measureIds.has(ending.endMeasureId) ||
       !measureIds.has(ending.repeatStartMeasureId) ||
-      !measureIds.has(ending.repeatEndMeasureId)
+      !measureIds.has(ending.repeatEndMeasureId) ||
+      (ending.explicitEndMeasureId &&
+        !measureIds.has(ending.explicitEndMeasureId))
     ) {
       fail(
         'MEASURE_NAVIGATION_ENDING_REFERENCE_INVALID',
-        '엔딩이 존재하지 않는 마디를 참조합니다.',
+        '괄호가 존재하지 않는 마디를 참조합니다.',
       );
     }
   });

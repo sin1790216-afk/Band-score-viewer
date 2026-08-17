@@ -1130,8 +1130,7 @@ html:-webkit-full-screen #root{
 
 .navigation-direct-editor,
 .repeat-section-editor,
-.ending-editor-list,
-.point-marker-editor{
+.ending-editor-list{
   display: grid;
   gap: 8px;
 }
@@ -1146,35 +1145,25 @@ html:-webkit-full-screen #root{
   padding: 8px;
 }
 
-.navigation-point-grid,
-.repeat-section-add,
-.ending-editor-row,
-.point-marker-editor form{
+.ending-editor-row{
   align-items: end;
   display: grid;
   gap: 6px;
 }
 
-.navigation-point-grid,
-.repeat-section-add{
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.repeat-section-summary{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-variant-numeric: tabular-nums;
 }
 
-.navigation-point-grid button,
-.repeat-section-add button{
-  grid-column: 1 / -1;
-}
-
-.navigation-point-grid label,
-.repeat-section-add label,
-.ending-editor-row label,
-.point-marker-editor label{
+.ending-editor-row label{
   display: grid;
   gap: 4px;
 }
 
-.ending-editor-row,
-.point-marker-editor form{
+.ending-editor-row{
   grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
