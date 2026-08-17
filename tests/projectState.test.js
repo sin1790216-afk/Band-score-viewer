@@ -181,6 +181,29 @@ test('JSON round-trip preserves new navigation commands and ignores unknown mark
   );
 });
 
+test('JSON round-trip은 D.S. repeatPolicy를 보존하고 legacy 누락은 auto로 해석한다', () => {
+  const restored = importMeasuresJson(
+    JSON.stringify([
+      {
+        ...canonicalMeasure,
+        navigationMarkers: [
+          { repeatPolicy: 'replay', type: 'dal-segno-al-coda' },
+          { type: 'dal-segno' },
+        ],
+      },
+    ]),
+  );
+
+  assert.deepEqual(restored[0].navigationMarkers, [
+    { repeatPolicy: 'replay', type: 'dal-segno-al-coda' },
+    { type: 'dal-segno' },
+  ]);
+  assert.deepEqual(
+    JSON.parse(exportMeasuresJson(restored))[0].navigationMarkers,
+    restored[0].navigationMarkers,
+  );
+});
+
 test('global BPM applies to every measure and keeps coordinates and per-measure editing', () => {
   const measures = Array.from({ length: 10 }, (_, index) => ({
     ...canonicalMeasure,

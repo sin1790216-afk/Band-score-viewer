@@ -1155,6 +1155,33 @@ html:-webkit-full-screen #root{
     line-height:1.3;
 }
 
+.navigation-repeat-policy{
+    display:flex;
+    flex-direction:column;
+    font-size:11px;
+    gap:3px;
+}
+
+.navigation-repeat-policy select{
+    box-sizing:border-box;
+    width:100%;
+}
+
+.navigation-decision-prompt{
+    background:#fff4cf;
+    border:1px solid #8a6412;
+    color:#332400;
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    padding:8px;
+}
+
+.navigation-decision-prompt span{
+    font-size:11px;
+    line-height:1.35;
+}
+
 .navigation-direct-editor,
 .repeat-section-editor,
 .ending-editor-list{

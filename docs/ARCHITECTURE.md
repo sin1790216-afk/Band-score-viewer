@@ -76,6 +76,11 @@ Coda/Fine armed 상태는 run에만 둔다. 기존 사이드바 `반복재생`�
 곡 끝에서 새 cycle을 시작하는 별도 Session 옵션이다. App은 Resolver가 반환한 마디만 기존
 `sync:update` 경로로 발행하므로 Student와 Vocal은 Resolver를 독립 실행하지 않는다.
 
+D.S. 계열 command의 `repeatPolicy` 기본값은 `auto`다. `navigationPathPlanner.js`는 Segno 반환
+경로에서 실제로 만나는 Repeat section만 필요할 때 section별 `replay/skip`으로 분기하고,
+`playbackResolver.js`의 동일 transition을 이용해 Coda/Fine 도달성을 평가한다. AUTO 결정은
+Playback run에만 유지하며, 서로 다른 유효 경로가 남을 때만 Teacher 선택을 기다린다.
+
 Vocal Phrase는 별도 Project 데이터가 아니라 `measures`에서 계산하는 파생 데이터다. PDF
 자동인식은 정규화된 lyric line span과 system 범위를 runtime `lyricGeometry`로 Measure에
 연결한다. Phrase 계산은 PDF text geometry로 묶은 lyric baseline이 바뀌면 먼저 분리하고,

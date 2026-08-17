@@ -1,8 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import {
+  createInitialProjectState,
+  PROJECT_ACTIONS,
+  projectReducer,
+} from '../src/state/projectState.js';
 import { getTeacherSyncState } from '../src/state/sessionState.js';
-import { NAVIGATION_MARKER_TYPES } from '../src/utils/navigationMarkers.js';
+import {
+  NAVIGATION_MARKER_TYPES,
+  NAVIGATION_REPEAT_POLICIES,
+  toggleNavigationMarker,
+} from '../src/utils/navigationMarkers.js';
+import {
+  addNavigationEnding,
+  buildNavigationModel,
+} from '../src/utils/navigationModel.js';
 import {
   advancePlaybackProgression,
   advancePlaybackRun,
@@ -15,11 +28,41 @@ import {
 function createMeasures(count, markersByMeasureNumber = {}) {
   return Array.from({ length: count }, (_, index) => ({
     id: `m${index + 1}`,
-    navigationMarkers: (markersByMeasureNumber[index + 1] || []).map((type) => ({
-      type,
-    })),
+    navigationMarkers: (markersByMeasureNumber[index + 1] || []).map((marker) =>
+      typeof marker === 'string' ? { type: marker } : { ...marker },
+    ),
     page: index < 4 ? 1 : 2,
   }));
+}
+
+function toggleTeacherUiMarker(projectState, measureNumber, markerType) {
+  const measureIndex = measureNumber - 1;
+  const measure = projectState.measures[measureIndex];
+
+  return projectReducer(projectState, {
+    type: PROJECT_ACTIONS.UPDATE_MEASURE,
+    changes: {
+      navigationMarkers: toggleNavigationMarker(
+        measure.navigationMarkers,
+        markerType,
+      ),
+    },
+    index: measureIndex,
+  });
+}
+
+function addTeacherUiEnding(projectState, startMeasureNumber) {
+  const navigationModel = buildNavigationModel(projectState.measures);
+  const nextMeasures = addNavigationEnding(
+    projectState.measures,
+    navigationModel.repeatSections[0],
+    startMeasureNumber,
+  );
+
+  return projectReducer(projectState, {
+    type: PROJECT_ACTIONS.REPLACE_MEASURES,
+    measures: nextMeasures,
+  });
 }
 
 function addEndings(measures, repeatStartNumber, repeatEndNumber, ranges) {
@@ -40,6 +83,50 @@ function addEndings(measures, repeatStartNumber, repeatEndNumber, ranges) {
           }))
         : [],
   }));
+}
+
+function createCodaVoltaMeasures({
+  commandPolicy,
+  endingPasses = [1, 2],
+  toCodaMeasureNumber = 5,
+} = {}) {
+  const commandMarker = {
+    ...(commandPolicy ? { repeatPolicy: commandPolicy } : {}),
+    type: NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA,
+  };
+  const repeatEndMeasureNumber = endingPasses.length === 1 ? 4 : 6;
+  const commandMeasureNumber = endingPasses.length === 1 ? 7 : 9;
+  const codaMeasureNumber = endingPasses.length === 1 ? 9 : 11;
+  const measureCount = endingPasses.length === 1 ? 10 : 12;
+  const markersByMeasureNumber = {
+    2: [NAVIGATION_MARKER_TYPES.SEGNO],
+    3: [NAVIGATION_MARKER_TYPES.REPEAT_START],
+    [repeatEndMeasureNumber]: [NAVIGATION_MARKER_TYPES.REPEAT_END],
+    [commandMeasureNumber]: [commandMarker],
+    [codaMeasureNumber]: [NAVIGATION_MARKER_TYPES.CODA],
+  };
+
+  markersByMeasureNumber[toCodaMeasureNumber] = [
+    ...(markersByMeasureNumber[toCodaMeasureNumber] || []),
+    NAVIGATION_MARKER_TYPES.TO_CODA,
+  ];
+  const measures = createMeasures(measureCount, markersByMeasureNumber);
+  const endingRanges = endingPasses.map((pass, index) => ({
+    pass,
+    start:
+      endingPasses.length === 1
+        ? 5
+        : index === 0
+          ? 5
+          : 7 + index - 1,
+  }));
+
+  return addEndings(
+    measures,
+    3,
+    repeatEndMeasureNumber,
+    endingRanges,
+  );
 }
 
 function getMeasureNumbers(steps) {
@@ -100,6 +187,7 @@ test('C: D.S. returns to Segno once and then continues to the end', () => {
     [1, 2, 3, 4, 5, 6, 7, 8, 6, 7, 8],
   );
   assert.deepEqual(result.runState.executedDalSegnoMeasureIds, ['m8']);
+  assert.equal(result.runState.lastNavigationPlan.reason, 'equivalent-paths');
 });
 
 test('C2: D.S. al Coda arms To Coda only after the Segno jump', () => {
@@ -213,6 +301,234 @@ test('C7: whole-song repeat는 Coda/Fine 실행 상태를 새 cycle에서 초기
   );
 });
 
+test('C8: To Coda가 1번 괄호 안이면 AUTO가 replay를 선택한다', () => {
+  const measures = createCodaVoltaMeasures();
+  const result = resolvePlaybackSequence(measures);
+
+  assert.deepEqual(
+    getMeasureNumbers(result.steps),
+    [1, 2, 3, 4, 5, 6, 3, 4, 7, 8, 9, 2, 3, 4, 5, 11, 12],
+  );
+  assert.equal(result.runState.lastNavigationPlan.status, 'resolved');
+  assert.equal(result.runState.lastNavigationPlan.selectedPolicy, 'replay');
+  assert.equal(
+    result.runState.lastNavigationPlan.candidatePaths.find(
+      (candidate) => candidate.policy === 'skip',
+    ).result,
+    'target-unreachable',
+  );
+  assert.deepEqual(result.runState.executedDalSegnoAlCodaMeasureIds, ['m9']);
+  assert.deepEqual(result.runState.executedCodaJumpMeasureIds, ['m5']);
+});
+
+test('C8.1: Repeat End와 같은 마디의 To Coda는 D.S. 이후 Coda로 우선 이동한다', () => {
+  const measures = createCodaVoltaMeasures({ toCodaMeasureNumber: 6 });
+  const result = resolvePlaybackSequence(measures);
+
+  assert.deepEqual(
+    getMeasureNumbers(result.steps),
+    [1, 2, 3, 4, 5, 6, 3, 4, 7, 8, 9, 2, 3, 4, 5, 6, 11, 12],
+  );
+  assert.equal(result.runState.lastNavigationPlan.status, 'resolved');
+  assert.equal(result.runState.lastNavigationPlan.selectedPolicy, 'replay');
+  assert.deepEqual(result.runState.executedRepeatEndMeasureIds, []);
+  assert.deepEqual(result.runState.executedCodaJumpMeasureIds, ['m6']);
+});
+
+test('C8.2: Teacher UI 상태 경로로 만든 실제 위치의 D.S. al Coda가 동작한다', () => {
+  let projectState = createInitialProjectState({ measures: createMeasures(82) });
+  const markerPlacements = [
+    [12, NAVIGATION_MARKER_TYPES.REPEAT_START],
+    [47, NAVIGATION_MARKER_TYPES.SEGNO],
+    [63, NAVIGATION_MARKER_TYPES.REPEAT_END],
+    [63, NAVIGATION_MARKER_TYPES.TO_CODA],
+    [80, NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA],
+    [81, NAVIGATION_MARKER_TYPES.CODA],
+  ];
+
+  markerPlacements.forEach(([measureNumber, markerType]) => {
+    projectState = toggleTeacherUiMarker(
+      projectState,
+      measureNumber,
+      markerType,
+    );
+  });
+  projectState = addTeacherUiEnding(projectState, 57);
+  projectState = addTeacherUiEnding(projectState, 64);
+
+  const navigationModel = buildNavigationModel(projectState.measures);
+  const result = resolvePlaybackSequence(projectState.measures);
+  const steps = getMeasureNumbers(result.steps);
+
+  assert.deepEqual(projectState.measures[46].navigationMarkers, [
+    { type: NAVIGATION_MARKER_TYPES.SEGNO },
+  ]);
+  assert.deepEqual(projectState.measures[62].navigationMarkers, [
+    { type: NAVIGATION_MARKER_TYPES.REPEAT_END },
+    { type: NAVIGATION_MARKER_TYPES.TO_CODA },
+  ]);
+  assert.deepEqual(projectState.measures[79].navigationMarkers, [
+    { type: NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA },
+  ]);
+  assert.deepEqual(projectState.measures[80].navigationMarkers, [
+    { type: NAVIGATION_MARKER_TYPES.CODA },
+  ]);
+  assert.deepEqual(navigationModel.issues, []);
+  assert.equal(steps[steps.indexOf(80) + 1], 47);
+  assert.equal(steps[steps.lastIndexOf(63) + 1], 81);
+  assert.equal(result.runState.lastNavigationPlan.status, 'resolved');
+  assert.equal(result.runState.lastNavigationPlan.selectedPolicy, 'replay');
+  assert.deepEqual(result.runState.executedDalSegnoAlCodaMeasureIds, ['m80']);
+  assert.deepEqual(result.runState.executedCodaJumpMeasureIds, ['m63']);
+});
+
+test('C9: final N-pass 괄호에만 To Coda가 있으면 AUTO가 skip을 선택한다', () => {
+  const measures = createCodaVoltaMeasures({
+    endingPasses: [3],
+    toCodaMeasureNumber: 5,
+  });
+  const result = resolvePlaybackSequence(measures);
+
+  assert.deepEqual(
+    getMeasureNumbers(result.steps),
+    [1, 2, 3, 4, 6, 7, 2, 3, 4, 5, 9, 10],
+  );
+  assert.equal(result.runState.lastNavigationPlan.selectedPolicy, 'skip');
+  assert.equal(result.runState.lastNavigationPlan.repeatSections[0].maxPass, 3);
+  assert.equal(
+    Object.values(result.runState.lastNavigationPlan.repeatDecisions)[0],
+    'skip',
+  );
+});
+
+test('C10: replay와 skip이 다른 유효 경로면 현재 마디에서 결정을 기다린다', () => {
+  const measures = createMeasures(10, {
+    2: [NAVIGATION_MARKER_TYPES.SEGNO],
+    3: [NAVIGATION_MARKER_TYPES.REPEAT_START],
+    4: [NAVIGATION_MARKER_TYPES.REPEAT_END],
+    6: [NAVIGATION_MARKER_TYPES.TO_CODA],
+    8: [NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA],
+    10: [NAVIGATION_MARKER_TYPES.CODA],
+  });
+  const result = resolvePlaybackSequence(measures);
+
+  assert.deepEqual(
+    getMeasureNumbers(result.steps),
+    [1, 2, 3, 4, 3, 4, 5, 6, 7, 8],
+  );
+  assert.equal(result.runState.pendingNavigationDecision.command.measureId, 'm8');
+  assert.deepEqual(
+    result.runState.pendingNavigationDecision.options.map((option) => option.policy),
+    ['skip', 'replay'],
+  );
+});
+
+test('C11: D.S. al Fine도 Fine 도달성으로 replay를 선택한다', () => {
+  let measures = createMeasures(10, {
+    2: [NAVIGATION_MARKER_TYPES.SEGNO],
+    3: [NAVIGATION_MARKER_TYPES.REPEAT_START],
+    5: [NAVIGATION_MARKER_TYPES.FINE],
+    6: [NAVIGATION_MARKER_TYPES.REPEAT_END],
+    9: [NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_FINE],
+  });
+
+  measures = addEndings(measures, 3, 6, [
+    { pass: 1, start: 5 },
+    { pass: 2, start: 7 },
+  ]);
+  const result = resolvePlaybackSequence(measures);
+
+  assert.deepEqual(
+    getMeasureNumbers(result.steps),
+    [1, 2, 3, 4, 5, 6, 3, 4, 7, 8, 9, 2, 3, 4, 5],
+  );
+  assert.equal(result.runState.endReason, 'fine');
+  assert.equal(result.runState.lastNavigationPlan.selectedPolicy, 'replay');
+});
+
+test('C12: 명시 repeatPolicy는 AUTO 질문 없이 해당 정책을 실행한다', () => {
+  const replayMeasures = createCodaVoltaMeasures({
+    commandPolicy: NAVIGATION_REPEAT_POLICIES.REPLAY,
+  });
+  const skipMeasures = createCodaVoltaMeasures({
+    commandPolicy: NAVIGATION_REPEAT_POLICIES.SKIP,
+  });
+  const replay = resolvePlaybackSequence(replayMeasures);
+  const skip = resolvePlaybackSequence(skipMeasures);
+
+  assert.equal(replay.runState.pendingNavigationDecision, null);
+  assert.equal(replay.runState.lastNavigationPlan.reason, 'manual-override');
+  assert.deepEqual(getMeasureNumbers(replay.steps).slice(-6), [2, 3, 4, 5, 11, 12]);
+  assert.equal(skip.runState.pendingNavigationDecision, null);
+  assert.deepEqual(
+    getMeasureNumbers(skip.steps).slice(-9),
+    [2, 3, 4, 7, 8, 9, 10, 11, 12],
+  );
+});
+
+test('C13: replay는 repeat state만 초기화하고 D.S./Coda 상태를 유지한다', () => {
+  const measures = createCodaVoltaMeasures();
+  let progression = createPlaybackProgression(measures);
+
+  while (progression.runState.currentStep.measureId !== 'm9') {
+    progression = advancePlaybackProgression(progression, measures).progression;
+  }
+
+  progression = advancePlaybackProgression(progression, measures).progression;
+  const repeatSectionId = Object.keys(
+    progression.runState.repeatPassBySectionId,
+  )[0];
+
+  assert.equal(progression.runState.currentStep.measureId, 'm2');
+  assert.equal(progression.runState.codaArmed, true);
+  assert.equal(progression.runState.repeatPassBySectionId[repeatSectionId], 1);
+  assert.equal(
+    progression.runState.executedRepeatEndMeasureIds.includes('m6'),
+    false,
+  );
+  assert.deepEqual(
+    progression.runState.executedDalSegnoAlCodaMeasureIds,
+    ['m9'],
+  );
+});
+
+test('C14: AUTO 경로는 수동/자동 progression과 history에서 동일하다', () => {
+  const measures = createCodaVoltaMeasures();
+  const resolved = resolvePlaybackSequence(measures);
+  const progressed = advanceProgressionToEnd(measures);
+  let historyProgression = progressed.progression;
+  const history = [historyProgression.runState.currentStep.measureIndex + 1];
+
+  for (let index = 0; index < 6; index += 1) {
+    historyProgression = rewindPlaybackProgression(historyProgression).progression;
+    history.push(historyProgression.runState.currentStep.measureIndex + 1);
+  }
+
+  assert.deepEqual(
+    getMeasureNumbers(progressed.steps),
+    getMeasureNumbers(resolved.steps),
+  );
+  assert.deepEqual(history, [12, 11, 5, 4, 3, 2, 9]);
+});
+
+test('C15: whole-song repeat는 AUTO runtime 결정만 새 cycle로 초기화한다', () => {
+  const measures = createCodaVoltaMeasures();
+  const looped = advanceProgressionToEnd(measures, { loopAtEnd: true });
+
+  assert.equal(looped.progression.runState.cycleIndex, 1);
+  assert.equal(looped.progression.runState.currentStep.measureIndex, 0);
+  assert.equal(looped.progression.runState.lastNavigationPlan, null);
+  assert.equal(looped.progression.runState.pendingNavigationDecision, null);
+  assert.deepEqual(
+    looped.progression.runState.resolvedRepeatDecisionsByCommandId,
+    {},
+  );
+  assert.deepEqual(
+    looped.progression.runState.executedDalSegnoAlCodaMeasureIds,
+    [],
+  );
+});
+
 test('D: repeat and D.S. produce the exact required combined sequence', () => {
   const measures = createMeasures(8, {
     3: [NAVIGATION_MARKER_TYPES.REPEAT_START],
@@ -258,19 +574,40 @@ test('F: Repeat End without Repeat Start falls back to physical order', () => {
   );
 });
 
-test('G/H: each jump executes once and cannot create an infinite loop', () => {
+test('G/H: 일반 D.S.의 다른 유효 경로는 질문하고 명시 선택 후 무한 반복하지 않는다', () => {
   const measures = createMeasures(3, {
     1: [NAVIGATION_MARKER_TYPES.REPEAT_START, NAVIGATION_MARKER_TYPES.SEGNO],
     2: [NAVIGATION_MARKER_TYPES.REPEAT_END],
     3: [NAVIGATION_MARKER_TYPES.DAL_SEGNO],
   });
   const result = resolvePlaybackSequence(measures);
+  const skipOption = result.runState.pendingNavigationDecision.options.find(
+    (option) => option.policy === NAVIGATION_REPEAT_POLICIES.SKIP,
+  );
+  let runState = advancePlaybackRun(result.runState, measures, {
+    navigationDecisionOverride: {
+      commandMeasureId: 'm3',
+      repeatDecisions: skipOption.repeatDecisions,
+    },
+  });
+  const steps = [...result.steps, runState.currentStep];
 
-  assert.deepEqual(getMeasureNumbers(result.steps), [1, 2, 1, 2, 3, 1, 2, 3]);
-  assert.equal(result.runState.ended, true);
-  assert.equal(result.runState.endReason, 'score-end');
-  assert.deepEqual(result.runState.executedRepeatEndMeasureIds, ['m2']);
-  assert.deepEqual(result.runState.executedDalSegnoMeasureIds, ['m3']);
+  while (!runState.ended) {
+    const previousMeasureId = runState.currentStep.measureId;
+
+    runState = advancePlaybackRun(runState, measures);
+    if (!runState.ended && runState.currentStep.measureId !== previousMeasureId) {
+      steps.push(runState.currentStep);
+    }
+  }
+
+  assert.deepEqual(getMeasureNumbers(result.steps), [1, 2, 1, 2, 3]);
+  assert.equal(result.runState.lastNavigationPlan.status, 'ambiguous');
+  assert.deepEqual(getMeasureNumbers(steps), [1, 2, 1, 2, 3, 1, 2, 3]);
+  assert.equal(runState.ended, true);
+  assert.equal(runState.endReason, 'score-end');
+  assert.deepEqual(runState.executedRepeatEndMeasureIds, ['m2']);
+  assert.deepEqual(runState.executedDalSegnoMeasureIds, ['m3']);
 });
 
 test('K: resolved steps publish the same logical measure and page to followers', () => {

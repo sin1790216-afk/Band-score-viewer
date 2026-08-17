@@ -123,24 +123,27 @@ export function getNavigationModelValidation(measures) {
   };
 }
 
-function setMarkerOnMeasure(measure, type, shouldExist) {
+function setMarkerOnMeasure(measure, type, shouldExist, markerToAdd = { type }) {
   const markers = normalizeNavigationMarkers(measure.navigationMarkers).filter(
     (marker) => marker.type !== type,
   );
 
   return {
     ...measure,
-    navigationMarkers: shouldExist ? [...markers, { type }] : markers,
+    navigationMarkers: shouldExist ? [...markers, markerToAdd] : markers,
   };
 }
 
 export function setPointNavigationMarker(measures, type, physicalMeasureNumber) {
   const measureIndex = physicalMeasureNumber - 1;
+  const markerToMove = measures
+    .flatMap((measure) => normalizeNavigationMarkers(measure.navigationMarkers))
+    .find((marker) => marker.type === type) || { type };
 
   if (!measures[measureIndex]) return null;
 
   return measures.map((measure, index) =>
-    setMarkerOnMeasure(measure, type, index === measureIndex),
+    setMarkerOnMeasure(measure, type, index === measureIndex, markerToMove),
   );
 }
 

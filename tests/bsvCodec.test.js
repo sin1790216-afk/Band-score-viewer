@@ -174,6 +174,30 @@ test('.bsv round-trip preserves Coda/Fine navigation marker types', async () => 
   );
 });
 
+test('.bsv round-trip은 D.S. repeatPolicy override를 보존한다', async () => {
+  const projectState = createInitialProjectState({
+    ...createProjectState(),
+    measures: [
+      {
+        ...MEASURE,
+        navigationMarkers: [
+          { repeatPolicy: 'skip', type: 'dal-segno-al-fine' },
+        ],
+      },
+    ],
+  });
+  const encoded = await encodeBsvProject({
+    now: TEST_TIMESTAMP,
+    pdfBlob: new Blob([PDF_BYTES], { type: PDF_MIME_TYPE }),
+    projectState,
+  });
+  const decoded = decodeBsvProject(encoded.text);
+
+  assert.deepEqual(decoded.projectState.measures[0].navigationMarkers, [
+    { repeatPolicy: 'skip', type: 'dal-segno-al-fine' },
+  ]);
+});
+
 test('a legacy .bsv without navigation markers receives an empty marker list', async () => {
   const { document } = await createEncodedProject();
 

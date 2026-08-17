@@ -12,6 +12,7 @@
 - 현재 도돌이표, Generic N개 괄호, Segno, D.S., Coda, To Coda, Fine과 D.S. al Coda/Fine은 수동 Marker/anchor 편집과 PlaybackResolver 실행을 지원한다. 괄호 시작점에서 재생용 range를 파생하며 기존 explicit Range 파일은 호환 경로로 유지한다.
 - D.C. Playback, `(2x only)`의 repeat pass 의미 적용과 Navigation Symbol 자동인식은 아직 지원하지 않는다.
 - repeat pass와 여러 절 lyric lane의 자동 선택은 아직 연결되지 않았다.
+- D.S. 이후 AUTO Planner에서 서로 다른 유효 경로가 남으면 Teacher가 replay/skip 경로를 선택해야 진행한다. section별 혼합 경로는 runtime 선택으로 사용할 수 있지만 전역 marker override로 영구 저장하지 않는다.
 
 ## Vocal Phrase
 

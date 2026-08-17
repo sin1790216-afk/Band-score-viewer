@@ -108,6 +108,11 @@ Session에만 존재하고 JSON이나 `.bsv`에 저장하지 않는다. D.S. al 
 D.S. al Fine의 armed/stop 상태도 같은 Playback run에만 존재하며 프로젝트에는 marker 위치만
 저장한다.
 
+D.S., D.S. al Coda, D.S. al Fine marker는 선택적으로 `repeatPolicy: "auto" | "replay" |
+"skip"`을 가진다. 필드가 없는 기존 프로젝트는 `auto`로 해석한다. AUTO가 계산한
+`repeatDecisionsBySectionId`는 derived runtime state이며 저장하지 않는다. Teacher가 명시적으로
+선택한 replay/skip만 marker override로 JSON과 `.bsv`에 저장한다.
+
 Teacher의 `audioSettings`는 서버가 메모리에 최신값을 보관해 새 Student에도 전달한다. Student
 개인 설정은 Teacher PDF 또는 개인 PDF의 document key별로 브라우저 `localStorage`에 저장하며,
 Project State와 Socket 데이터에는 합치지 않는다.

@@ -146,3 +146,29 @@ test('Segno and D.S. numeric inputs replace only their own point marker', () => 
     true,
   );
 });
+
+test('D.S. marker 위치를 옮겨도 명시 repeatPolicy를 보존한다', () => {
+  let measures = createMeasures(8);
+
+  measures[5] = {
+    ...measures[5],
+    navigationMarkers: [
+      {
+        repeatPolicy: 'replay',
+        type: NAVIGATION_MARKER_TYPES.DAL_SEGNO,
+      },
+    ],
+  };
+  measures = setPointNavigationMarker(
+    measures,
+    NAVIGATION_MARKER_TYPES.DAL_SEGNO,
+    8,
+  );
+
+  assert.deepEqual(measures[7].navigationMarkers, [
+    {
+      repeatPolicy: 'replay',
+      type: NAVIGATION_MARKER_TYPES.DAL_SEGNO,
+    },
+  ]);
+});

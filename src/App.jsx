@@ -46,7 +46,12 @@ import {
 } from './utils/measureCoordinates.js';
 import { resizeCanonicalMeasure } from './utils/measureResize.js';
 import {
+  getNavigationRepeatPolicy,
   NAVIGATION_MARKER_OPTIONS,
+  NAVIGATION_REPEAT_POLICIES,
+  NAVIGATION_REPEAT_POLICY_OPTIONS,
+  setNavigationMarkerRepeatPolicy,
+  supportsNavigationRepeatPolicy,
   toggleNavigationMarker,
 } from './utils/navigationMarkers.js';
 import { getNavigationModelValidation } from './utils/navigationModel.js';
@@ -294,6 +299,7 @@ function App() {
   const socketRef = useRef(null);
   const autoplayTimerRef = useRef(null);
   const autoplayTimerVersionRef = useRef(0);
+  const isAutoPlayingRef = useRef(false);
   const playbackProgressionRef = useRef(null);
   const audioSettingsRef = useRef({ ...DEFAULT_AUDIO_SETTINGS });
   const projectDefaultBpmRef = useRef(DEFAULT_MEASURE.bpm);
@@ -352,6 +358,8 @@ function App() {
     message: '',
     status: 'idle',
   });
+  const [pendingNavigationDecision, setPendingNavigationDecision] =
+    useState(null);
   const [pdfRenderResetVersion, setPdfRenderResetVersion] = useState(0);
   const [studentViewMode, setStudentViewMode] = useState(STUDENT_ZOOM_VIEW);
   const [teacherViewMode, setTeacherViewMode] = useState(TEACHER_PAGE_VIEW);
@@ -736,6 +744,7 @@ function App() {
   }
 
   function setAutoPlaying(nextIsAutoPlaying) {
+    isAutoPlayingRef.current = nextIsAutoPlaying;
     dispatchSession({
       type: SESSION_ACTIONS.SET_AUTO_PLAYING,
       isAutoPlaying: nextIsAutoPlaying,
@@ -1852,6 +1861,33 @@ function App() {
       },
     });
     playbackProgressionRef.current = null;
+    setPendingNavigationDecision(null);
+  }
+
+  function updateSelectedMeasureNavigationRepeatPolicy(type, repeatPolicy) {
+    if (
+      !canEdit ||
+      isAutoPlaying ||
+      selectedMeasureIndex < 0 ||
+      !selectedMeasure ||
+      !supportsNavigationRepeatPolicy(type)
+    ) {
+      return;
+    }
+
+    dispatchMeasureUpdate({
+      type: PROJECT_ACTIONS.UPDATE_MEASURE,
+      index: selectedMeasureIndex,
+      changes: {
+        navigationMarkers: setNavigationMarkerRepeatPolicy(
+          selectedMeasure.navigationMarkers,
+          type,
+          repeatPolicy,
+        ),
+      },
+    });
+    playbackProgressionRef.current = null;
+    setPendingNavigationDecision(null);
   }
 
   function replaceNavigationMeasures(nextMeasures) {
@@ -1862,6 +1898,7 @@ function App() {
       measures: nextMeasures,
     });
     playbackProgressionRef.current = null;
+    setPendingNavigationDecision(null);
   }
 
   function applyTeacherGlobalBpm(value) {
@@ -2521,6 +2558,7 @@ function App() {
       measuresRef.current,
       nextMeasureIndex,
     );
+    setPendingNavigationDecision(null);
 
     if (nextMeasure.page !== pageNumberRef.current) {
       setSyncedPageNumber(nextMeasure.page);
@@ -2545,6 +2583,7 @@ function App() {
   function stopAutoplay() {
     clearAutoplayTimer();
     playbackProgressionRef.current = null;
+    setPendingNavigationDecision(null);
     setAutoPlaying(false);
   }
 
@@ -2573,6 +2612,7 @@ function App() {
     );
 
     playbackProgressionRef.current = nextProgression;
+    setPendingNavigationDecision(null);
     return nextProgression;
   }
 
@@ -2589,18 +2629,39 @@ function App() {
     return resetPlaybackProgression(measureIndexRef.current);
   }
 
-  function advancePlayback() {
+  function advancePlayback(navigationDecisionOverride = null) {
     const currentProgression = getPlaybackProgressionAtCurrentMeasure();
     const result = advancePlaybackProgressionState(
       currentProgression,
       measuresRef.current,
-      { loopAtEnd: isRepeatEnabledRef.current },
+      {
+        loopAtEnd: isRepeatEnabledRef.current,
+        navigationDecisionOverride,
+        wasAutoPlaying: isAutoPlayingRef.current,
+      },
     );
 
     playbackProgressionRef.current = result.progression;
 
+    if (result.blocked && result.progression.runState.pendingNavigationDecision) {
+      clearAutoplayTimer();
+      setPendingNavigationDecision(
+        result.progression.runState.pendingNavigationDecision,
+      );
+      if (isAutoPlayingRef.current) setAutoPlaying(false);
+
+      return {
+        blocked: true,
+        ended: false,
+        measureIndex: measureIndexRef.current,
+      };
+    }
+
+    setPendingNavigationDecision(null);
+
     if (!result.didMove || !result.progression.runState.currentStep) {
       return {
+        blocked: false,
         ended: result.progression.runState.ended,
         measureIndex: measureIndexRef.current,
       };
@@ -2611,9 +2672,60 @@ function App() {
     );
 
     return {
+      blocked: false,
       ended: nextMeasureIndex < 0,
       measureIndex: nextMeasureIndex,
     };
+  }
+
+  function resolvePendingNavigationDecision(option) {
+    const pendingDecision = pendingNavigationDecision;
+
+    if (!pendingDecision || !option?.repeatDecisions) return;
+
+    const commandMeasureIndex = measuresRef.current.findIndex(
+      (measure) => measure.id === pendingDecision.command.measureId,
+    );
+
+    if (
+      commandMeasureIndex >= 0 &&
+      [
+        NAVIGATION_REPEAT_POLICIES.REPLAY,
+        NAVIGATION_REPEAT_POLICIES.SKIP,
+      ].includes(option.policy)
+    ) {
+      const nextMeasures = measuresRef.current.map((measure, index) =>
+        index === commandMeasureIndex
+          ? {
+              ...measure,
+              navigationMarkers: setNavigationMarkerRepeatPolicy(
+                measure.navigationMarkers,
+                pendingDecision.command.type,
+                option.policy,
+              ),
+            }
+          : measure,
+      );
+
+      measuresRef.current = nextMeasures;
+      dispatchMeasureUpdate({
+        type: PROJECT_ACTIONS.REPLACE_MEASURES,
+        measures: nextMeasures,
+      });
+    }
+
+    setPendingNavigationDecision(null);
+    const result = advancePlayback({
+      commandMeasureId: pendingDecision.command.measureId,
+      repeatDecisions: option.repeatDecisions,
+    });
+
+    if (result.blocked || result.ended) return;
+
+    if (pendingDecision.wasAutoPlaying) {
+      setAutoPlaying(true);
+      scheduleNextAutoplayStep(result.measureIndex);
+    }
   }
 
   function advanceManualPlayback() {
@@ -2622,6 +2734,8 @@ function App() {
     if (isAutoPlaying) clearAutoplayTimer();
 
     const result = advancePlayback();
+
+    if (result.blocked) return;
 
     if (result.ended) {
       if (isAutoPlaying) finishAutoplayAtEnd();
@@ -2635,6 +2749,7 @@ function App() {
     if (!canEdit || measuresRef.current.length === 0) return;
 
     if (isAutoPlaying) clearAutoplayTimer();
+    setPendingNavigationDecision(null);
 
     const currentProgression = getPlaybackProgressionAtCurrentMeasure();
     const result = rewindPlaybackProgression(currentProgression);
@@ -2684,6 +2799,8 @@ function App() {
       if (timerVersion !== autoplayTimerVersionRef.current) return;
 
       const result = advancePlayback();
+
+      if (result.blocked) return;
 
       if (result.ended) {
         finishAutoplayAtEnd();
@@ -3775,6 +3892,7 @@ function App() {
             isRepeatEnabled={isRepeatEnabled}
             navigationMarkerOptions={NAVIGATION_MARKER_OPTIONS}
             navigationMarkerValidation={navigationMarkerValidation}
+            navigationRepeatPolicyOptions={NAVIGATION_REPEAT_POLICY_OPTIONS}
             measures={measures}
             measureRecognitionState={measureRecognitionState}
             lyricRecognitionState={lyricRecognitionState}
@@ -3804,6 +3922,12 @@ function App() {
             onToggleSelectedMeasureNavigationMarker={
               toggleSelectedMeasureNavigationMarker
             }
+            onUpdateSelectedMeasureNavigationRepeatPolicy={
+              updateSelectedMeasureNavigationRepeatPolicy
+            }
+            onResolvePendingNavigationDecision={
+              resolvePendingNavigationDecision
+            }
             onReplaceNavigationMeasures={replaceNavigationMeasures}
             onGoToPage={goToPage}
             onGoToMeasure={goToMeasure}
@@ -3818,6 +3942,7 @@ function App() {
             onUpdateSelectedMeasureTiming={updateSelectedMeasureTiming}
             onUpdateAudioSettings={updateAudioSettings}
             pageNumber={pageNumber}
+            pendingNavigationDecision={pendingNavigationDecision}
             projectDefaultBpm={projectDefaultBpm}
             returnToStartOnEnd={returnToStartOnEnd}
             sharedAudioInputRef={teacherSharedAudioInputRef}
@@ -4008,6 +4133,7 @@ function Sidebar({
   jsonInputRef,
   navigationMarkerOptions,
   navigationMarkerValidation,
+  navigationRepeatPolicyOptions,
   measures,
   measureIndex,
   measureRecognitionState,
@@ -4044,10 +4170,13 @@ function Sidebar({
   onStartAutoplay,
   onStopAutoplay,
   onToggleSelectedMeasureNavigationMarker,
+  onUpdateSelectedMeasureNavigationRepeatPolicy,
+  onResolvePendingNavigationDecision,
   onReplaceNavigationMeasures,
   onUpdateAudioSettings,
   onUpdateSelectedMeasureTiming,
   pageNumber,
+  pendingNavigationDecision,
   projectDefaultBpm,
   returnToStartOnEnd,
   sharedAudioInputRef,
@@ -4072,6 +4201,10 @@ function Sidebar({
   useEffect(() => {
     setGlobalBpmInput(String(projectDefaultBpm));
   }, [projectDefaultBpm]);
+
+  const selectedRepeatPolicyMarker = selectedMeasure?.navigationMarkers?.find(
+    (marker) => supportsNavigationRepeatPolicy(marker.type),
+  );
 
   function submitMeasureNumber(event) {
     event.preventDefault();
@@ -4143,6 +4276,24 @@ function Sidebar({
           연주모드
         </button>
       </div>
+
+      {pendingNavigationDecision && (
+        <section className="navigation-decision-prompt" role="alert">
+          <strong>D.S. 이후 도돌이표 처리</strong>
+          <span>두 방식 모두 유효한 연주 경로입니다.</span>
+          <div className="sidebar-button-grid">
+            {pendingNavigationDecision.options.map((option) => (
+              <button
+                key={option.id}
+                onClick={() => onResolvePendingNavigationDecision(option)}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <SidebarSection defaultOpen title="악보">
         <button onClick={onOpenPdf} type="button">PDF 열기</button>
@@ -4256,7 +4407,9 @@ function Sidebar({
           </label>
           <div className="sidebar-button-grid">
             <button
-              disabled={isAutoPlaying || measureTotal === 0}
+              disabled={
+                isAutoPlaying || Boolean(pendingNavigationDecision) || measureTotal === 0
+              }
               onClick={onStartAutoplay}
               type="button"
             >
@@ -4382,6 +4535,27 @@ function Sidebar({
                 );
               })}
             </div>
+            {selectedRepeatPolicyMarker && (
+              <label className="navigation-repeat-policy">
+                D.S. 이후 도돌이표
+                <select
+                  disabled={isAutoPlaying}
+                  onChange={(event) =>
+                    onUpdateSelectedMeasureNavigationRepeatPolicy(
+                      selectedRepeatPolicyMarker.type,
+                      event.target.value,
+                    )
+                  }
+                  value={getNavigationRepeatPolicy(selectedRepeatPolicyMarker)}
+                >
+                  {navigationRepeatPolicyOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             {navigationMarkerValidation.message && (
               <small className="navigation-marker-warning" role="status">
                 {navigationMarkerValidation.message}

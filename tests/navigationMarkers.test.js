@@ -4,8 +4,11 @@ import test from 'node:test';
 import {
   analyzeNavigationMarkers,
   getNavigationMarkerValidation,
+  getNavigationRepeatPolicy,
   NAVIGATION_MARKER_TYPES,
+  NAVIGATION_REPEAT_POLICIES,
   normalizeNavigationMarkers,
+  setNavigationMarkerRepeatPolicy,
   toggleNavigationMarker,
 } from '../src/utils/navigationMarkers.js';
 
@@ -42,6 +45,40 @@ test('marker toggle adds and removes one marker type without changing others', (
   assert.deepEqual(
     toggleNavigationMarker(withRepeatStart, NAVIGATION_MARKER_TYPES.SEGNO),
     [{ type: NAVIGATION_MARKER_TYPES.REPEAT_START }],
+  );
+});
+
+test('legacy D.S. marker는 auto 정책을 사용하고 명시 정책만 보존한다', () => {
+  const legacyMarker = { type: NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA };
+  const replayMarkers = setNavigationMarkerRepeatPolicy(
+    [legacyMarker],
+    NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA,
+    NAVIGATION_REPEAT_POLICIES.REPLAY,
+  );
+
+  assert.equal(
+    getNavigationRepeatPolicy(legacyMarker),
+    NAVIGATION_REPEAT_POLICIES.AUTO,
+  );
+  assert.deepEqual(replayMarkers, [
+    {
+      repeatPolicy: NAVIGATION_REPEAT_POLICIES.REPLAY,
+      type: NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA,
+    },
+  ]);
+  assert.deepEqual(
+    normalizeNavigationMarkers([
+      {
+        repeatPolicy: 'invalid',
+        type: NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA,
+      },
+    ]),
+    [
+      {
+        repeatPolicy: NAVIGATION_REPEAT_POLICIES.AUTO,
+        type: NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA,
+      },
+    ],
   );
 });
 
@@ -104,6 +141,40 @@ test('D.S. al Coda와 D.S. al Fine target을 분석한다', () => {
   assert.equal(analysis.fineIndex, 3);
   assert.deepEqual(analysis.toCodaIndexes, [2]);
   assert.deepEqual(analysis.issues, []);
+});
+
+test('Repeat End와 To Coda는 같은 마디에 함께 둘 수 있다', () => {
+  const analysis = analyzeNavigationMarkers([
+    createMeasure('m1', [NAVIGATION_MARKER_TYPES.REPEAT_START]),
+    createMeasure('m2', [
+      NAVIGATION_MARKER_TYPES.REPEAT_END,
+      NAVIGATION_MARKER_TYPES.TO_CODA,
+    ]),
+    createMeasure('m3', [NAVIGATION_MARKER_TYPES.CODA]),
+  ]);
+
+  assert.equal(
+    analysis.issues.some((issue) => issue.code === 'multiple-jump-actions'),
+    false,
+  );
+  assert.equal(analysis.repeatPairsByEndId.get('m2'), 0);
+  assert.deepEqual(analysis.toCodaIndexes, [1]);
+});
+
+test('Repeat End와 다른 jump command 조합은 계속 validation issue다', () => {
+  const analysis = analyzeNavigationMarkers([
+    createMeasure('m1', [NAVIGATION_MARKER_TYPES.REPEAT_START]),
+    createMeasure('m2', [
+      NAVIGATION_MARKER_TYPES.REPEAT_END,
+      NAVIGATION_MARKER_TYPES.DAL_SEGNO,
+    ]),
+    createMeasure('m3', [NAVIGATION_MARKER_TYPES.SEGNO]),
+  ]);
+
+  assert.equal(
+    analysis.issues.some((issue) => issue.code === 'multiple-jump-actions'),
+    true,
+  );
 });
 
 test('없는 Coda/Fine과 여러 Coda target은 validation issue를 반환한다', () => {

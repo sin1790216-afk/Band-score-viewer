@@ -71,6 +71,47 @@ test('measures socket state accepts only bounded arrays of measure objects', () 
   assert.equal(
     isValidMeasuresState([
       {
+        navigationMarkers: [
+          { repeatPolicy: 'auto', type: 'dal-segno' },
+          { repeatPolicy: 'replay', type: 'dal-segno-al-coda' },
+          { repeatPolicy: 'skip', type: 'dal-segno-al-fine' },
+        ],
+        page: 1,
+        x: 0,
+        y: 0,
+      },
+    ]),
+    true,
+  );
+  assert.equal(
+    isValidMeasuresState([
+      {
+        navigationMarkers: [
+          { repeatPolicy: 'unsafe', type: 'dal-segno' },
+        ],
+        page: 1,
+        x: 0,
+        y: 0,
+      },
+    ]),
+    false,
+  );
+  assert.equal(
+    isValidMeasuresState([
+      {
+        navigationMarkers: [
+          { repeatPolicy: 'replay', type: 'coda' },
+        ],
+        page: 1,
+        x: 0,
+        y: 0,
+      },
+    ]),
+    false,
+  );
+  assert.equal(
+    isValidMeasuresState([
+      {
         navigationEndings: [
           {
             confidence: 1,

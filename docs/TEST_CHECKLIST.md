@@ -147,6 +147,9 @@
 - [ ] M3 Segno, M6 Fine, M8 D.S. al Fine에서 첫 Fine은 통과하고 반환 후 Fine에서 종료한다.
 - [ ] Coda/Fine 목적지가 없거나 중복된 구성은 경고를 표시하고 무한 반복 없이 물리적 다음 마디로 진행한다.
 - [ ] Repeat End와 D.S.를 두 번째 방문했을 때 다시 jump하지 않고 곡이 종료되는지 확인한다.
+- [ ] To Coda가 1번 괄호 안에 있을 때 D.S. al Coda AUTO가 replay를 선택해 `D.S. → Segno → 1번 괄호 → To Coda → Coda`로 진행한다.
+- [ ] replay/skip이 서로 다른 유효 경로이면 현재 마디에서 멈추고 Teacher 선택 후 수동/자동 진행이 같은 경로를 사용한다.
+- [ ] D.S. marker의 자동/다시 연주/건너뛰기 정책이 JSON·`.bsv` 왕복 후 유지되고 legacy marker는 자동으로 열린다.
 - [ ] Marker가 없는 기존 JSON/`.bsv`가 빈 Marker로 열리고, 새 Marker는 JSON/`.bsv` 왕복 후 유지되는지 확인한다.
 - [ ] 자동재생 중 수동 마디 이동 후 대상 마디의 전체 BPM/Beats 시간으로 새 run이 시작되는지 확인한다.
 - [ ] 악보 Marker와 기존 전체곡 반복재생을 함께 켜면 새 cycle에서 Marker가 다시 한 번씩 동작하는지 확인한다.

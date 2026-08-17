@@ -10,6 +10,18 @@ export const NAVIGATION_MARKER_TYPES = Object.freeze({
   TO_CODA: 'to-coda',
 });
 
+export const NAVIGATION_REPEAT_POLICIES = Object.freeze({
+  AUTO: 'auto',
+  REPLAY: 'replay',
+  SKIP: 'skip',
+});
+
+export const NAVIGATION_REPEAT_POLICY_OPTIONS = Object.freeze([
+  { label: '자동', value: NAVIGATION_REPEAT_POLICIES.AUTO },
+  { label: '다시 연주', value: NAVIGATION_REPEAT_POLICIES.REPLAY },
+  { label: '건너뛰기', value: NAVIGATION_REPEAT_POLICIES.SKIP },
+]);
+
 export const NAVIGATION_MARKER_OPTIONS = Object.freeze([
   { description: '반복 시작', label: '||:', shortLabel: '||:', type: NAVIGATION_MARKER_TYPES.REPEAT_START },
   { description: '반복 끝', label: ':||', shortLabel: ':||', type: NAVIGATION_MARKER_TYPES.REPEAT_END },
@@ -41,6 +53,14 @@ export const NAVIGATION_STOP_MARKER_TYPES = Object.freeze([
 const VALID_NAVIGATION_MARKER_TYPES = new Set(
   NAVIGATION_MARKER_OPTIONS.map((option) => option.type),
 );
+const VALID_NAVIGATION_REPEAT_POLICIES = new Set(
+  Object.values(NAVIGATION_REPEAT_POLICIES),
+);
+const REPEAT_POLICY_MARKER_TYPES = new Set([
+  NAVIGATION_MARKER_TYPES.DAL_SEGNO,
+  NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_CODA,
+  NAVIGATION_MARKER_TYPES.DAL_SEGNO_AL_FINE,
+]);
 
 function getMarkerType(marker) {
   return typeof marker === 'string' ? marker : marker?.type;
@@ -48,6 +68,21 @@ function getMarkerType(marker) {
 
 export function isNavigationMarkerType(value) {
   return typeof value === 'string' && VALID_NAVIGATION_MARKER_TYPES.has(value);
+}
+
+export function isNavigationRepeatPolicy(value) {
+  return VALID_NAVIGATION_REPEAT_POLICIES.has(value);
+}
+
+export function supportsNavigationRepeatPolicy(type) {
+  return REPEAT_POLICY_MARKER_TYPES.has(type);
+}
+
+export function getNavigationRepeatPolicy(marker) {
+  return supportsNavigationRepeatPolicy(getMarkerType(marker)) &&
+    isNavigationRepeatPolicy(marker?.repeatPolicy)
+    ? marker.repeatPolicy
+    : NAVIGATION_REPEAT_POLICIES.AUTO;
 }
 
 export function normalizeNavigationMarkers(markers) {
@@ -60,8 +95,17 @@ export function normalizeNavigationMarkers(markers) {
 
     if (!isNavigationMarkerType(type) || seenTypes.has(type)) return [];
 
+    const repeatPolicy = getNavigationRepeatPolicy(marker);
+    const normalizedMarker = {
+      type,
+      ...(supportsNavigationRepeatPolicy(type) &&
+      marker?.repeatPolicy !== undefined
+        ? { repeatPolicy }
+        : {}),
+    };
+
     seenTypes.add(type);
-    return [{ type }];
+    return [normalizedMarker];
   });
 }
 
@@ -78,8 +122,15 @@ export function isValidNavigationMarkers(markers, { allowMissing = true } = {}) 
         marker !== null &&
         typeof marker === 'object' &&
         !Array.isArray(marker) &&
-        Object.keys(marker).length === 1 &&
-        marker.type === normalizedMarkers[index].type,
+        Object.keys(marker).every((key) =>
+          ['repeatPolicy', 'type'].includes(key),
+        ) &&
+        marker.type === normalizedMarkers[index].type &&
+        (marker.repeatPolicy === undefined ||
+          (supportsNavigationRepeatPolicy(marker.type) &&
+            isNavigationRepeatPolicy(marker.repeatPolicy))) &&
+        Object.keys(marker).length === Object.keys(normalizedMarkers[index]).length &&
+        marker.repeatPolicy === normalizedMarkers[index].repeatPolicy,
     )
   );
 }
@@ -100,6 +151,21 @@ export function toggleNavigationMarker(markers, type) {
   return normalizedMarkers.some((marker) => marker.type === type)
     ? normalizedMarkers.filter((marker) => marker.type !== type)
     : [...normalizedMarkers, { type }];
+}
+
+export function setNavigationMarkerRepeatPolicy(markers, type, repeatPolicy) {
+  const normalizedMarkers = normalizeNavigationMarkers(markers);
+
+  if (
+    !supportsNavigationRepeatPolicy(type) ||
+    !isNavigationRepeatPolicy(repeatPolicy)
+  ) {
+    return normalizedMarkers;
+  }
+
+  return normalizedMarkers.map((marker) =>
+    marker.type === type ? { ...marker, repeatPolicy } : marker,
+  );
 }
 
 export function getNavigationMarkerLabel(type) {
@@ -139,8 +205,12 @@ export function analyzeNavigationMarkers(measures) {
       NAVIGATION_MARKER_TYPES.REPEAT_END,
       ...NAVIGATION_COMMAND_MARKER_TYPES,
     ].filter((type) => markerTypes.has(type));
+    const isRepeatEndToCodaPair =
+      jumpActionTypes.length === 2 &&
+      jumpActionTypes.includes(NAVIGATION_MARKER_TYPES.REPEAT_END) &&
+      jumpActionTypes.includes(NAVIGATION_MARKER_TYPES.TO_CODA);
 
-    if (jumpActionTypes.length > 1) {
+    if (jumpActionTypes.length > 1 && !isRepeatEndToCodaPair) {
       issues.push({
         code: 'multiple-jump-actions',
         measureId: measure?.id || '',
