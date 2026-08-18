@@ -23,6 +23,14 @@ const VOLTA_ABOVE_STAFF_REACH_IN_STAFF_SPACES = 5.5;
 const VOLTA_MINIMUM_BRACKET_LENGTH_IN_STAFF_SPACES = 2.5;
 const VOLTA_LABEL_LINE_REACH_IN_STAFF_SPACES = 0.8;
 const VOLTA_MAXIMUM_LINE_THICKNESS_IN_STAFF_SPACES = 0.45;
+const NAVIGATION_SYMBOL_MINIMUM_DISTANCE_ABOVE_STAFF = 0.5;
+const NAVIGATION_SYMBOL_MAXIMUM_DISTANCE_ABOVE_STAFF = 8;
+const DIRECT_SEGNO_GLYPH = '\u{1d10b}';
+const DIRECT_CODA_GLYPH = '\u{1d10c}';
+const LEGACY_MAESTRO_SEGNO_GLYPH = '%';
+const LEGACY_MAESTRO_CODA_GLYPH = '\uf0de';
+const PRIVATE_USE_GLYPH_PATTERN = /[\ue000-\uf8ff]/u;
+const COMMON_NOTATION_GLYPH_PATTERN = /[&\u0152\u0153\u02d9\u2211]/u;
 
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -98,6 +106,253 @@ function getPageMeasures(measures, pageNumber, systems) {
       systemIndex: findMeasureSystemIndex(measure, systems),
     }))
     .filter((measure) => Number(measure.page) === Number(pageNumber));
+}
+
+function normalizeGlyphText(value) {
+  return String(value || '').trim();
+}
+
+function isNotationGlyphText(value) {
+  const text = normalizeGlyphText(value);
+
+  return PRIVATE_USE_GLYPH_PATTERN.test(text) ||
+    COMMON_NOTATION_GLYPH_PATTERN.test(text);
+}
+
+function createNotationFontProfiles(textItems) {
+  const profiles = new Map();
+
+  textItems.forEach((item) => {
+    const fontName = String(item.fontName || '');
+
+    if (!fontName) return;
+
+    const profile = profiles.get(fontName) || {
+      fontName,
+      itemCount: 0,
+      notationGlyphCount: 0,
+    };
+
+    profile.itemCount += 1;
+    profile.notationGlyphCount += Number(isNotationGlyphText(item.text));
+    profiles.set(fontName, profile);
+  });
+
+  profiles.forEach((profile) => {
+    profile.notationGlyphRatio = profile.notationGlyphCount /
+      Math.max(1, profile.itemCount);
+    profile.isNotationFont = profile.notationGlyphCount >= 2 &&
+      profile.notationGlyphRatio >= 0.2;
+  });
+
+  return profiles;
+}
+
+function getNavigationSymbolIdentity(item, fontProfile) {
+  const text = normalizeGlyphText(item.text);
+
+  if (text === DIRECT_SEGNO_GLYPH) {
+    return { mapping: 'unicode-musical-symbol', type: NAVIGATION_MARKER_TYPES.SEGNO };
+  }
+
+  if (text === DIRECT_CODA_GLYPH) {
+    return { mapping: 'unicode-musical-symbol', type: NAVIGATION_MARKER_TYPES.CODA };
+  }
+
+  if (!fontProfile?.isNotationFont) return null;
+
+  if (text === LEGACY_MAESTRO_SEGNO_GLYPH) {
+    return { mapping: 'maestro-percent-glyph', type: NAVIGATION_MARKER_TYPES.SEGNO };
+  }
+
+  if (text === LEGACY_MAESTRO_CODA_GLYPH) {
+    return { mapping: 'maestro-private-use-glyph', type: NAVIGATION_MARKER_TYPES.CODA };
+  }
+
+  return null;
+}
+
+function findNavigationSymbolSystem(item, systems) {
+  const centerY = Number(item.y) + Number(item.height) / 2;
+
+  if (!Number.isFinite(centerY)) return null;
+
+  return systems
+    .map((system, systemIndex) => {
+      const staffSpacing = Number(system.staffSpacing) || 0;
+      const distanceAbove = Number(system.staffTop) - centerY;
+      const contentDistance = getDistanceToRange(
+        centerY,
+        Number(system.contentTop),
+        Number(system.contentBottom),
+      );
+
+      return {
+        contentDistance,
+        distanceAbove,
+        distanceAboveInStaffSpaces: staffSpacing > 0
+          ? distanceAbove / staffSpacing
+          : Number.POSITIVE_INFINITY,
+        staffSpacing,
+        system,
+        systemIndex,
+      };
+    })
+    .filter(({ contentDistance, distanceAboveInStaffSpaces, staffSpacing }) =>
+      staffSpacing > 0 &&
+      contentDistance <= staffSpacing &&
+      distanceAboveInStaffSpaces >= NAVIGATION_SYMBOL_MINIMUM_DISTANCE_ABOVE_STAFF &&
+      distanceAboveInStaffSpaces <= NAVIGATION_SYMBOL_MAXIMUM_DISTANCE_ABOVE_STAFF
+    )
+    .sort((left, right) =>
+      left.contentDistance - right.contentDistance ||
+      left.distanceAboveInStaffSpaces - right.distanceAboveInStaffSpaces
+    )[0] || null;
+}
+
+function getNavigationSymbolRasterEvidence({ height, item, mask, system, width }) {
+  const padding = Number(system.staffSpacing) * height * 0.5;
+  const left = clamp(Math.floor(Number(item.x) * width - padding), 0, width - 1);
+  const right = clamp(
+    Math.ceil((Number(item.x) + Number(item.width)) * width + padding),
+    0,
+    width - 1,
+  );
+  const top = clamp(Math.floor(Number(item.y) * height - padding), 0, height - 1);
+  const bottom = clamp(
+    Math.ceil((Number(item.y) + Number(item.height)) * height + padding),
+    0,
+    height - 1,
+  );
+  let inkPixelCount = 0;
+
+  for (let y = top; y <= bottom; y += 1) {
+    for (let x = left; x <= right; x += 1) {
+      inkPixelCount += mask[y * width + x];
+    }
+  }
+
+  return {
+    bounds: {
+      bottom: bottom / height,
+      left: left / width,
+      right: right / width,
+      top: top / height,
+    },
+    hasInk: inkPixelCount > 0,
+    inkPixelCount,
+  };
+}
+
+function createNavigationSymbolBounds(item) {
+  return {
+    coordinateSpace: NORMALIZED_COORDINATE_SPACE,
+    height: Math.max(0, Number(item.height) || 0),
+    width: Math.max(0, Number(item.width) || 0),
+    x: Number(item.x) || 0,
+    y: Number(item.y) || 0,
+  };
+}
+
+function detectNavigationSymbolCandidates({
+  height,
+  mask,
+  measures,
+  pageNumber,
+  systems,
+  textItems,
+  width,
+}) {
+  const fontProfiles = createNotationFontProfiles(textItems);
+
+  return textItems.flatMap((item) => {
+    const fontProfile = fontProfiles.get(String(item.fontName || '')) || null;
+    const identity = getNavigationSymbolIdentity(item, fontProfile);
+
+    if (!identity) return [];
+
+    const systemAssociation = findNavigationSymbolSystem(item, systems);
+
+    if (!systemAssociation) return [];
+
+    const rasterEvidence = getNavigationSymbolRasterEvidence({
+      height,
+      item,
+      mask,
+      system: systemAssociation.system,
+      width,
+    });
+
+    if (!rasterEvidence.hasInk) return [];
+
+    const measureAssociation = associateNavigationTextWithMeasure({
+      bounds: {
+        height: Number(item.height) || 0,
+        width: Number(item.width) || 0,
+        x: Number(item.x) || 0,
+        y: Number(item.y) || 0,
+      },
+      measures,
+      system: systemAssociation.system,
+      systemIndex: systemAssociation.systemIndex,
+      systems,
+    });
+
+    if (!measureAssociation.measureId) return [];
+
+    const sourceIndex = Number.isInteger(item.sourceIndex) ? item.sourceIndex : 0;
+    const codePoints = [...normalizeGlyphText(item.text)]
+      .map((character) => `U+${character.codePointAt(0).toString(16).toUpperCase()}`);
+
+    return [{
+      bounds: createNavigationSymbolBounds(item),
+      confidence: measureAssociation.associationConfidence === NAVIGATION_TEXT_CONFIDENCE.LOW
+        ? NAVIGATION_TEXT_CONFIDENCE.MEDIUM
+        : NAVIGATION_TEXT_CONFIDENCE.HIGH,
+      evidence: {
+        detectionPath: 'music-font-glyph',
+        glyphIdentity: {
+          codePoints,
+          fontName: String(item.fontName || ''),
+          mapping: identity.mapping,
+          notationFontProfile: fontProfile
+            ? {
+                itemCount: fontProfile.itemCount,
+                notationGlyphCount: fontProfile.notationGlyphCount,
+                notationGlyphRatio: fontProfile.notationGlyphRatio,
+              }
+            : null,
+        },
+        measureAssociation: measureAssociation.evidence,
+        rasterEvidence,
+        staffAssociation: {
+          distanceAboveInStaffSpaces: systemAssociation.distanceAboveInStaffSpaces,
+          staffBottom: systemAssociation.system.staffBottom,
+          staffSpacing: systemAssociation.system.staffSpacing,
+          staffTop: systemAssociation.system.staffTop,
+          systemIndex: systemAssociation.systemIndex,
+        },
+        textEvidence: {
+          baselineY: item.baselineY,
+          sourceIndex,
+          text: item.text,
+        },
+      },
+      id: [
+        NAVIGATION_GRAPHIC_CANDIDATE_SOURCES.HYBRID,
+        pageNumber,
+        identity.type,
+        sourceIndex,
+      ].join(':'),
+      measureId: measureAssociation.measureId,
+      measureIndex: measureAssociation.measureIndex,
+      normalizedText: identity.type,
+      pageNumber: Number(pageNumber),
+      rawText: item.text,
+      source: NAVIGATION_GRAPHIC_CANDIDATE_SOURCES.HYBRID,
+      type: identity.type,
+    }];
+  });
 }
 
 function hasInkNear(mask, width, height, x, y, radiusX = 0) {
@@ -1185,15 +1440,26 @@ export function detectNavigationGraphicCandidates({
     textItems: safeTextItems,
     width,
   });
+  const navigationSymbolCandidates = detectNavigationSymbolCandidates({
+    height,
+    mask,
+    measures: pageMeasures,
+    pageNumber,
+    systems: safeSystems,
+    textItems: safeTextItems,
+    width,
+  });
   const candidates = deduplicateCandidates([
     ...repeatCandidates,
     ...voltaCandidates,
+    ...navigationSymbolCandidates,
   ]);
 
   return {
     candidates,
     diagnostics: {
       candidateCount: candidates.length,
+      navigationSymbolCandidateCount: navigationSymbolCandidates.length,
       pageNumber: Number(pageNumber),
       repeatBoundaryCount: repeatBoundaries.length,
       systems: safeSystems.map((system, systemIndex) => ({

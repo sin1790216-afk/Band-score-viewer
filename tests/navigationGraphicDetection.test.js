@@ -144,12 +144,42 @@ function text(value, x, baselineY, width = 0.02, sourceIndex = 0) {
   };
 }
 
-function detect(raster, textItems = [], measures = MEASURES) {
+function glyphText(
+  value,
+  x,
+  baselineY,
+  width = 0.03,
+  sourceIndex = 0,
+  fontName = 'music-font',
+) {
+  return {
+    ...text(value, x, baselineY, width, sourceIndex),
+    fontName,
+  };
+}
+
+function getNotationFontContext(fontName = 'music-font') {
+  return [
+    glyphText('\u0153', 0.3, 0.24, 0.02, 90, fontName),
+    glyphText('\u0152', 0.34, 0.24, 0.02, 91, fontName),
+  ];
+}
+
+function drawGlyphInk(raster, item) {
+  raster.drawRect(item.x, item.y, item.width, item.height);
+}
+
+function detect(
+  raster,
+  textItems = [],
+  measures = MEASURES,
+  { pageNumber = 1, systems = [SYSTEM] } = {},
+) {
   return detectNavigationGraphicCandidates({
     imageData: raster.imageData,
     measures,
-    pageNumber: 1,
-    systems: [SYSTEM],
+    pageNumber,
+    systems,
     textItems,
   }).candidates;
 }
@@ -300,6 +330,119 @@ test('두 raster scale에서 같은 normalized Repeat 후보를 만든다', () =
     Math.abs(smallCandidate.bounds.width - largeCandidate.bounds.width) < 0.01,
     JSON.stringify({ large: largeCandidate.bounds, small: smallCandidate.bounds }),
   );
+});
+
+test('Maestro Segno glyph를 staff 위 위치와 raster ink로 탐지한다', () => {
+  const raster = createRaster();
+  const segno = glyphText('%', 0.18, 0.16);
+  drawGlyphInk(raster, segno);
+
+  const candidate = detect(raster, [segno, ...getNotationFontContext()])
+    .find((item) => item.type === NAVIGATION_MARKER_TYPES.SEGNO);
+
+  assert.equal(candidate.measureId, 'm1');
+  assert.equal(candidate.source, NAVIGATION_GRAPHIC_CANDIDATE_SOURCES.HYBRID);
+  assert.equal(candidate.confidence, 'high');
+  assert.equal(candidate.bounds.coordinateSpace, 'normalized-page-v1');
+  assert.equal(candidate.evidence.detectionPath, 'music-font-glyph');
+  assert.equal(candidate.evidence.glyphIdentity.mapping, 'maestro-percent-glyph');
+  assert.ok(candidate.evidence.staffAssociation.distanceAboveInStaffSpaces > 0.5);
+});
+
+test('Maestro private-use Coda glyph를 대상 Measure에 연결한다', () => {
+  const raster = createRaster();
+  const coda = glyphText('\uf0de', 0.56, 0.16, 0.025, 1);
+  drawGlyphInk(raster, coda);
+
+  const candidate = detect(raster, [coda, ...getNotationFontContext()])
+    .find((item) => item.type === NAVIGATION_MARKER_TYPES.CODA);
+
+  assert.equal(candidate.measureId, 'm2');
+  assert.equal(candidate.measureIndex, 1);
+  assert.equal(candidate.evidence.glyphIdentity.mapping, 'maestro-private-use-glyph');
+});
+
+test('표준 Unicode Segno와 Coda는 custom font profile 없이도 탐지한다', () => {
+  const raster = createRaster();
+  const segno = glyphText('\u{1d10b}', 0.18, 0.16, 0.03, 0, 'unicode-font');
+  const coda = glyphText('\u{1d10c}', 0.56, 0.16, 0.03, 1, 'unicode-font');
+  drawGlyphInk(raster, segno);
+  drawGlyphInk(raster, coda);
+
+  const candidates = detect(raster, [segno, coda]);
+
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.type),
+    [NAVIGATION_MARKER_TYPES.SEGNO, NAVIGATION_MARKER_TYPES.CODA],
+  );
+});
+
+test('여러 페이지에서도 symbol 후보의 page와 Measure 연결을 유지한다', () => {
+  const raster = createRaster();
+  const segno = glyphText('%', 0.18, 0.16);
+  const pageTwoMeasures = MEASURES.map((measure) => ({
+    ...measure,
+    id: `${measure.id}-page-2`,
+    page: 2,
+  }));
+  drawGlyphInk(raster, segno);
+
+  const candidate = detect(
+    raster,
+    [segno, ...getNotationFontContext()],
+    pageTwoMeasures,
+    { pageNumber: 2 },
+  ).find((item) => item.type === NAVIGATION_MARKER_TYPES.SEGNO);
+
+  assert.equal(candidate.pageNumber, 2);
+  assert.equal(candidate.measureId, 'm1-page-2');
+});
+
+test('같은 Measure의 중복 symbol 관측은 후보 하나로 정리한다', () => {
+  const raster = createRaster();
+  const first = glyphText('%', 0.18, 0.16, 0.03, 0);
+  const duplicate = glyphText('%', 0.181, 0.16, 0.03, 1);
+  drawGlyphInk(raster, first);
+  drawGlyphInk(raster, duplicate);
+
+  const candidates = detect(raster, [
+    first,
+    duplicate,
+    ...getNotationFontContext(),
+  ]).filter((item) => item.type === NAVIGATION_MARKER_TYPES.SEGNO);
+
+  assert.equal(candidates.length, 1);
+});
+
+test('오선 안의 Maestro percent treble-clef glyph는 Segno가 아니다', () => {
+  const raster = createRaster();
+  const clef = glyphText('%', 0.12, 0.24);
+  drawGlyphInk(raster, clef);
+
+  const candidates = detect(raster, [clef, ...getNotationFontContext()])
+    .filter((item) => item.type === NAVIGATION_MARKER_TYPES.SEGNO);
+
+  assert.deepEqual(candidates, []);
+});
+
+test('일반 텍스트 font의 percent와 다른 notation glyph는 Segno/Coda가 아니다', () => {
+  const raster = createRaster();
+  const percent = glyphText('%', 0.18, 0.16, 0.03, 0, 'body-font');
+  const unrelatedGlyphs = [
+    glyphText('&', 0.24, 0.16, 0.03, 1),
+    glyphText('\u0153', 0.3, 0.16, 0.03, 2),
+    glyphText('\uf0ee', 0.36, 0.16, 0.03, 3),
+  ];
+  drawGlyphInk(raster, percent);
+  unrelatedGlyphs.forEach((item) => drawGlyphInk(raster, item));
+
+  const candidates = detect(raster, [percent, ...unrelatedGlyphs])
+    .filter((item) =>
+      item.type === NAVIGATION_MARKER_TYPES.SEGNO ||
+      item.type === NAVIGATION_MARKER_TYPES.CODA
+    );
+
+  assert.deepEqual(candidates, []);
 });
 
 test('경로 A는 staff 위 1. text와 명확한 bracket line을 high Volta로 만든다', () => {
@@ -539,10 +682,12 @@ test('Graphic Candidate 생성은 Project, Validator와 Playback sequence를 바
   const beforeSequence = resolvePlaybackSequence(measures);
   const raster = createRaster();
   drawRepeatStart(raster, 0.1);
+  const segno = glyphText('%', 0.18, 0.16);
+  drawGlyphInk(raster, segno);
 
-  const candidates = detect(raster, [], measures);
+  const candidates = detect(raster, [segno, ...getNotationFontContext()], measures);
 
-  assert.equal(candidates.length, 1);
+  assert.equal(candidates.length, 2);
   assert.equal(JSON.stringify(measures), beforeProject);
   assert.equal(exportMeasuresJson(measures), beforeJsonExport);
   assert.equal(JSON.stringify({ measures }), beforeSocketPayload);
