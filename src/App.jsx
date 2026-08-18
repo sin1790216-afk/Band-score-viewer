@@ -54,6 +54,10 @@ import {
   supportsNavigationRepeatPolicy,
   toggleNavigationMarker,
 } from './utils/navigationMarkers.js';
+import {
+  applyNavigationCandidate,
+  getNavigationCandidateApplicationState,
+} from './utils/navigationCandidateApplication.js';
 import { validateNavigationModel } from './utils/navigationValidation.js';
 import {
   advancePlaybackProgression as advancePlaybackProgressionState,
@@ -672,11 +676,29 @@ function App() {
         ? reconcileNavigationTextCandidates(
             navigationTextDetectionState.candidates,
             measures,
-          )
+          ).map((candidate) => ({
+            ...candidate,
+            applicationState: getNavigationCandidateApplicationState(
+              candidate,
+              measures,
+              {
+                candidateMeasureIdentity:
+                  navigationTextDetectionState.measureIdentity,
+                candidatePdfIdentity:
+                  navigationTextDetectionState.pdfIdentity,
+                currentMeasureIdentity: navigationTextMeasureIdentity,
+                currentPdfIdentity: navigationTextPdfIdentity,
+              },
+            ),
+          }))
         : [],
     [
       measures,
       navigationTextDetectionState.candidates,
+      navigationTextDetectionState.measureIdentity,
+      navigationTextDetectionState.pdfIdentity,
+      navigationTextMeasureIdentity,
+      navigationTextPdfIdentity,
       navigationTextStateIsCurrent,
     ],
   );
@@ -2118,6 +2140,23 @@ function App() {
     });
     playbackProgressionRef.current = null;
     setPendingNavigationDecision(null);
+  }
+
+  function applyDetectedNavigationCandidate(candidate) {
+    if (!canEdit || isAutoPlaying) return null;
+
+    const result = applyNavigationCandidate(candidate, measuresRef.current, {
+      candidateMeasureIdentity: navigationTextDetectionState.measureIdentity,
+      candidatePdfIdentity: navigationTextDetectionState.pdfIdentity,
+      currentMeasureIdentity: createNavigationTextMeasureIdentity(
+        measuresRef.current,
+      ),
+      currentPdfIdentity: teacherPdfObjectUrlRef.current || '',
+    });
+
+    if (result.changed) replaceNavigationMeasures(result.measures);
+
+    return result;
   }
 
   function applyTeacherGlobalBpm(value) {
@@ -4183,6 +4222,7 @@ function App() {
             onOpenSharedAudioPicker={openTeacherSharedAudioPicker}
             onRemoveSharedAudio={removeTeacherSharedAudio}
             onApplyGlobalBpm={applyTeacherGlobalBpm}
+            onApplyNavigationCandidate={applyDetectedNavigationCandidate}
             onUpdateSelectedMeasureTiming={updateSelectedMeasureTiming}
             onUpdateAudioSettings={updateAudioSettings}
             pageNumber={pageNumber}
@@ -4391,6 +4431,7 @@ function Sidebar({
   measureTotal,
   mode,
   onApplyGlobalBpm,
+  onApplyNavigationCandidate,
   onApplyRecognizedLyrics,
   onCancelRecognizedLyrics,
   onDetectNavigationText,
@@ -4821,6 +4862,7 @@ function Sidebar({
           measures={measures}
           navigationTextCandidates={navigationTextCandidates}
           navigationTextDetectionState={navigationTextDetectionState}
+          onApplyNavigationCandidate={onApplyNavigationCandidate}
           onDetectTextCandidates={onDetectNavigationText}
           onReplaceMeasures={onReplaceNavigationMeasures}
         />

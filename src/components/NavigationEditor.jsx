@@ -8,6 +8,9 @@ import {
 } from '../utils/navigationModel.js';
 import { getNavigationEndingLabel } from '../utils/navigationEndings.js';
 import {
+  NAVIGATION_CANDIDATE_APPLICATION_STATUS,
+} from '../utils/navigationCandidateApplication.js';
+import {
   getNavigationTextCandidateLabel,
   NAVIGATION_TEXT_CONFIDENCE,
   NAVIGATION_TEXT_MATCH_STATUS,
@@ -45,6 +48,7 @@ export default function NavigationEditor({
   measures,
   navigationTextCandidates = [],
   navigationTextDetectionState,
+  onApplyNavigationCandidate,
   onDetectTextCandidates,
   onReplaceMeasures,
 }) {
@@ -117,6 +121,19 @@ export default function NavigationEditor({
     setPendingSections((current) => ({ ...current, [sectionId]: true }));
   }
 
+  function applyCandidate(candidate) {
+    const result = onApplyNavigationCandidate(candidate);
+
+    if (!result) return;
+
+    setValidationMessage(
+      result.status === NAVIGATION_CANDIDATE_APPLICATION_STATUS.APPLIED ||
+        result.status === NAVIGATION_CANDIDATE_APPLICATION_STATUS.ALREADY_APPLIED
+        ? ''
+        : result.message,
+    );
+  }
+
   return (
     <div className="navigation-direct-editor">
       <section className="navigation-text-candidate-summary">
@@ -145,24 +162,50 @@ export default function NavigationEditor({
         )}
         {navigationTextCandidates.length > 0 && (
           <div className="navigation-text-candidate-list">
-            {navigationTextCandidates.map((candidate) => (
-              <div className="navigation-text-candidate-row" key={candidate.id}>
-                <span>
-                  {candidate.measureIndex >= 0
-                    ? `M${candidate.measureIndex + 1}`
-                    : '위치 불확실'}
-                </span>
-                <span>{getNavigationTextCandidateLabel(candidate)}</span>
-                <span>
-                  {SOURCE_LABELS[candidate.source] || candidate.source} /{' '}
-                  {CONFIDENCE_LABELS[candidate.confidence] || candidate.confidence}
-                </span>
-                {candidate.matchStatus ===
-                  NAVIGATION_TEXT_MATCH_STATUS.MATCHED_EXISTING_MARKER && (
-                  <span className="navigation-text-candidate-matched">이미 지정됨</span>
-                )}
-              </div>
-            ))}
+            {navigationTextCandidates.map((candidate) => {
+              const applicationState = candidate.applicationState;
+              const isAlreadyApplied =
+                candidate.matchStatus ===
+                  NAVIGATION_TEXT_MATCH_STATUS.MATCHED_EXISTING_MARKER ||
+                applicationState?.status ===
+                  NAVIGATION_CANDIDATE_APPLICATION_STATUS.ALREADY_APPLIED;
+              const canApply =
+                applicationState?.status ===
+                NAVIGATION_CANDIDATE_APPLICATION_STATUS.AVAILABLE;
+
+              return (
+                <div className="navigation-text-candidate-row" key={candidate.id}>
+                  <span>
+                    {candidate.measureIndex >= 0
+                      ? `M${candidate.measureIndex + 1}`
+                      : '위치 불확실'}
+                  </span>
+                  <span>{getNavigationTextCandidateLabel(candidate)}</span>
+                  <span>
+                    {SOURCE_LABELS[candidate.source] || candidate.source} /{' '}
+                    {CONFIDENCE_LABELS[candidate.confidence] || candidate.confidence}
+                  </span>
+                  {isAlreadyApplied ? (
+                    <span className="navigation-text-candidate-matched">
+                      이미 지정됨
+                    </span>
+                  ) : canApply ? (
+                    <button
+                      className="navigation-text-candidate-action"
+                      disabled={disabled}
+                      onClick={() => applyCandidate(candidate)}
+                      type="button"
+                    >
+                      적용
+                    </button>
+                  ) : (
+                    <span className="navigation-text-candidate-blocked">
+                      {applicationState?.message || '위치 확인 필요'}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </section>

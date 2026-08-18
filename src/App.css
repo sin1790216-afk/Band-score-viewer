@@ -1265,6 +1265,16 @@ html:-webkit-full-screen #root{
   grid-column:2 / -1;
 }
 
+.navigation-text-candidate-action{
+  grid-column:2 / -1;
+  justify-self:end;
+}
+
+.navigation-text-candidate-blocked{
+  color:#9b111e;
+  grid-column:2 / -1;
+}
+
 .file-input {
    display : none;
 
