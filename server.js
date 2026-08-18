@@ -9,7 +9,6 @@ if (existsSync('.env.local')) {
 
 import {
   createEmptySharedSessionState,
-  getLogicalSyncState,
 } from './src/state/sessionState.js';
 import {
   createSharedAudioSession,
@@ -23,6 +22,7 @@ import {
   sendLanguagePhraseState,
 } from './src/server/languagePhraseSession.js';
 import { createOpenAiLanguagePhraseProvider } from './src/server/openAiLanguagePhraseProvider.js';
+import { createSyncStateSession } from './src/server/syncStateSession.js';
 import {
   isValidAudioSettings,
   normalizeAudioSettings,
@@ -45,7 +45,7 @@ const isLanguagePhraseDebugEnabled =
   process.env.BSV_LANGUAGE_PHRASE_DEBUG === '1';
 
 const initialSharedSessionState = createEmptySharedSessionState();
-let latestSyncState = initialSharedSessionState.syncState;
+const syncStateSession = createSyncStateSession(initialSharedSessionState.syncState);
 let latestPdf = initialSharedSessionState.pdf;
 let latestMeasures = initialSharedSessionState.measures;
 let latestAudioSettings = initialSharedSessionState.audioSettings;
@@ -152,8 +152,11 @@ io.on('connection', (socket) => {
     `[socket] sent ${SHARED_AUDIO_EVENTS.PLAYBACK_STATE} to ${socket.id}`,
     sharedAudioSession.getPlaybackState(),
   );
-  socket.emit('sync:state', latestSyncState);
-  console.log(`[socket] sent sync:state to ${socket.id}`, latestSyncState);
+  socket.emit('sync:state', syncStateSession.getState());
+  console.log(
+    `[socket] sent sync:state to ${socket.id}`,
+    syncStateSession.getState(),
+  );
 
   registerSharedAudioSocketHandlers({
     io,
@@ -168,10 +171,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('sync:update', (nextSyncState) => {
-    latestSyncState = getLogicalSyncState({
-      ...latestSyncState,
-      ...nextSyncState,
-    });
+    const latestSyncState = syncStateSession.update(nextSyncState);
 
     socket.broadcast.emit('sync:state', latestSyncState);
   });
@@ -185,8 +185,7 @@ io.on('connection', (socket) => {
     }
 
     latestPdf = validatedPdf;
-    latestSyncState = getLogicalSyncState({
-      ...latestSyncState,
+    const latestSyncState = syncStateSession.update({
       fileName: validatedPdf.fileName,
     });
 
@@ -227,7 +226,7 @@ io.on('connection', (socket) => {
 
     latestPdf = emptySessionState.pdf;
     latestMeasures = emptySessionState.measures;
-    latestSyncState = emptySessionState.syncState;
+    syncStateSession.reset(emptySessionState.syncState);
     latestAudioSettings = emptySessionState.audioSettings;
     sharedAudioSession.clear();
     languagePhraseSession.clear();

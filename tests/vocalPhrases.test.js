@@ -430,6 +430,18 @@ test('Vocal View model은 세 verse와 빈 중간 line을 손실하지 않는다
   assert.equal(model.currentPhrase?.text, multilineLyric);
 });
 
+test('AI LanguagePhrase가 빈 배열이면 geometry Phrase로 fallback한다', () => {
+  const measures = [
+    measureWithGeometry('현재 가사', 0, geometry({ endX: 0.2, startX: 0.1 })),
+    { id: 'empty', lyric: '' },
+    measureWithGeometry('다음 가사', 2, geometry({ endX: 0.5, startX: 0.4 })),
+  ];
+  const model = createVocalViewModel(measures, 0, { languagePhrases: [] });
+
+  assert.equal(model.currentText, '현재 가사');
+  assert.equal(model.nextText, '다음 가사');
+});
+
 test('4개 Phrase 중 currentMeasure가 속한 Phrase 하나만 Vocal text로 선택한다', () => {
   const measures = [
     measureWithGeometry('첫 Phrase', 0, geometry({ endX: 0.2, startX: 0.1 })),

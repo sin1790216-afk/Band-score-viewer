@@ -898,6 +898,10 @@ export function advancePlaybackRun(
           ...runState.executedRepeatEndMeasureIds,
           currentMeasure.id,
         ],
+        repeatPassBySectionId: {
+          ...runState.repeatPassBySectionId,
+          [currentRepeatSection.id]: currentRepeatPass + 1,
+        },
       });
     }
   }

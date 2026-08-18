@@ -396,7 +396,8 @@ export function createVocalViewModel(
 ) {
   const safeMeasures = Array.isArray(measures) ? measures : [];
   const phrases = createVocalPhrases(safeMeasures, displayTextOptions);
-  const languagePhrases = Array.isArray(displayTextOptions.languagePhrases)
+  const languagePhrases = Array.isArray(displayTextOptions.languagePhrases) &&
+    displayTextOptions.languagePhrases.length > 0
     ? displayTextOptions.languagePhrases
     : null;
   const displayPhrases = languagePhrases

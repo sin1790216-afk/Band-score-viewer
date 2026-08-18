@@ -11,7 +11,12 @@
 
 - 현재 도돌이표, Generic N개 괄호, Segno, D.S., Coda, To Coda, Fine과 D.S. al Coda/Fine은 수동 Marker/anchor 편집과 PlaybackResolver 실행을 지원한다. 괄호 시작점에서 재생용 range를 파생하며 기존 explicit Range 파일은 호환 경로로 유지한다.
 - D.C. Playback, `(2x only)`의 repeat pass 의미 적용과 Navigation Symbol 자동인식은 아직 지원하지 않는다.
-- repeat pass와 여러 절 lyric lane의 자동 선택은 아직 연결되지 않았다.
+- 자동인식된 여러 절 lyric lane은 Repeat section의 현재 pass에 연결된다. lane보다 pass가
+  많으면 마지막 유효 lane을 유지한다. 수동 입력처럼 `lyricGeometry`가 없는 여러 줄 가사는
+  절 lane으로 추정하지 않는다.
+- 전체 multi-lane 원문으로 생성한 AI LanguagePhrase는 선택 lane projection과 source
+  fingerprint가 다르므로 Vocal에서 geometry Phrase로 안전하게 fallback한다. lane별 AI
+  띄어쓰기·DisplayCue 재사용은 후속 lane-aware 분석 단계가 필요하다.
 - D.S. 이후 AUTO Planner에서 서로 다른 유효 경로가 남으면 Teacher가 replay/skip 경로를 선택해야 진행한다. section별 혼합 경로는 runtime 선택으로 사용할 수 있지만 전역 marker override로 영구 저장하지 않는다.
 
 ## Vocal Phrase

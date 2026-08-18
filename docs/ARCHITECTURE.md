@@ -17,8 +17,12 @@ Teacher가 논리 상태의 기준이다. `syncState`는 현재 코드에서 다
   fileName,
   pageNumber,
   measureIndex,
+  playbackStep,
 }
 ```
+
+`playbackStep`은 현재 마디의 stable ID, Repeat section/pass와 진입 종류만 담는 선택적
+논리 상태다. 렌더 크기나 전체 Playback history는 포함하지 않는다.
 
 Teacher 변경은 `sync:update`, `pdf:update`, `measures:update`, `audio:update`로 서버에 전달된다. 서버는 최신 PDF, measures, Teacher 음원 설정과 syncState를 메모리에 보관하고 새 연결에 현재 상태를 전송한다. 공용 로컬 음원은 Socket으로 한 번 등록한 뒤 서버 메모리에 별도 asset으로 보관하며, Socket에는 `assetId`, 파일 정보와 revision만 전달한다. 각 기기는 `/shared-audio/:assetId` HTTP endpoint에서 파일을 받고 Range 요청으로 탐색한다. Room, 인증, 영속 저장소는 아직 없다.
 사용자가 Teacher 역할을 선택하면 현재 Teacher 로컬 페이지와 마디를 다시 발행해 서버에 남아
@@ -91,6 +95,13 @@ placeholder도 경계로 사용한다. `displayMeasureIndex`로 현재와 다음
 않고, Phrase 재계산에 필요한 `lyricGeometry`만 measures의 선택 metadata로 Socket과
 JSON, `.bsv`에서 함께 보존한다. geometry가 없는 기존 데이터의 Vocal 표시는 한 마디
 가사로 제한해 곡 전체 수준의 파생 Phrase를 렌더하지 않는다.
+
+자동인식된 여러 lyric baseline은 `measure.lyric`의 줄 슬롯과
+`lyricGeometry.lines[].lineIndex`로 보존한다. Vocal은 Teacher가 공유한 현재
+`playbackStep.repeatPass`를 해당 Repeat section 안에서만 lane index로 투영한 뒤 기존 Phrase
+계산에 전달한다. D.S./Coda/Fine 재진입 자체는 pass를 증가시키지 않으며, 직접 마디 이동이나
+정지처럼 유효한 PlaybackStep이 없으면 system의 첫 번째 인식 lane을 사용한다. 인식 geometry가
+없는 기존 multiline lyric은 줄의 의미를 추정하지 않고 원문을 유지한다.
 
 PDF text layer는 가사 연결 전에 Navigation Instruction, Performance Instruction, Chord,
 Metadata, Lyric Candidate로 분류한다. 악보 진행 문구와 `(2x only)` 같은 연주 지시문은 lyric

@@ -65,6 +65,7 @@ import {
   isPlaybackProgressionAtMeasure,
   rewindPlaybackProgression,
 } from './utils/playbackResolver.js';
+import { createPlaybackLyricProjection } from './utils/playbackLyrics.js';
 import {
   createMeasureRecognitionRuntimeDiagnostics,
   isCurrentMeasureRecognitionResult,
@@ -644,16 +645,21 @@ function App() {
     () => createLanguagePhraseSourceKey(measures),
     [measures],
   );
-  const languagePhrases = useMemo(
-    () => getLanguagePhrasesForMeasures(languagePhraseState, measures),
-    [languagePhraseState, measures],
+  const playbackLyricProjection = useMemo(
+    () => createPlaybackLyricProjection(measures, syncState.playbackStep),
+    [measures, syncState.playbackStep],
+  );
+  const vocalMeasures = playbackLyricProjection.measures;
+  const vocalLanguagePhrases = useMemo(
+    () => getLanguagePhrasesForMeasures(languagePhraseState, vocalMeasures),
+    [languagePhraseState, vocalMeasures],
   );
   const vocalViewModel = useMemo(
     () =>
-      createVocalViewModel(measures, displayMeasureIndex, {
-        languagePhrases,
+      createVocalViewModel(vocalMeasures, displayMeasureIndex, {
+        languagePhrases: vocalLanguagePhrases,
       }),
-    [displayMeasureIndex, languagePhrases, measures],
+    [displayMeasureIndex, vocalLanguagePhrases, vocalMeasures],
   );
   const selectedMeasure = measures[selectedMeasureIndex] || null;
   const navigationMarkerValidation = useMemo(
@@ -811,13 +817,35 @@ function App() {
     publishSyncState({ pageNumber: nextPageNumber });
   }
 
-  function setSyncedMeasureIndex(nextMeasureIndex) {
+  function setSyncedMeasureIndex(nextMeasureIndex, playbackStep = null) {
     measureIndexRef.current = nextMeasureIndex;
     dispatchSession({
       type: SESSION_ACTIONS.SET_MEASURE_INDEX,
       measureIndex: nextMeasureIndex,
     });
-    publishSyncState({ measureIndex: nextMeasureIndex });
+    publishSyncState({ measureIndex: nextMeasureIndex, playbackStep });
+  }
+
+  function setSyncedPlaybackPosition(
+    nextPageNumber,
+    nextMeasureIndex,
+    playbackStep = null,
+  ) {
+    pageNumberRef.current = nextPageNumber;
+    measureIndexRef.current = nextMeasureIndex;
+    dispatchSession({
+      type: SESSION_ACTIONS.SET_PAGE_NUMBER,
+      pageNumber: nextPageNumber,
+    });
+    dispatchSession({
+      type: SESSION_ACTIONS.SET_MEASURE_INDEX,
+      measureIndex: nextMeasureIndex,
+    });
+    publishSyncState({
+      measureIndex: nextMeasureIndex,
+      pageNumber: nextPageNumber,
+      playbackStep,
+    });
   }
 
   function setAutoPlaying(nextIsAutoPlaying) {
@@ -871,10 +899,17 @@ function App() {
   }, []);
 
   const publishCurrentTeacherPosition = useCallback((targetSocket) => {
+    const currentMeasure = measuresRef.current[measureIndexRef.current];
+    const currentPlaybackStep = syncStateRef.current.playbackStep;
+    const playbackStep =
+      currentPlaybackStep?.measureId === currentMeasure?.id
+        ? currentPlaybackStep
+        : null;
     const nextSyncState = getTeacherSyncState(
       syncStateRef.current,
       pageNumberRef.current,
       measureIndexRef.current,
+      playbackStep,
     );
 
     syncStateRef.current = nextSyncState;
@@ -1057,7 +1092,7 @@ function App() {
       viewerModeRef.current === TEACHER_MODE ||
       studentPdfSourceRef.current === TEACHER_PDF_SOURCE;
 
-    stopAutoplay();
+    resetAutoplay();
     measureRecognitionVersionRef.current += 1;
     lyricRecognitionVersionRef.current += 1;
     navigationTextDetectionVersionRef.current += 1;
@@ -1177,7 +1212,7 @@ function App() {
 
     if (!file) return;
 
-    stopAutoplay();
+    resetAutoplay();
     measureRecognitionVersionRef.current += 1;
     lyricRecognitionVersionRef.current += 1;
     navigationTextDetectionVersionRef.current += 1;
@@ -1323,7 +1358,7 @@ function App() {
     const nextMimeType = nextProjectState.pdfMetadata.mimeType;
     const nextDefaultBpm = getProjectDefaultBpm(nextMeasures);
 
-    stopAutoplay();
+    resetAutoplay();
     measureRecognitionVersionRef.current += 1;
     lyricRecognitionVersionRef.current += 1;
     navigationTextDetectionVersionRef.current += 1;
@@ -1392,7 +1427,7 @@ function App() {
       return;
     }
 
-    stopAutoplay();
+    resetAutoplay();
     lyricRecognitionVersionRef.current += 1;
     navigationTextDetectionVersionRef.current += 1;
     setLyricRecognitionState(createInitialLyricRecognitionState());
@@ -2812,17 +2847,15 @@ function App() {
 
     if (!nextMeasure) return;
 
-    playbackProgressionRef.current = createPlaybackProgression(
+    const nextProgression = createPlaybackProgression(
       measuresRef.current,
       nextMeasureIndex,
     );
+
+    playbackProgressionRef.current = nextProgression;
     setPendingNavigationDecision(null);
 
-    if (nextMeasure.page !== pageNumberRef.current) {
-      setSyncedPageNumber(nextMeasure.page);
-    }
-
-    setSyncedMeasureIndex(nextMeasureIndex);
+    setSyncedPlaybackPosition(nextMeasure.page, nextMeasureIndex);
 
     if (isAutoPlaying) {
       scheduleNextAutoplayStep(nextMeasureIndex);
@@ -2840,9 +2873,17 @@ function App() {
 
   function stopAutoplay() {
     clearAutoplayTimer();
-    playbackProgressionRef.current = null;
     setPendingNavigationDecision(null);
     setAutoPlaying(false);
+  }
+
+  function resetAutoplay() {
+    stopAutoplay();
+    playbackProgressionRef.current = null;
+
+    if (viewerModeRef.current === TEACHER_MODE) {
+      publishSyncState({ playbackStep: null });
+    }
   }
 
   function syncToPlaybackStep(playbackStep) {
@@ -2855,11 +2896,11 @@ function App() {
 
     if (!nextMeasure) return -1;
 
-    if (nextMeasure.page !== pageNumberRef.current) {
-      setSyncedPageNumber(nextMeasure.page);
-    }
-
-    setSyncedMeasureIndex(nextMeasureIndex);
+    setSyncedPlaybackPosition(
+      nextMeasure.page,
+      nextMeasureIndex,
+      playbackStep,
+    );
     return nextMeasureIndex;
   }
 
@@ -3075,13 +3116,17 @@ function App() {
     const startMeasureIndex = Math.min(measureIndexRef.current, measures.length - 1);
     const currentMeasure = measuresRef.current[startMeasureIndex];
     const currentProgression = playbackProgressionRef.current;
+    let activeProgression = currentProgression;
 
     if (
       !isPlaybackProgressionAtMeasure(currentProgression, currentMeasure) ||
       currentProgression.runState.ended
     ) {
-      resetPlaybackProgression(startMeasureIndex);
+      activeProgression = resetPlaybackProgression(startMeasureIndex);
     }
+    publishSyncState({
+      playbackStep: activeProgression.runState.currentStep,
+    });
     setAutoPlaying(true);
     scheduleNextAutoplayStep(startMeasureIndex);
   }

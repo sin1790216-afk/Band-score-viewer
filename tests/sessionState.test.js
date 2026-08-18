@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   createEmptySharedSessionState,
   createInitialSessionState,
+  getLogicalPlaybackStep,
   getLogicalSyncState,
   getTeacherSyncState,
   SESSION_ACTIONS,
@@ -22,6 +23,7 @@ test('empty shared session clears the PDF, measures, and logical position', () =
       fileName: '',
       measureIndex: 0,
       pageNumber: 1,
+      playbackStep: null,
     },
   });
 });
@@ -42,6 +44,7 @@ test('session state changes the Teacher page and current measure independently',
     fileName: '',
     measureIndex: 0,
     pageNumber: 1,
+    playbackStep: null,
   });
 });
 
@@ -104,6 +107,7 @@ test('received sync state keeps only the existing logical Socket fields', () => 
     fileName: 'lesson.pdf',
     measureIndex: 7,
     pageNumber: 2,
+    playbackStep: null,
   });
   assert.equal('pageRenderWidth' in state.syncState, false);
 });
@@ -123,6 +127,7 @@ test('Teacher entry replaces a stale server position with the local position', (
       fileName: 'lesson.pdf',
       measureIndex: 0,
       pageNumber: 1,
+      playbackStep: null,
     },
   );
 });
@@ -153,6 +158,7 @@ test('logical sync state rejects unsafe page, measure, and filename values', () 
       fileName: '',
       measureIndex: 0,
       pageNumber: 1,
+      playbackStep: null,
     },
   );
 
@@ -164,4 +170,64 @@ test('logical sync state rejects unsafe page, measure, and filename values', () 
     }).fileName.length,
     255,
   );
+});
+
+test('playback step은 현재 Repeat pass와 Navigation 진입 경로만 보존한다', () => {
+  const playbackStep = getLogicalPlaybackStep({
+    enteredBy: 'repeat',
+    measureId: 'measure-2',
+    repeatPass: 2,
+    repeatSectionId: 'repeat:measure-2:measure-4',
+    visitCount: 99,
+    visitIndex: 98,
+  });
+
+  assert.deepEqual(playbackStep, {
+    enteredBy: 'repeat',
+    measureId: 'measure-2',
+    repeatPass: 2,
+    repeatSectionId: 'repeat:measure-2:measure-4',
+  });
+});
+
+test('잘못된 playback step은 Socket logical state에서 제거한다', () => {
+  assert.equal(
+    getLogicalPlaybackStep({
+      enteredBy: 'unknown-jump',
+      measureId: 'measure-2',
+      repeatPass: 2,
+      repeatSectionId: null,
+    }),
+    null,
+  );
+  assert.equal(
+    getLogicalPlaybackStep({
+      enteredBy: 'repeat',
+      measureId: 'measure-2',
+      repeatPass: 0,
+      repeatSectionId: 'repeat:m1:m2',
+    }),
+    null,
+  );
+});
+
+test('Teacher sync는 late join Vocal용 current PlaybackStep을 전달한다', () => {
+  const syncState = getTeacherSyncState(
+    { fileName: 'lesson.pdf' },
+    2,
+    4,
+    {
+      enteredBy: 'dal-segno',
+      measureId: 'measure-5',
+      repeatPass: null,
+      repeatSectionId: null,
+    },
+  );
+
+  assert.deepEqual(syncState.playbackStep, {
+    enteredBy: 'dal-segno',
+    measureId: 'measure-5',
+    repeatPass: null,
+    repeatSectionId: null,
+  });
 });

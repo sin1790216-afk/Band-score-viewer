@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:socket": "node server.js",
+    "dev:socket": "node --watch server.js",
     "start": "node server.js",
     "build": "vite build",
     "fixture:pdf": "node tests/createTestPdf.mjs",

@@ -108,6 +108,11 @@ Session에만 존재하고 JSON이나 `.bsv`에 저장하지 않는다. D.S. al 
 D.S. al Fine의 armed/stop 상태도 같은 Playback run에만 존재하며 프로젝트에는 marker 위치만
 저장한다.
 
+Vocal의 현재 lyric lane도 저장하지 않는다. PDF 자동인식의 줄 슬롯은 원본
+`measure.lyric`과 `lyricGeometry.lines[].lineIndex`에 남기고, 현재 Repeat section/pass에서
+표시용 measures를 파생한다. pass가 lane 수보다 크면 마지막 유효 lane을 유지하며, 실제로
+존재하는 빈 lane은 다른 lane으로 대체하지 않는다.
+
 D.S., D.S. al Coda, D.S. al Fine marker는 선택적으로 `repeatPolicy: "auto" | "replay" |
 "skip"`을 가진다. 필드가 없는 기존 프로젝트는 `auto`로 해석한다. AUTO가 계산한
 `repeatDecisionsBySectionId`는 derived runtime state이며 저장하지 않는다. Teacher가 명시적으로
@@ -201,11 +206,18 @@ Measure audio timeline에서 Phrase 시작·종료 시간을 계산할 수 있�
 {
   fileName: "score.pdf",
   pageNumber: 1,
-  measureIndex: 0
+  measureIndex: 0,
+  playbackStep: {
+    measureId: "measure-1",
+    repeatSectionId: "repeat:measure-1:measure-8",
+    repeatPass: 2,
+    enteredBy: "repeat"
+  }
 }
 ```
 
-렌더 폭이나 scale은 포함하지 않는다.
+`playbackStep`은 재생 중에만 쓰는 선택적 논리 snapshot이며 정지·직접 이동 시 `null`이다.
+전체 history, 렌더 폭이나 scale은 포함하지 않는다.
 
 ## .bsv v1
 

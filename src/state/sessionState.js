@@ -14,6 +14,7 @@ export const INITIAL_SYNC_STATE = {
   fileName: '',
   pageNumber: 1,
   measureIndex: 0,
+  playbackStep: null,
 };
 
 export const INITIAL_SESSION_STATE = {
@@ -34,6 +35,55 @@ export function createEmptySharedSessionState() {
   };
 }
 
+const PLAYBACK_ENTRY_TYPES = new Set([
+  'dal-segno',
+  'dal-segno-al-coda',
+  'dal-segno-al-fine',
+  'loop',
+  'next',
+  'repeat',
+  'start',
+  'to-coda',
+]);
+
+function getBoundedPlaybackId(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 255
+    ? value
+    : '';
+}
+
+export function getLogicalPlaybackStep(playbackStep) {
+  if (!playbackStep || typeof playbackStep !== 'object') return null;
+
+  const measureId = getBoundedPlaybackId(playbackStep.measureId);
+  const repeatPass = playbackStep.repeatPass === null
+    ? null
+    : Number(playbackStep.repeatPass);
+  const repeatSectionId = playbackStep.repeatSectionId === null
+    ? null
+    : getBoundedPlaybackId(playbackStep.repeatSectionId);
+  const enteredBy = PLAYBACK_ENTRY_TYPES.has(playbackStep.enteredBy)
+    ? playbackStep.enteredBy
+    : '';
+
+  if (
+    !measureId ||
+    !enteredBy ||
+    (repeatPass !== null &&
+      (!Number.isSafeInteger(repeatPass) || repeatPass < 1)) ||
+    (playbackStep.repeatSectionId !== null && !repeatSectionId)
+  ) {
+    return null;
+  }
+
+  return {
+    enteredBy,
+    measureId,
+    repeatPass,
+    repeatSectionId,
+  };
+}
+
 export function getLogicalSyncState(syncState) {
   const fileName =
     typeof syncState?.fileName === 'string'
@@ -47,19 +97,27 @@ export function getLogicalSyncState(syncState) {
     Number.isSafeInteger(syncState?.measureIndex) && syncState.measureIndex >= 0
       ? syncState.measureIndex
       : 0;
+  const playbackStep = getLogicalPlaybackStep(syncState?.playbackStep);
 
   return {
     fileName,
     pageNumber,
     measureIndex,
+    playbackStep,
   };
 }
 
-export function getTeacherSyncState(syncState, pageNumber, measureIndex) {
+export function getTeacherSyncState(
+  syncState,
+  pageNumber,
+  measureIndex,
+  playbackStep = null,
+) {
   return getLogicalSyncState({
     ...syncState,
     measureIndex,
     pageNumber,
+    playbackStep,
   });
 }
 
